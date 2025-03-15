@@ -1,0 +1,20 @@
+StorageClass:
+  FromFile: {{.StorageClassFile}}
+{{if .Timeouts}}
+Timeouts:
+  {{ range $key, $value := .Timeouts }}{{ $key }}: {{ $value }}
+  {{ end }}
+{{end}}
+DriverInfo:
+  Name: lustre-csi-{{.StorageClass}}
+{{if .SupportedFsType}}
+  SupportedFsType:
+  {{range .SupportedFsType}}  {{ . }}:
+  {{end}}
+{{end}}
+  Capabilities:
+  {{range .Capabilities}}  {{ . }}: true
+  {{end}}
+  SupportedSizeRange:
+    Min: {{.MinimumVolumeSize}}
+    Max: 1Pi

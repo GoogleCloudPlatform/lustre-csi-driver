@@ -1,0 +1,152 @@
+# Copyright 2025 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: lustre-csi-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lustre-csi-driver
+  template:
+    metadata:
+      labels:
+        app: lustre-csi-driver
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      serviceAccount: lustre-csi-controller-sa
+      priorityClassName: csi-lustre-controller
+      containers:
+        - name: liveness-probe
+          volumeMounts:
+            - mountPath: /csi
+              name: socket-dir
+          image: registry.k8s.io/sig-storage/livenessprobe
+          imagePullPolicy: IfNotPresent
+          args:
+            - --csi-address=/csi/csi.sock
+            - --probe-timeout=3s
+            - --health-port=29633
+            - --v=2
+          resources:
+            limits:
+              cpu: 50m
+              memory: 100Mi
+            requests:
+              cpu: 10m
+              memory: 20Mi
+        - name: csi-external-provisioner
+          image: registry.k8s.io/sig-storage/csi-provisioner
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--v=5"
+            - "--csi-address=/csi/csi.sock"
+            - "--timeout=250s"
+            - "--extra-create-metadata"
+            - "--feature-gates=Topology=true"
+            - "--http-endpoint=:22021"
+            - "--leader-election-namespace=$(LUSTRE_NAMESPACE)"
+            - "--leader-election"
+            - "--retry-interval-max=60s"
+          resources:
+            limits:
+              cpu: 100m
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 20Mi
+          env:
+            - name: LUSTRE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - containerPort: 22021
+              name: http-endpoint
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 1
+            httpGet:
+              path: /healthz/leader-election
+              port: http-endpoint
+            initialDelaySeconds: 10
+            timeoutSeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: lustre-csi-driver
+          image: gke.gcr.io/lustre-csi-driver
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--v=5"
+            - "--endpoint=unix:/csi/csi.sock"
+            - "--nodeid=$(KUBE_NODE_NAME)"
+            - "--controller=true"
+            - "--lustre-endpoint=$(ENDPOINT)"
+          ports:
+            - containerPort: 29633
+              name: healthz
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: 200m
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 80Mi
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/etc/cloud_sa/lustre_csi_driver_sa.json"
+            - name: ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: lustre-config
+                  key: endpoint
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: cloud-sa-volume
+              readOnly: true
+              mountPath: "/etc/cloud_sa"
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: cloud-sa-volume
+          secret:
+            secretName: lustre-csi-driver-sa
+
+---
+# Not required for managed driver.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lustre-config
+data:
+  endpoint: prod

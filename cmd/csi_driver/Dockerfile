@@ -1,0 +1,50 @@
+# Copyright 2025 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM google-go.pkg.dev/golang:1.23.7@sha256:848128c480ca946b7753d9969b1a48977bfd2d9032eb6864fe3f08e0281f63e0 AS driverbuilder
+
+ARG STAGINGVERSION
+ARG TARGETPLATFORM
+
+WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
+ADD . .
+RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
+
+FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.4@sha256:25cd3ddbf93480691de66e8796d991816a8ce40b51bec13347065c31aba80687 AS debian
+
+# Install necessary dependencies and tools.
+RUN apt-get update && apt-get install -y \
+    apt \
+    dpkg \
+    libyaml-0-2 \
+    libnl-3-200 \
+    libnl-genl-3-200 \
+    libkeyutils1 \
+    libreadline8 \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+
+# TODO(tyuchn): Replace this with direct downloads from AR once the Lustre team sets it up.
+COPY /cmd/csi_driver/lustre-client-utils_2.16.50-86-g627cc62-1_amd64.deb /lustre/lustre-client.deb
+
+# Install Lustre client utilities.
+RUN dpkg -i /lustre/lustre-client.deb || apt-get -f install -y
+
+# Clean up temporary files.
+RUN rm -rf /lustre
+
+ARG DRIVER_BINARY=lustre-csi-driver
+COPY --from=driverbuilder /bin/${DRIVER_BINARY} /${DRIVER_BINARY}
+ENTRYPOINT ["/lustre-csi-driver"]
