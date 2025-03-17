@@ -32,15 +32,22 @@ RUN apt-get update && apt-get install -y \
     libnl-genl-3-200 \
     libkeyutils1 \
     libreadline8 \
+    krb5-locales \
+    libgssapi-krb5-2 \
+    libk5crypto3 \
+    libkrb5-3 \
+    libkrb5support0 \
+    libssl3 \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-
-# TODO(tyuchn): Replace this with direct downloads from AR once the Lustre team sets it up.
-COPY /cmd/csi_driver/lustre-client-utils_2.16.50-86-g627cc62-1_amd64.deb /lustre/lustre-client.deb
+COPY /bin/lustre/lustre-client.deb /lustre/lustre-client.deb
 
 # Install Lustre client utilities.
 RUN dpkg -i /lustre/lustre-client.deb || apt-get -f install -y
+
+# Verify installation
+RUN dpkg-query -l | grep lustre || (echo "ERROR: Lustre client not installed!" && exit 1)
 
 # Clean up temporary files.
 RUN rm -rf /lustre

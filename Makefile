@@ -29,10 +29,11 @@ $(info DRIVER_IMAGE is $(DRIVER_IMAGE))
 $(info LUSTRE_ENDPOINT is $(LUSTRE_ENDPOINT))
 
 BINDIR?=bin
+LUSTRE_CLIENT_PATH ?= $(shell cat cmd/csi_driver/lustre_client_utils)
 
 all: driver
 
-build-driver-image-and-push: init-buildx
+build-driver-image-and-push: init-buildx download-lustre-client-utils
 		{                                                                   \
 		set -e ;                                                            \
 		docker buildx build \
@@ -46,6 +47,17 @@ build-driver-image-and-push: init-buildx
 driver:
 	mkdir -p ${BINDIR}
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${DRIVER_BINARY} cmd/csi_driver/main.go
+
+download-lustre-client-utils:
+	rm -rf ${BINDIR}/lustre/*
+	mkdir -p ${BINDIR}/lustre
+	gcloud artifacts files download \
+		--project=lustre-client-binaries \
+		--location=us \
+		--repository=lustre-client-debian-bookworm \
+		--destination=${BINDIR}/lustre \
+		${LUSTRE_CLIENT_PATH}
+	mv ${BINDIR}/lustre/*.deb ${BINDIR}/lustre/lustre-client.deb
 
 install:
 	make generate-spec-yaml OVERLAY=${OVERLAY} STAGINGVERSION=${STAGINGVERSION}
