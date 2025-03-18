@@ -127,11 +127,12 @@ func (sm *lustreServiceManager) CreateInstance(ctx context.Context, instance *Se
 		Parent:     fmt.Sprintf("projects/%s/locations/%s", instance.Project, instance.Location),
 		InstanceId: instance.Name,
 		Instance: &lustrepb.Instance{
-			Network:     instance.Network,
-			Description: instance.Description,
-			Labels:      instance.Labels,
-			CapacityGib: instance.CapacityGib,
-			Filesystem:  instance.Filesystem,
+			Network:           instance.Network,
+			Description:       instance.Description,
+			Labels:            instance.Labels,
+			CapacityGib:       instance.CapacityGib,
+			Filesystem:        instance.Filesystem,
+			GkeSupportEnabled: true,
 		},
 	}
 	klog.V(4).Infof("Creating Lustre instance %+v", instance)
