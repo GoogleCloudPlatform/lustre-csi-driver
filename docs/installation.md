@@ -67,7 +67,8 @@ For experimental use, the CSI driver can be deployed directly using Helm with pr
 
 1. **Build and push the images** following the [Lustre CSI Driver Development Guide](development.md).
 
-2. **Set up a service account** with the required roles and download a service account key. This account will be used by the driver to provision **Managed Lustre** instances and access Lustre APIs.
+2. **Set up a service account** with the required roles and download a service account key. This account will be used by the CSI driver to provision **Managed Lustre** instances and access Lustre APIs.
+   > **Security Note:** Ensure that the specified directory is not publicly accessible to prevent credential leaks.
 
    To automate this setup, run the following script, specifying a directory to store the service account key:
 
@@ -75,7 +76,7 @@ For experimental use, the CSI driver can be deployed directly using Helm with pr
    PROJECT=<your-gcp-project> GSA_DIR=<your-directory-to-store-credentials-by-default-home-dir> ./deploy/base/setup/gsa_setup.sh
    ```
 
-   > **Security Note:** Ensure that the specified directory is not publicly accessible to prevent credential leaks.
+   > NOTE: If the script returns an error like "Key creation is not allowed on this service account", it is likely due to an organization policy constraint preventing key creation. Contact your organization administrator to disable this restriction for your project.
 
 3. **Install the driver**:
 
