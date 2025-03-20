@@ -21,9 +21,11 @@ WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
 ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.4@sha256:25cd3ddbf93480691de66e8796d991816a8ce40b51bec13347065c31aba80687 AS debian
+FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.5 AS debian
 
 # Install necessary dependencies and tools.
+RUN clean-install bash
+
 RUN apt-get update && apt-get install -y \
     apt \
     dpkg \
