@@ -68,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
     helm upgrade -i lustre-csi-driver lustre-csi-driver \
       --namespace ${NAMESPACE} \
       --create-namespace \
-      --set image.lustre.tag="$VERSION" \
+      --set image.lustre.tag="$VERSION"
     ```
 
 4. Check if the CSI driver is successfully installed
