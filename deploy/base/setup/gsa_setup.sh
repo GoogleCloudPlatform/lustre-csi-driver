@@ -31,8 +31,25 @@ gcloud iam service-accounts delete "$GSA_IAM_NAME" --quiet || true
 gcloud iam service-accounts create "$GSA_NAME"
 gcloud projects add-iam-policy-binding "$PROJECT" --member serviceAccount:"$GSA_IAM_NAME" --role roles/lustre.admin
 
-# Enable lustre API for this project.
-gcloud services enable lustre.googleapis.com
+# Determine API endpoint based on ENDPOINT variable
+case "${LUSTRE_ENDPOINT:-prod}" in
+  autopush)
+    API_ENDPOINT="autopush-lustre.sandbox.googleapis.com"
+    ;;
+  staging)
+    API_ENDPOINT="staging-lustre.sandbox.googleapis.com"
+    ;;
+  prod)
+    API_ENDPOINT="lustre.googleapis.com"
+    ;;
+  *)
+    echo "Invalid ENDPOINT value. Allowed values: prod, staging, autopush." >&2
+    exit 1
+    ;;
+esac
+
+echo "Enabling Lustre API: $API_ENDPOINT"
+gcloud services enable "$API_ENDPOINT"
 
 # Cleanup old service account and key
 if [ -f "$GSA_FILE" ]; then
