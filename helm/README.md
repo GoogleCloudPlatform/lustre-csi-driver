@@ -16,7 +16,7 @@ limitations under the License.
 
 # Install the Lustre CSI Driver via Helm
 
-The CSI driver can be deployed using Helm with pre-built images. Currently, this approach supports only [static provisioning (importing an existing Lustre instance)](/docs/preprov-guide.md).
+The CSI driver can be deployed using Helm with pre-built images.
 
 ## Install Helm
 
