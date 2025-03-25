@@ -45,7 +45,7 @@ spec:
         cloud.google.com/gke-os-distribution: cos
       initContainers:
       - name: disable-loadpin
-        image: gcr.io/cos-cloud/cos-dkms
+        image: gcr.io/cos-cloud/cos-dkms:v0.3.0
         securityContext:
           privileged: true
         command: ["/bin/sh", "-c"]
@@ -69,7 +69,7 @@ spec:
         - name: dev
           mountPath: /dev
       - name: install-lustre-mods
-        image: gcr.io/cos-cloud/cos-dkms
+        image: gcr.io/cos-cloud/cos-dkms:v0.3.0
         securityContext:
          privileged: true
         command: ["/bin/sh", "-c"]
@@ -82,7 +82,12 @@ spec:
             # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
             # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
             # --insert-on-install: Inserts the module into the kernel after installation.
-            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --latest --kernelmodulestree=/host_modules --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
+            # --module-arg lnet.accept_port=6988: This is crucial for setting the LNET port.
+            #                                     Lustre uses LNET for network communication, and this
+            #                                     parameter configures the port LNET will use. This is
+            #                                     essential for proper communication between Lustre clients
+            #                                     and servers. In this case, we're setting it to 6988.
+            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --latest --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
         volumeMounts:
         - name: host-etc
           mountPath: /host_etc
