@@ -75,10 +75,10 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
           - |
-            # Install the latest Lustre client drivers.
+            # Install the Lustre client drivers.
             #
             # --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
-            # --latest: Installs the latest available driver version.
+            # --module-version: Sets the lustre client driver version.
             # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
             # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
             # --insert-on-install: Inserts the module into the kernel after installation.
@@ -87,7 +87,7 @@ spec:
             #                                     parameter configures the port LNET will use. This is
             #                                     essential for proper communication between Lustre clients
             #                                     and servers. In this case, we're setting it to 6988.
-            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --latest --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
+            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --module-version=2.14.0_p184 --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
         volumeMounts:
         - name: host-etc
           mountPath: /host_etc
