@@ -87,7 +87,8 @@ spec:
             #                                     parameter configures the port LNET will use. This is
             #                                     essential for proper communication between Lustre clients
             #                                     and servers. In this case, we're setting it to 6988.
-            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --module-version=2.14.0_p184 --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
+            # TODO(rishitagolla): Set module version to 2.14 when gke picks up cos-117-18613-164-93.
+            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --module-version=2.16.0 --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
         volumeMounts:
         - name: host-etc
           mountPath: /host_etc
