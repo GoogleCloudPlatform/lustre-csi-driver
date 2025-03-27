@@ -1,0 +1,13 @@
+version: 2
+enable-beta-ecosystems: true
+updates:
+- package-ecosystem: docker
+  directory: "/cmd/csi_driver"
+  schedule:
+    interval: weekly
+- package-ecosystem: gomod
+  directory: "/"
+  allow:
+  - dependency-type: "all"
+  schedule:
+    interval: weekly
