@@ -39,10 +39,10 @@ imageTag:
 apiVersion: builtin
 kind: ImageTagTransformer
 metadata:
-  name: imagetag-cos-dkms
+  name: lustre-kmod-installer
 imageTag:
-  name: gcr.io/cos-cloud/cos-dkms
-  newTag: "v0.3.0"
+  name: gke.gcr.io/lustre-kmod-installer
+  newTag: "v999.0.0"
 ---
 apiVersion: builtin
 kind: ImageTagTransformer

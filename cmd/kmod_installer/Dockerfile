@@ -12,12 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: lustre-csi-driver
-resources:
-- ../../base/setup
-- node_setup.yaml
-- node.yaml
-transformers:
-- ../../images/gke-release
+FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.5
+
+# Set non-interactive mode for apt to prevent prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required dependencies
+RUN clean-install bash
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    kmod \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.0 /usr/bin/cos-dkms /usr/bin/cos-dkms
+
+COPY /cmd/kmod_installer/entrypoint.sh /usr/bin/entrypoint.sh
+RUN chmod +x /usr/bin/entrypoint.sh
+
+CMD ["/usr/bin/entrypoint.sh"]
