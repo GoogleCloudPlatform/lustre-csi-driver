@@ -1,7 +1,6 @@
 module github.com/GoogleCloudPlatform/lustre-csi-driver
 
 go 1.24.1
-
 require (
 	cloud.google.com/go/compute/metadata v0.6.0
 	cloud.google.com/go/longrunning v0.6.3
@@ -55,7 +54,7 @@ require (
 	github.com/google/pprof v0.0.0-20241029153458-d1b30febd7db // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.5 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
