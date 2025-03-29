@@ -11,5 +11,16 @@ updates:
   - dependency-type: "all"
   schedule:
     interval: weekly
-  ignore:
-    - dependency-name: "go"
+  groups:
+    golang-x:
+      patterns:
+        - "golang.org/x*"
+    google-golang:
+      patterns:
+        - "google.golang.org*"
+    k8s-dependencies:
+      patterns:
+        - "k8s.io*"
+        - "sigs.k8s.io*"
+        - "github.com/kubernetes-csi*"
+  open-pull-requests-limit: 10
