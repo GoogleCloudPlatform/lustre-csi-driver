@@ -24,7 +24,6 @@ import (
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	utiltesting "k8s.io/client-go/util/testing"
@@ -114,13 +113,9 @@ func (m *fakeBlockingMounter) MountSensitiveWithoutSystemd(source string, target
 func TestNodeStageVolme(t *testing.T) {
 	t.Parallel()
 	// Setup mount staging path
-	base, err := os.MkdirTemp("", "node-stage-")
-	if err != nil {
-		t.Fatalf("Failed to setup testdir: %v", err)
-	}
+	base := t.TempDir()
 	stagingTargetPath := filepath.Join(base, "staging")
 
-	defer os.RemoveAll(base)
 	cases := []struct {
 		name          string
 		mounts        []mount.MountPoint // already existing mounts
@@ -224,7 +219,7 @@ func TestNodeStageVolme(t *testing.T) {
 			testEnv.fm.MountPoints = test.mounts
 		}
 
-		_, err = testEnv.ns.NodeStageVolume(context.TODO(), test.req)
+		_, err := testEnv.ns.NodeStageVolume(t.Context(), test.req)
 		if !test.expectErr && err != nil {
 			t.Errorf("Test %q failed: %v", test.name, err)
 		}
@@ -241,13 +236,9 @@ func TestNodeUnstageVolume(t *testing.T) {
 	defaultPerm := os.FileMode(0o750) + os.ModeDir
 
 	// Setup mount stage path
-	base, err := os.MkdirTemp("", "node-stage-")
-	if err != nil {
-		t.Fatalf("Failed to setup testdir: %v", err)
-	}
-	defer os.RemoveAll(base)
+	base := t.TempDir()
 	testStagingPath := filepath.Join(base, "staging")
-	if err = os.MkdirAll(testStagingPath, defaultPerm); err != nil {
+	if err := os.MkdirAll(testStagingPath, defaultPerm); err != nil {
 		t.Fatalf("Failed to setup stage path: %v", err)
 	}
 
@@ -297,7 +288,7 @@ func TestNodeUnstageVolume(t *testing.T) {
 			testEnv.fm.MountPoints = test.mounts
 		}
 
-		_, err = testEnv.ns.NodeUnstageVolume(context.TODO(), test.req)
+		_, err := testEnv.ns.NodeUnstageVolume(t.Context(), test.req)
 		if !test.expectErr && err != nil {
 			t.Errorf("Test %q failed: %v", test.name, err)
 		}
@@ -314,16 +305,12 @@ func TestNodePublishVolume(t *testing.T) {
 	defaultPerm := os.FileMode(0o750) + os.ModeDir
 
 	// Setup mount target path
-	base, err := os.MkdirTemp("", "node-publish-")
-	if err != nil {
-		t.Fatalf("Failed to setup testdir: %v", err)
-	}
+	base := t.TempDir()
 	testTargetPath := filepath.Join(base, "target")
-	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
+	if err := os.MkdirAll(testTargetPath, defaultPerm); err != nil {
 		t.Fatalf("Failed to setup target path: %v", err)
 	}
 	stagingTargetPath := filepath.Join(base, "staging")
-	defer os.RemoveAll(base)
 	cases := []struct {
 		name          string
 		mounts        []mount.MountPoint // already existing mounts
@@ -441,7 +428,7 @@ func TestNodePublishVolume(t *testing.T) {
 			testEnv.fm.MountPoints = test.mounts
 		}
 
-		_, err = testEnv.ns.NodePublishVolume(context.TODO(), test.req)
+		_, err := testEnv.ns.NodePublishVolume(t.Context(), test.req)
 		if !test.expectErr && err != nil {
 			t.Errorf("Test %q failed: %v", test.name, err)
 		}
@@ -458,13 +445,9 @@ func TestNodeUnpublishVolume(t *testing.T) {
 	defaultPerm := os.FileMode(0o750) + os.ModeDir
 
 	// Setup mount target path
-	base, err := os.MkdirTemp("", "node-publish-")
-	if err != nil {
-		t.Fatalf("Failed to setup testdir: %v", err)
-	}
-	defer os.RemoveAll(base)
+	base := t.TempDir()
 	testTargetPath := filepath.Join(base, "target")
-	if err = os.MkdirAll(testTargetPath, defaultPerm); err != nil {
+	if err := os.MkdirAll(testTargetPath, defaultPerm); err != nil {
 		t.Fatalf("Failed to setup target path: %v", err)
 	}
 
@@ -514,7 +497,7 @@ func TestNodeUnpublishVolume(t *testing.T) {
 			testEnv.fm.MountPoints = test.mounts
 		}
 
-		_, err = testEnv.ns.NodeUnpublishVolume(context.TODO(), test.req)
+		_, err := testEnv.ns.NodeUnpublishVolume(t.Context(), test.req)
 		if !test.expectErr && err != nil {
 			t.Errorf("Test %q failed: %v", test.name, err)
 		}
@@ -576,10 +559,7 @@ func TestConcurrentMounts(t *testing.T) {
 	// to indicate that the function is blocked and waiting for a signal to proceed further in the execution.
 	operationUnblocker := make(chan chan struct{}, 1)
 	ns := initBlockingTestNodeServer(t, operationUnblocker)
-	basePath, err := os.MkdirTemp("", "node-publish-")
-	if err != nil {
-		t.Fatalf("Failed to setup testdir: %v", err)
-	}
+	basePath := t.TempDir()
 	stagingTargetPath := filepath.Join(basePath, "staging")
 	targetPath1 := filepath.Join(basePath, "target1")
 	targetPath2 := filepath.Join(basePath, "target2")
@@ -590,13 +570,13 @@ func TestConcurrentMounts(t *testing.T) {
 			var err error
 			switch {
 			case req.nodePublishReq != nil:
-				_, err = ns.ns.NodePublishVolume(context.TODO(), req.nodePublishReq)
+				_, err = ns.ns.NodePublishVolume(t.Context(), req.nodePublishReq)
 			case req.nodeUnpublishReq != nil:
-				_, err = ns.ns.NodeUnpublishVolume(context.TODO(), req.nodeUnpublishReq)
+				_, err = ns.ns.NodeUnpublishVolume(t.Context(), req.nodeUnpublishReq)
 			case req.nodeStageReq != nil:
-				_, err = ns.ns.NodeStageVolume(context.TODO(), req.nodeStageReq)
+				_, err = ns.ns.NodeStageVolume(t.Context(), req.nodeStageReq)
 			case req.nodeUnstageReq != nil:
-				_, err = ns.ns.NodeUnstageVolume(context.TODO(), req.nodeUnstageReq)
+				_, err = ns.ns.NodeUnstageVolume(t.Context(), req.nodeUnstageReq)
 			}
 			resp <- err
 			close(resp) // Ensure the channel is closed to prevent goroutine leaks

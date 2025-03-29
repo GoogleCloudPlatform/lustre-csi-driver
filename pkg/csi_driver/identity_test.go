@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -38,7 +37,7 @@ func TestGetPluginInfo(t *testing.T) {
 	t.Parallel()
 	s := initTestIdentityServer(t)
 
-	resp, err := s.GetPluginInfo(context.TODO(), nil)
+	resp, err := s.GetPluginInfo(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("GetPluginInfo failed: %v", err)
 	}
@@ -60,7 +59,7 @@ func TestGetPluginCapabilities(t *testing.T) {
 	t.Parallel()
 	s := initTestIdentityServer(t)
 
-	resp, err := s.GetPluginCapabilities(context.TODO(), nil)
+	resp, err := s.GetPluginCapabilities(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("GetPluginCapabilities failed: %v", err)
 	}
@@ -99,7 +98,7 @@ func TestProbe(t *testing.T) {
 	t.Parallel()
 	s := initTestIdentityServer(t)
 
-	resp, err := s.Probe(context.TODO(), nil)
+	resp, err := s.Probe(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("Probe failed: %v", err)
 	}
