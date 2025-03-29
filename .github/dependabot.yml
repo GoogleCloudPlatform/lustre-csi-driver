@@ -11,3 +11,5 @@ updates:
   - dependency-type: "all"
   schedule:
     interval: weekly
+  ignore:
+    - dependency-name: "go"
