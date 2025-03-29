@@ -1,7 +1,6 @@
 module github.com/GoogleCloudPlatform/lustre-csi-driver
 
 go 1.23.5
-toolchain go1.24.1
 
 require (
 	cloud.google.com/go/compute/metadata v0.6.0
