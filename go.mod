@@ -1,7 +1,6 @@
 module github.com/GoogleCloudPlatform/lustre-csi-driver
 
 go 1.24.1
-
 require (
 	cloud.google.com/go/compute/metadata v0.6.0
 	cloud.google.com/go/longrunning v0.6.3
@@ -49,7 +48,7 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/google/gnostic-models v0.6.8 // indirect
+	github.com/google/gnostic-models v0.6.9 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/gofuzz v1.2.1-0.20210504230335-f78f29fc09ea // indirect
 	github.com/google/pprof v0.0.0-20241029153458-d1b30febd7db // indirect
