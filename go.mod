@@ -1,7 +1,6 @@
 module github.com/GoogleCloudPlatform/lustre-csi-driver
 
 go 1.24.1
-
 require (
 	cloud.google.com/go/compute/metadata v0.6.0
 	cloud.google.com/go/longrunning v0.6.3
@@ -72,7 +71,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/onsi/ginkgo/v2 v2.21.0 // indirect
 	github.com/onsi/gomega v1.35.1 // indirect
-	github.com/opencontainers/runc v1.2.1 // indirect
+	github.com/opencontainers/runc v1.2.6 // indirect
 	github.com/pelletier/go-toml v1.9.3 // indirect
 	github.com/prometheus/client_golang v1.19.1 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
