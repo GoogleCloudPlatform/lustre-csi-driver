@@ -251,8 +251,9 @@ github.com/kubernetes-csi/csi-lib-utils v0.19.0 h1:3sT8mL9+St2acyrEtuR7CQ5L78GR4
 github.com/kubernetes-csi/csi-lib-utils v0.19.0/go.mod h1:lBuMKvoyd8c3EG+itmnVWApLDHnLkU7ibxxZSPuOw0M=
 github.com/kubernetes-csi/csi-test/v5 v5.2.0 h1:Z+sdARWC6VrONrxB24clCLCmnqCnZF7dzXtzx8eM35o=
 github.com/kubernetes-csi/csi-test/v5 v5.2.0/go.mod h1:o/c5w+NU3RUNE+DbVRhEUTmkQVBGk+tFOB2yPXT8teo=
-github.com/magiconair/properties v1.8.5 h1:b6kJs+EmPFMYGkow9GiUyCyOvIwYetYJ3fSaWak/Gls=
 github.com/magiconair/properties v1.8.5/go.mod h1:y3VJvCyxH9uVvJTWEGAELF3aiYNyPKd5NZ3oSwXrF60=
+github.com/magiconair/properties v1.8.9 h1:nWcCbLq1N2v/cpNsy5WvQ37Fb+YElfq20WJ/a8RkpQM=
+github.com/magiconair/properties v1.8.9/go.mod h1:Dhd985XPs7jluiymwWYZ0G4Z61jb3vdS329zhj2hYo0=
 github.com/mailru/easyjson v0.9.0 h1:PrnmzHw7262yW8sTBwxi1PdJA3Iw/EKBa8psRf7d9a4=
 github.com/mailru/easyjson v0.9.0/go.mod h1:1+xMtQp2MRNVL/V1bOzuP3aP8VNwRW55fQUto+XFtTU=
 github.com/mattn/go-colorable v0.0.9/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=
