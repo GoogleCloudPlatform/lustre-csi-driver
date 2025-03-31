@@ -52,7 +52,7 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
 ### MountVolume.SetUp failures
 
-> Note: the rpc error code can be used to triage `MountVolume.SetUp` issues. For example, `Unauthenticated` and `PermissionDenied` usually mean the authentication was not configured correctly. A rpc error code `Internal` means that unexpected issues occurred in the CSI driver, create a [new issue](https://github.com/GoogleCloudPlatform/gcs-fuse-csi-driver/issues/new) on the GitHub project page.
+> Note: the rpc error code can be used to triage `MountVolume.SetUp` issues. For example, `Unauthenticated` and `PermissionDenied` usually mean the authentication was not configured correctly. A rpc error code `Internal` means that unexpected issues occurred in the CSI driver, create a [new issue](https://github.com/GoogleCloudPlatform/lustre-csi-driver/issues/new) on the GitHub project page.
 
 #### AlreadyExists
 
@@ -66,10 +66,50 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
 #### Internal
 
-- Pod event warning examples:
+- Pod Event Warning Examples:
 
-  - > `MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = xxx` or `UnmountVolume.TearDown failed for volume "xxx" : rpc error: code = Internal desc = xxx`
+    ```bash
+    MountVolume.MountDevice failed for volume "preprov-pv-wrongfs" : rpc error: code = Internal desc = Could not mount "10.90.2.4@tcp:/testlfs1" at "/var/lib/kubelet/plugins/kubernetes.io/csi/lustre.csi.storage.gke.io/639947affddca6d2ff04eac5ec9766c65dd851516ce34b3b44017babfc01b5dc/globalmount" on node gke-lustre-default-nw-6988-pool-1-acbefebf-jl1v: mount failed: exit status 2
+    Mounting command: mount
+    Mounting arguments: -t lustre 10.90.2.4@tcp:/testlfs1 /var/lib/kubelet/plugins/kubernetes.io/csi/lustre.csi.storage.gke.io/639947affddca6d2ff04eac5ec9766c65dd851516ce34b3b44017babfc01b5dc/globalmount
+    Output: mount.lustre: mount 10.90.2.4@tcp:/testlfs1 at /var/lib/kubelet/plugins/kubernetes.io/csi/lustre.csi.storage.gke.io/639947affddca6d2ff04eac5ec9766c65dd851516ce34b3b44017babfc01b5dc/globalmount failed: No such file or directory
+    Is the MGS specification correct?
+    Is the filesystem name correct?
+    If upgrading, is the copied client log valid? (see upgrade docs)
+    ```
 
 - Solutions:
 
-  Warnings that are not listed above and include a rpc error code `Internal` mean that other unexpected issues occurred in the CSI driver, Create a new issue on the GitHub project page. Include your GKE cluster verion, detailed workload information, and the Pod event warning message in the issue.
+  This error means the filesystem name of the Lustre instance you are trying to mount is incorrect or does not exist. Double-check the filesystem name of the Lustre instance.
+
+---
+
+- Pod Event Warning Examples:
+
+    ```bash
+    MountVolume.MountDevice failed for volume "preprov-pv-wrongfs" : rpc error: code = Internal desc = Could not mount "10.90.2.5@tcp:/testlfs" at "/var/lib/kubelet/plugins/kubernetes.io/csi/lustre.csi.storage.gke.io/639947affddca6d2ff04eac5ec9766c65dd851516ce34b3b44017babfc01b5dc/globalmount" on node gke-lustre-default-nw-6988-pool-1-acbefebf-jl1v: mount failed: exit status 5
+    Mounting command: mount
+    Mounting arguments: -t lustre 10.90.2.5@tcp:/testlfs /var/lib/kubelet/plugins/kubernetes.io/csi/lustre.csi.storage.gke.io/639947affddca6d2ff04eac5ec9766c65dd851516ce34b3b44017babfc01b5dc/globalmount
+    Output: mount.lustre: mount 10.90.2.5@tcp:/testlfs at /var/lib/kubelet/plugins/kubernetes.io/csi/lustre.csi.storage.gke.io/639947affddca6d2ff04eac5ec9766c65dd851516ce34b3b44017babfc01b5dc/globalmount failed: Input/output error
+    Is the MGS running?
+    ```
+
+- Solutions:
+
+  This error means your GKE cluster cannot connect to the Lustre instance using the specified IP and filesystem name. Ensure the instance IP is correct and that your GKE cluster is in the same VPC network as your Lustre instance.
+
+---
+
+- Pod Event Warning Examples:
+
+  - ```bash
+    MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = xxx
+    ```
+
+  - ```bash
+    UnmountVolume.TearDown failed for volume "xxx" : rpc error: code = Internal desc = xxx
+    ```
+
+- Solutions:
+
+  Warnings not listed above that include an RPC error code `Internal` indicate unexpected issues in the CSI driver. Create a new [issue](https://github.com/GoogleCloudPlatform/lustre-csi-driver/issues) on the GitHub project page, including your GKE cluster version, detailed workload information, and the Pod event warning message in the issue.

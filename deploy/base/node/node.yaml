@@ -44,46 +44,16 @@ spec:
         kubernetes.io/arch: amd64
         cloud.google.com/gke-os-distribution: cos
       initContainers:
-      - name: disable-loadpin
-        image: gcr.io/cos-cloud/cos-dkms
-        securityContext:
-          privileged: true
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            # Disable LoadPin if it's not already disabled
-            if cat /proc/cmdline | grep "loadpin"; then
-              echo "LoadPin has already been disabled. Move to kmod installation."
-            else
-              echo "Sleep 60s until the node is ready"
-              sleep 60
-              echo "LoadPin is not disabled. Disabling LoadPin now."
-              mkdir -p /mnt/disks
-              mount /dev/disk/by-label/EFI-SYSTEM /mnt/disks
-              sed -i -e 's|module.sig_enforce=0|module.sig_enforce=0 loadpin.enforce=0|g' /mnt/disks/efi/boot/grub.cfg
-              umount /mnt/disks
-              echo 1 > /proc/sys/kernel/sysrq
-              echo b > /proc/sysrq-trigger
-            fi
-        volumeMounts:
-        - name: dev
-          mountPath: /dev
-      - name: install-lustre-mods
-        image: gcr.io/cos-cloud/cos-dkms
+      - name: lustre-kmod-installer
+        image: gke.gcr.io/lustre-kmod-installer
         securityContext:
          privileged: true
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            # Install the latest Lustre client drivers.
-            #
-            # --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
-            # --latest: Installs the latest available driver version.
-            # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
-            # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
-            # --insert-on-install: Inserts the module into the kernel after installation.
-            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --latest --kernelmodulestree=/host_modules --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
+        env:
+        - name: LNET_PORT
+          value: "6988"
         volumeMounts:
+        - name: dev # TODO(tyuchn): Remove this volume once LoadPin excludes kernel modules.
+          mountPath: /dev
         - name: host-etc
           mountPath: /host_etc
         - name: host-modules

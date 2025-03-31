@@ -17,6 +17,7 @@ kind: Kustomization
 namespace: lustre-csi-driver
 resources:
 - ../../base/setup
-- ../../base/node
+- node_setup.yaml
+- node.yaml
 transformers:
 - ../../images/gke-release

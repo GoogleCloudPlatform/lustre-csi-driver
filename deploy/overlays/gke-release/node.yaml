@@ -1,0 +1,181 @@
+# Copyright 2025 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: lustre-csi-node
+spec:
+  selector:
+    matchLabels:
+      k8s-app: lustre-csi-driver
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+  template:
+    metadata:
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: "runtime/default"
+      labels:
+        k8s-app: lustre-csi-driver
+    spec:
+      # LNet config is cached on the host once the Lustre client is initialized.
+      # Using hostNetwork is required to ensure the CSI driver pod maintains a consistent IP that remains tied to the node. See details in b/395004950.
+      hostNetwork: true
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      priorityClassName: csi-lustre-node
+      serviceAccount: lustre-csi-node-sa
+      nodeSelector:
+        kubernetes.io/os: linux
+        kubernetes.io/arch: amd64
+        cloud.google.com/gke-os-distribution: cos
+      initContainers:
+      - name: disable-loadpin
+        image: gcr.io/cos-cloud/cos-dkms
+        securityContext:
+          privileged: true
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # Disable LoadPin if it's not already disabled
+            if cat /proc/cmdline | grep "loadpin"; then
+              echo "LoadPin has already been disabled. Move to kmod installation."
+            else
+              echo "Sleep 60s until the node is ready"
+              sleep 60
+              echo "LoadPin is not disabled. Disabling LoadPin now."
+              mkdir -p /mnt/disks
+              mount /dev/disk/by-label/EFI-SYSTEM /mnt/disks
+              sed -i -e 's|module.sig_enforce=0|module.sig_enforce=0 loadpin.enforce=0|g' /mnt/disks/efi/boot/grub.cfg
+              umount /mnt/disks
+              echo 1 > /proc/sys/kernel/sysrq
+              echo b > /proc/sysrq-trigger
+            fi
+        volumeMounts:
+        - name: dev
+          mountPath: /dev
+      - name: install-lustre-mods
+        image: gcr.io/cos-cloud/cos-dkms
+        securityContext:
+         privileged: true
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # Install the Lustre client drivers.
+            #
+            # --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
+            # --module-version: Sets the lustre client driver version.
+            # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
+            # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
+            # --insert-on-install: Inserts the module into the kernel after installation.
+            # --module-arg lnet.accept_port=6988: This is crucial for setting the LNET port.
+            #                                     Lustre uses LNET for network communication, and this
+            #                                     parameter configures the port LNET will use. This is
+            #                                     essential for proper communication between Lustre clients
+            #                                     and servers. In this case, we're setting it to 6988.
+            # TODO(rishitagolla): Set module version to 2.14 when gke picks up cos-117-18613-164-93.
+            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --module-version=2.16.0 --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
+        volumeMounts:
+        - name: host-etc
+          mountPath: /host_etc
+        - name: host-modules
+          mountPath: /host_modules
+      containers:
+        - name: lustre-csi-driver
+          securityContext:
+            privileged: true
+            readOnlyRootFilesystem: true
+          image: gke.gcr.io/lustre-csi-driver
+          imagePullPolicy: Always
+          args:
+            - --v=5
+            - --endpoint=unix:/csi/csi.sock
+            - --nodeid=$(KUBE_NODE_NAME)
+            - --node=true
+          resources:
+            limits:
+              cpu: 200m
+              memory: 200Mi
+            requests:
+              cpu: 5m
+              memory: 10Mi
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: "Bidirectional"
+            - name: socket-dir
+              mountPath: /csi
+        - name: csi-driver-registrar
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - all
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--v=3"
+            - "--csi-address=/csi/csi.sock"
+            - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+          resources:
+            limits:
+              cpu: 50m
+              memory: 100Mi
+            requests:
+              cpu: 10m
+              memory: 10Mi
+          env:
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/lustre.csi.storage.gke.io/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+      volumes:
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry/
+            type: Directory
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/lustre.csi.storage.gke.io/
+            type: DirectoryOrCreate
+        - name: host-etc
+          hostPath:
+            path: /etc
+        - name: host-modules
+          hostPath:
+            path: /lib/modules
+        - name: dev
+          hostPath:
+            path: /dev
+      # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+      # See "special case". This will tolerate everything. Node component should
+      # be scheduled on all nodes.
+      tolerations:
+        - operator: Exists

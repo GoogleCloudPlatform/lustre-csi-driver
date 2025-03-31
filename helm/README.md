@@ -16,7 +16,7 @@ limitations under the License.
 
 # Install the Lustre CSI Driver via Helm
 
-The CSI driver can be deployed using Helm with pre-built images. Currently, this approach supports only [static provisioning (importing an existing Lustre instance)](/docs/preprov-guide.md).
+The CSI driver can be deployed using Helm with pre-built images.
 
 ## Install Helm
 
@@ -60,6 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
     ```
 
     > Note: After successfully creating the secret, make sure to securely remove the service account key file.
+    > If the script returns an error like "Key creation is not allowed on this service account", it is likely due to an organization policy constraint preventing key creation. Contact your organization administrator to disable this restriction for your project.
 
 3. Install the csi driver using helm
 
@@ -67,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
     helm upgrade -i lustre-csi-driver lustre-csi-driver \
       --namespace ${NAMESPACE} \
       --create-namespace \
-      --set image.lustre.tag="$VERSION" \
+      --set image.lustre.tag="$VERSION"
     ```
 
 4. Check if the CSI driver is successfully installed

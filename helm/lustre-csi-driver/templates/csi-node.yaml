@@ -81,7 +81,7 @@ spec:
             # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
             # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
             # --insert-on-install: Inserts the module into the kernel after installation.
-            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --latest --kernelmodulestree=/host_modules --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
+            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --latest --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
         volumeMounts:
         - name: host-etc
           mountPath: /host_etc

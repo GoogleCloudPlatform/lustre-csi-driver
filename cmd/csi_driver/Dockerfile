@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM google-go.pkg.dev/golang:1.23.7@sha256:848128c480ca946b7753d9969b1a48977bfd2d9032eb6864fe3f08e0281f63e0 AS driverbuilder
+FROM google-go.pkg.dev/golang:1.24.1@sha256:2339fc6914f7e95db6d9643df0e7d4726452b3496031a5a1eb63739cedf253e8 AS driverbuilder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
@@ -21,9 +21,11 @@ WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
 ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.4@sha256:25cd3ddbf93480691de66e8796d991816a8ce40b51bec13347065c31aba80687 AS debian
+FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.5 AS debian
 
 # Install necessary dependencies and tools.
+RUN clean-install bash
+
 RUN apt-get update && apt-get install -y \
     apt \
     dpkg \
@@ -32,15 +34,22 @@ RUN apt-get update && apt-get install -y \
     libnl-genl-3-200 \
     libkeyutils1 \
     libreadline8 \
+    krb5-locales \
+    libgssapi-krb5-2 \
+    libk5crypto3 \
+    libkrb5-3 \
+    libkrb5support0 \
+    libssl3 \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-
-# TODO(tyuchn): Replace this with direct downloads from AR once the Lustre team sets it up.
-COPY /cmd/csi_driver/lustre-client-utils_2.16.50-86-g627cc62-1_amd64.deb /lustre/lustre-client.deb
+COPY /bin/lustre/lustre-client.deb /lustre/lustre-client.deb
 
 # Install Lustre client utilities.
 RUN dpkg -i /lustre/lustre-client.deb || apt-get -f install -y
+
+# Verify installation
+RUN dpkg-query -l | grep lustre || (echo "ERROR: Lustre client not installed!" && exit 1)
 
 # Clean up temporary files.
 RUN rm -rf /lustre

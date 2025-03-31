@@ -15,10 +15,12 @@
 export OVERLAY ?= dev
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 DRIVER_BINARY = lustre-csi-driver
+KMOD_INSTALLER_BINARY = lustre-kmod-installer
 
 PROJECT ?= $(shell gcloud config list --format 'value(core.project)')
 REGISTRY ?= gcr.io/$(PROJECT)
 DRIVER_IMAGE = $(REGISTRY)/$(DRIVER_BINARY)
+KMOD_INSTALLER_IMAGE = $(REGISTRY)/$(KMOD_INSTALLER_BINARY)
 GSA_FILE ?= ${HOME}/lustre_csi_driver_sa.json
 GSA_NS=lustre-csi-driver
 LUSTRE_ENDPOINT ?= prod
@@ -26,13 +28,17 @@ LUSTRE_ENDPOINT ?= prod
 $(info OVERLAY is ${OVERLAY})
 $(info STAGINGVERSION is ${STAGINGVERSION})
 $(info DRIVER_IMAGE is $(DRIVER_IMAGE))
+$(info KMOD_INSTALLER_IMAGE is $(KMOD_INSTALLER_IMAGE))
 $(info LUSTRE_ENDPOINT is $(LUSTRE_ENDPOINT))
 
 BINDIR?=bin
+LUSTRE_CLIENT_PATH ?= $(shell cat cmd/csi_driver/lustre_client_utils)
 
 all: driver
 
-build-driver-image-and-push: init-buildx
+build-all-image-and-push: build-driver-image-and-push build-kmod-installer-image-and-push
+
+build-driver-image-and-push: init-buildx download-lustre-client-utils
 		{                                                                   \
 		set -e ;                                                            \
 		docker buildx build \
@@ -43,9 +49,31 @@ build-driver-image-and-push: init-buildx
 			-t $(DRIVER_IMAGE):$(STAGINGVERSION) --push .; \
 		}
 
+build-kmod-installer-image-and-push: init-buildx
+		{                                                                   \
+		set -e ;                                                            \
+		docker buildx build \
+			--platform linux/amd64 \
+			--build-arg STAGINGVERSION=$(STAGINGVERSION) \
+			--build-arg TARGETPLATFORM=linux/amd64 \
+			-f ./cmd/kmod_installer/Dockerfile \
+			-t $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION) --push .; \
+		}
+
 driver:
 	mkdir -p ${BINDIR}
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${DRIVER_BINARY} cmd/csi_driver/main.go
+
+download-lustre-client-utils:
+	rm -rf ${BINDIR}/lustre/*
+	mkdir -p ${BINDIR}/lustre
+	gcloud artifacts files download \
+		--project=lustre-client-binaries \
+		--location=us \
+		--repository=lustre-client-debian-bookworm \
+		--destination=${BINDIR}/lustre \
+		${LUSTRE_CLIENT_PATH}
+	mv ${BINDIR}/lustre/*.deb ${BINDIR}/lustre/lustre-client.deb
 
 install:
 	make generate-spec-yaml OVERLAY=${OVERLAY} STAGINGVERSION=${STAGINGVERSION}
@@ -60,6 +88,7 @@ generate-spec-yaml:
 	./deploy/install-kustomize.sh
 	if [ "${OVERLAY}" != "gke-release" ]; then \
 		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit set image gke.gcr.io/lustre-csi-driver=${DRIVER_IMAGE}:${STAGINGVERSION}; \
+		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit set image gke.gcr.io/lustre-kmod-installer=${KMOD_INSTALLER_IMAGE}:${STAGINGVERSION}; \
 		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit add configmap lustre-config --behavior=merge --disableNameSuffixHash --from-literal=endpoint=${LUSTRE_ENDPOINT}; \
 	fi
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/lustre-csi-driver-specs-generated.yaml > /dev/null

@@ -24,7 +24,6 @@ import (
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -187,7 +186,7 @@ func TestCreateVolume(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			cs := initTestController(t)
-			resp, err := cs.CreateVolume(context.TODO(), test.req)
+			resp, err := cs.CreateVolume(t.Context(), test.req)
 			if test.expectErr == nil && err != nil {
 				t.Errorf("test %q failed:\ngot error %q,\nexpected error nil", test.name, err)
 			}
@@ -234,7 +233,7 @@ func TestDeleteVolume(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			cs := initTestController(t)
-			resp, err := cs.DeleteVolume(context.TODO(), test.req)
+			resp, err := cs.DeleteVolume(t.Context(), test.req)
 			if test.expectErr == nil && err != nil {
 				t.Errorf("test %q failed:\ngot error %q,\nexpected error nil", test.name, err)
 			}
