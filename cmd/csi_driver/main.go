@@ -35,7 +35,7 @@ var (
 	runNode             = flag.Bool("node", false, "run node service")
 	httpEndpoint        = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
 	metricsPath         = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
-	lustreAPIEndpoint   = flag.String("lustre-endpoint", "prod", "Lustre API service endpoint, supported values are autopush, staging and prod. Default is prod")
+	lustreAPIEndpoint   = flag.String("lustre-endpoint", "", "Lustre API service endpoint, supported values are autopush, staging and prod.")
 	cloudConfigFilePath = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 
 	// These are set at compile time.
@@ -81,6 +81,9 @@ func main() {
 			}
 		}
 
+		if *lustreAPIEndpoint == "" {
+			*lustreAPIEndpoint = "prod"
+		}
 		cloudProvider, err := lustre.NewCloud(ctx, *cloudConfigFilePath, version, *lustreAPIEndpoint)
 		if err != nil {
 			klog.Fatalf("Failed to initialize cloud provider: %v", err)
