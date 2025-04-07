@@ -1,6 +1,7 @@
 module github.com/GoogleCloudPlatform/lustre-csi-driver
 
 go 1.24.1
+
 require (
 	cloud.google.com/go/compute/metadata v0.6.0
 	cloud.google.com/go/longrunning v0.6.3
@@ -81,7 +82,7 @@ require (
 	github.com/spf13/afero v1.14.0 // indirect
 	github.com/spf13/cast v1.3.1 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/spf13/viper v1.8.1 // indirect
 	github.com/subosito/gotenv v1.2.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
