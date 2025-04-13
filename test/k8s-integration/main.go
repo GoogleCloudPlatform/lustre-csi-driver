@@ -207,7 +207,7 @@ func handle() error {
 	}
 
 	if *bringupCluster {
-		if err := clusterUpGKE(*gceZone, *gceRegion, testParams.imageType, *numNodes, *useManagedDriver); err != nil {
+		if err := clusterUpGKE(project, *gceZone, *gceRegion, testParams.imageType, *numNodes, *useManagedDriver); err != nil {
 			return fmt.Errorf("failed to cluster up: %w", err)
 		}
 		defer func() {

@@ -130,7 +130,7 @@ func clusterDownGKE(gceZone, gceRegion string) error {
 	return nil
 }
 
-func clusterUpGKE(gceZone, gceRegion, imageType string, numNodes int, useManagedDriver bool) error {
+func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, useManagedDriver bool) error {
 	locationArg, locationVal, err := gkeLocationArgs(gceZone, gceRegion)
 	if err != nil {
 		return err
@@ -156,6 +156,7 @@ func clusterUpGKE(gceZone, gceRegion, imageType string, numNodes int, useManaged
 		"container", "clusters", "create", *gkeTestClusterName,
 		locationArg, locationVal, "--num-nodes", strconv.Itoa(numNodes),
 		"--quiet", "--machine-type", "n1-standard-2", "--image-type", imageType, "--network", *clusterNewtwork,
+		"--workload-pool", project + ".svc.id.goog",
 	}
 	if isVariableSet(gkeClusterVersion) {
 		cmdParams = append(cmdParams, "--cluster-version", *gkeClusterVersion)
