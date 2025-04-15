@@ -19,8 +19,8 @@ limitations under the License.
 This guide provides a simple example of how to use the Lustre CSI driver with dynamic provisioning. Dynamic provisioning allows you to create storage backed by Google Cloud Managed Lustre instances on demand and use them as volumes for stateful workloads.
 
 ## Prerequisites
-<!-- TODO(tyuchn): Replace with public links once available -->
-Ensure that you have followed the [PSA User Guide](https://docs.google.com/document/d/1gtUVnP7oSFYy5aXbzvAtuINv4yHaU13HZlTWsh9Vr5Y/edit?resourcekey=0-KBYX96tpMJDmI61dYHQeEw&tab=t.0#heading=h.obpoye6pop6b) to set up PSA for your VPC network.
+
+Ensure that you have followed the [PSA User Guide](https://cloud.google.com/managed-lustre/docs/vpc) to set up PSA for your VPC network.
 
 ## Creating a New Volume Using the Lustre CSI Driver
 

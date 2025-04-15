@@ -25,8 +25,8 @@ The Google Cloud Managed Lustre Container Storage Interface (CSI) Plugin.
 The Lustre CSI driver allows k8s workloads (a group of k8s pods) to connect to Google Cloud Managed Lustre instances - transparently through the Kubernetes Persistent Volume Claims (PVCs) API. The Lustre CSI driver supports creating and deleting Google Cloud Managed Lustre instances, as well as mounting and unmounting them on GKE nodes in response to CSI calls, ensuring transparent and efficient integration with GKE environments.
 
 ## Project Status
-<!-- TODO(tyuchn): Update the public contact info once avaialble -->
-Status: Private GA (Allowlist required – contact X for access)
+
+Status: Private GA (Allowlist required – contact your sales representative for access)
 
 ## Get Started
 
