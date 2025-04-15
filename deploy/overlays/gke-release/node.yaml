@@ -91,7 +91,7 @@ spec:
             /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --module-version=2.16.0 --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
         volumeMounts:
         - name: host-etc
-          mountPath: /host_etc
+          mountPath: /host_etc/lsb-release
         - name: host-modules
           mountPath: /host_modules
       containers:
@@ -167,7 +167,7 @@ spec:
             type: DirectoryOrCreate
         - name: host-etc
           hostPath:
-            path: /etc
+            path: /etc/lsb-release
         - name: host-modules
           hostPath:
             path: /lib/modules

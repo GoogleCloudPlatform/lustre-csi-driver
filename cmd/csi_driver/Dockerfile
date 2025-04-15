@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM google-go.pkg.dev/golang:1.24.1@sha256:2339fc6914f7e95db6d9643df0e7d4726452b3496031a5a1eb63739cedf253e8 AS driverbuilder
+FROM google-go.pkg.dev/golang:1.24.2@sha256:b1c2f92db6ecd86731fa53f7b48f357dda1b9107655c9f361275c31fea9673fe AS driverbuilder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
@@ -21,7 +21,7 @@ WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
 ADD . .
 RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.5 AS debian
+FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.7 AS debian
 
 # Install necessary dependencies and tools.
 RUN clean-install bash
