@@ -55,7 +55,7 @@ spec:
         - name: dev # TODO(tyuchn): Remove this volume once LoadPin excludes kernel modules.
           mountPath: /dev
         - name: host-etc
-          mountPath: /host_etc
+          mountPath: /host_etc/lsb-release
         - name: host-modules
           mountPath: /host_modules
       containers:
@@ -131,7 +131,8 @@ spec:
             type: DirectoryOrCreate
         - name: host-etc
           hostPath:
-            path: /etc
+            path: /etc/lsb-release
+            type: File
         - name: host-modules
           hostPath:
             path: /lib/modules
