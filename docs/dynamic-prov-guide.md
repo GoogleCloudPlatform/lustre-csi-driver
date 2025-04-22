@@ -20,7 +20,7 @@ This guide provides a simple example of how to use the Lustre CSI driver with dy
 
 ## Prerequisites
 
-Ensure that you have followed the [PSA User Guide](https://cloud.google.com/managed-lustre/docs/vpc) to set up PSA for your VPC network.
+Ensure that you have completed the steps outlined in [Configure a VPC network](https://cloud.google.com/managed-lustre/docs/vpc) to correctly set up your VPC network.
 
 ## Creating a New Volume Using the Lustre CSI Driver
 
@@ -28,7 +28,7 @@ Ensure that you have followed the [PSA User Guide](https://cloud.google.com/mana
 
 If you followed the [installation guide](installation.md#install) to install the CSI driver, a StorageClass named `lustre-rwx` should already exist in your cluster. Alternatively, you can create a custom StorageClass with specific parameters. The Lustre CSI driver supports the following parameters:
 
-- **network**: (Optional) The VPC network where the Lustre instance will be created. If not specified, the network of the GKE cluster will be used.
+- **network**: (Optional) The VPC network where the Lustre instance will be created. If not specified, the default network will be used.
   To create a Lustre instance in a shared VPC network, provide the full network name, e.g.,
   `projects/<host-project-id>/global/networks/<vpc-network-name>`.
 
