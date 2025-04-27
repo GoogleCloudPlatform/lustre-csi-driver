@@ -16,8 +16,11 @@
 
 set -e
 
-# Default to 6988 if LNET_PORT is not set.
-LNET_PORT=${LNET_PORT:-6988}
+if [ "${ENABLE_LEGACY_LUSTRE_PORT}" = "true" ]; then
+    LNET_PORT=6988
+else
+    LNET_PORT=988
+fi
 
 # Check if LoadPin is already disabled.
 # TODO: Remove this function once LoadPin excludes kernel modules.
@@ -57,11 +60,11 @@ fi
 # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
 # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
 # --insert-on-install: Inserts the module into the kernel after installation.
-# --module-arg lnet.accept_port=6988: This is crucial for setting the LNET port.
+# --module-arg lnet.accept_port=${LNET_PORT}: This is crucial for setting the LNET port.
 #                                     Lustre uses LNET for network communication, and this
 #                                     parameter configures the port LNET will use. This is
 #                                     essential for proper communication between Lustre clients
-#                                     and servers. In this case, we're setting it to 6988.
+#                                     and servers. The default value is 988.
 
 # TODO: Set module version to 2.14 when gke picks up cos-117-18613-164-93.
 /usr/bin/cos-dkms install lustre-client-drivers \

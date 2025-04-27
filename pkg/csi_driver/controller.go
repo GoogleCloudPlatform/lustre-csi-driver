@@ -330,11 +330,11 @@ func (s *controllerServer) prepareNewInstance(name string, capBytes int64, param
 		}
 	}
 	instance := &lustre.ServiceInstance{
-		Name:        name,
-		Project:     s.cloudProvider.Project,
-		Location:    location,
-		CapacityGib: capBytes / util.Gib, // TODO(tyuchn): investigate rounding mechanisms to enhance the UX when specifying capacities in TiB or GiB.
-		Network:     networkFullName,
+		Name:              name,
+		Project:           s.cloudProvider.Project,
+		Location:          location,
+		CapacityGib:       capBytes / util.Gib, // TODO(tyuchn): investigate rounding mechanisms to enhance the UX when specifying capacities in TiB or GiB.
+		Network:           networkFullName,
 		GkeSupportEnabled: s.driver.config.EnableLegacyLustrePort,
 	}
 	if v, exists := params[paramDescription]; exists {

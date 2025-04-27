@@ -49,8 +49,8 @@ spec:
         securityContext:
          privileged: true
         env:
-        - name: LNET_PORT
-          value: "6988"
+        - name: ENABLE_LEGACY_LUSTRE_PORT
+          value: "true"
         volumeMounts:
         - name: dev # TODO(tyuchn): Remove this volume once LoadPin excludes kernel modules.
           mountPath: /dev
