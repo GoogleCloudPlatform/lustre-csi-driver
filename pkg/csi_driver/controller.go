@@ -335,6 +335,7 @@ func (s *controllerServer) prepareNewInstance(name string, capBytes int64, param
 		Location:    location,
 		CapacityGib: capBytes / util.Gib, // TODO(tyuchn): investigate rounding mechanisms to enhance the UX when specifying capacities in TiB or GiB.
 		Network:     networkFullName,
+		GkeSupportEnabled: s.driver.config.EnableLegacyLustrePort,
 	}
 	if v, exists := params[paramDescription]; exists {
 		if len(v) > 2048 {

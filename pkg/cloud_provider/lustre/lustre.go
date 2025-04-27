@@ -63,16 +63,17 @@ var userErrorCodeMap = map[int]codes.Code{
 }
 
 type ServiceInstance struct {
-	Project     string
-	Location    string
-	Name        string
-	Filesystem  string
-	Network     string
-	IP          string
-	Description string
-	State       string
-	Labels      map[string]string
-	CapacityGib int64
+	Project           string
+	Location          string
+	Name              string
+	Filesystem        string
+	Network           string
+	IP                string
+	Description       string
+	State             string
+	Labels            map[string]string
+	CapacityGib       int64
+	GkeSupportEnabled bool
 }
 
 type ListFilter struct {
@@ -132,7 +133,7 @@ func (sm *lustreServiceManager) CreateInstance(ctx context.Context, instance *Se
 			Labels:            instance.Labels,
 			CapacityGib:       instance.CapacityGib,
 			Filesystem:        instance.Filesystem,
-			GkeSupportEnabled: true,
+			GkeSupportEnabled: instance.GkeSupportEnabled,
 		},
 	}
 	klog.V(4).Infof("Creating Lustre instance %+v", instance)

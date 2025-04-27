@@ -30,14 +30,15 @@ import (
 const DefaultName = "lustre.csi.storage.gke.io"
 
 type LustreDriverConfig struct {
-	Name            string // Driver name
-	Version         string // Driver version
-	NodeID          string // Node name
-	RunController   bool   // Run CSI controller service
-	RunNode         bool   // Run CSI node service
-	Mounter         mount.Interface
-	MetadataService metadata.Service
-	Cloud           *lustre.Cloud
+	Name                   string // Driver name
+	Version                string // Driver version
+	NodeID                 string // Node name
+	RunController          bool   // Run CSI controller service
+	RunNode                bool   // Run CSI node service
+	Mounter                mount.Interface
+	MetadataService        metadata.Service
+	Cloud                  *lustre.Cloud
+	EnableLegacyLustrePort bool
 }
 
 type LustreDriver struct {
