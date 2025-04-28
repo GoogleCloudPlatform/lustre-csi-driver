@@ -67,7 +67,7 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					attrFilesystemName: testFSName,
+					keyFilesystem: testFSName,
 				},
 			},
 			resp: &csi.CreateVolumeResponse{
@@ -75,8 +75,8 @@ func TestCreateVolume(t *testing.T) {
 					CapacityBytes: 16 * util.Tib,
 					VolumeId:      testVolumeID,
 					VolumeContext: map[string]string{
-						attrFilesystemName: testFSName,
-						attrInstanceIP:     testIP,
+						keyFilesystem: testFSName,
+						keyInstanceIP: testIP,
 					},
 				},
 			},
@@ -126,7 +126,7 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					attrFilesystemName: "existing",
+					keyFilesystem: "existing",
 				},
 			},
 			resp: &csi.CreateVolumeResponse{
@@ -134,8 +134,8 @@ func TestCreateVolume(t *testing.T) {
 					CapacityBytes: 16 * util.Tib,
 					VolumeId:      "test-project/us-central1-a/existing-instance",
 					VolumeContext: map[string]string{
-						attrFilesystemName: "existing",
-						attrInstanceIP:     "192.168.1.1",
+						keyFilesystem: "existing",
+						keyInstanceIP: "192.168.1.1",
 					},
 				},
 			},
@@ -155,7 +155,7 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					attrFilesystemName: "creating",
+					keyFilesystem: "creating",
 				},
 			},
 			expectErr: status.Error(codes.DeadlineExceeded, "Volume creating-instance not ready, current state: CREATING"),
@@ -175,7 +175,7 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					attrFilesystemName: "unknown",
+					keyFilesystem: "unknown",
 				},
 			},
 			expectErr: status.Error(codes.Unavailable, "Volume unknown-instance not ready, current state: STATE_UNSPECIFIED"),

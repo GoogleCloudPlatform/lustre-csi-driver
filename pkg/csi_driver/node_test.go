@@ -48,8 +48,8 @@ var (
 	}
 
 	testVolumeAttributes = map[string]string{
-		attrInstanceIP:     testIP,
-		attrFilesystemName: testFilesystem,
+		keyInstanceIP: testIP,
+		keyFilesystem: testFilesystem,
 	}
 )
 
@@ -137,8 +137,8 @@ func TestNodeStageVolme(t *testing.T) {
 				StagingTargetPath: stagingTargetPath,
 				VolumeCapability:  testVolumeCapability,
 				VolumeContext: map[string]string{
-					attrInstanceIP:     "127.0.0.2",
-					attrFilesystemName: testFilesystem,
+					keyInstanceIP: "127.0.0.2",
+					keyFilesystem: testFilesystem,
 				},
 			},
 			expectedMount: &mount.MountPoint{Device: testDevice, Path: stagingTargetPath},
