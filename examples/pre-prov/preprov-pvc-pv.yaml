@@ -30,6 +30,10 @@ spec:
     volumeAttributes:
       ip: ${EXISTING_LUSTRE_IP_ADDRESS} # The IP address of the existing Lustre instance.
       filesystem: ${EXISTING_LUSTRE_FSNAME} # The filesystem name of the existing Lustre instance.
+      llite.*.max_cached_mb: 160G
+      llite.*.max_read_ahead_mb: 120G
+      llite.*.max_read_ahead_per_file_mb: 6G
+      llite.*.max_read_ahead_whole_mb: 6G
 ---
 kind: PersistentVolumeClaim
 apiVersion: v1
