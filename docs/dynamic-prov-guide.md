@@ -19,8 +19,8 @@ limitations under the License.
 This guide provides a simple example of how to use the Lustre CSI driver with dynamic provisioning. Dynamic provisioning allows you to create storage backed by Google Cloud Managed Lustre instances on demand and use them as volumes for stateful workloads.
 
 ## Prerequisites
-<!-- TODO(tyuchn): Replace with public links once available -->
-Ensure that you have followed the [PSA User Guide](https://docs.google.com/document/d/1gtUVnP7oSFYy5aXbzvAtuINv4yHaU13HZlTWsh9Vr5Y/edit?resourcekey=0-KBYX96tpMJDmI61dYHQeEw&tab=t.0#heading=h.obpoye6pop6b) to set up PSA for your VPC network.
+
+Ensure that you have completed the steps outlined in [Configure a VPC network](https://cloud.google.com/managed-lustre/docs/vpc) to correctly set up your VPC network.
 
 ## Creating a New Volume Using the Lustre CSI Driver
 
@@ -28,7 +28,7 @@ Ensure that you have followed the [PSA User Guide](https://docs.google.com/docum
 
 If you followed the [installation guide](installation.md#install) to install the CSI driver, a StorageClass named `lustre-rwx` should already exist in your cluster. Alternatively, you can create a custom StorageClass with specific parameters. The Lustre CSI driver supports the following parameters:
 
-- **network**: (Optional) The VPC network where the Lustre instance will be created. If not specified, the network of the GKE cluster will be used.
+- **network**: (Optional) The VPC network where the Lustre instance will be created. If not specified, the default network will be used.
   To create a Lustre instance in a shared VPC network, provide the full network name, e.g.,
   `projects/<host-project-id>/global/networks/<vpc-network-name>`.
 

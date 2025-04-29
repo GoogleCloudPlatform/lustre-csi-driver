@@ -50,15 +50,15 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
   This warning indicates that the CSI driver is either not installed or not yet running. Double-check whether the CSI driver is running in your cluster by referring to [this section](installation.md#check-the-driver-status). If the cluster was recently scaled, updated, or upgraded, this warning is expected and should be transient, as the CSI driver Pods may take a few minutes to become fully functional after cluster operations.
 
-### MountVolume.SetUp failures
-
-> Note: the rpc error code can be used to triage `MountVolume.SetUp` issues. For example, `Unauthenticated` and `PermissionDenied` usually mean the authentication was not configured correctly. A rpc error code `Internal` means that unexpected issues occurred in the CSI driver, create a [new issue](https://github.com/GoogleCloudPlatform/lustre-csi-driver/issues/new) on the GitHub project page.
+### MountVolume failures
 
 #### AlreadyExists
 
 - Pod event warning examples:
 
-  - > MountVolume.SetUp failed for volume "xxx" : rpc error: code = AlreadyExists desc = A mountpoint with the same lustre filesystem name "xxx" already exists on node "xxx". Please mount different lustre filesystems
+  ```bash
+  MountVolume.MountDevice failed for volume "xxx" : rpc error: code = AlreadyExists desc = A mountpoint with the same lustre filesystem name "xxx" already exists on node "xxx". Please mount different lustre filesystems
+  ```
 
 - Solutions:
 
@@ -103,11 +103,19 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 - Pod Event Warning Examples:
 
   - ```bash
+    MountVolume.MountDevice failed for volume "xxx" : rpc error: code = Internal desc = xxx
+    ```
+
+  - ```bash
     MountVolume.SetUp failed for volume "xxx" : rpc error: code = Internal desc = xxx
     ```
 
   - ```bash
     UnmountVolume.TearDown failed for volume "xxx" : rpc error: code = Internal desc = xxx
+    ```
+
+  - ```bash
+    UnmountVolume.Unmount failed for volume "xxx" : rpc error: code = Internal desc = xxx
     ```
 
 - Solutions:

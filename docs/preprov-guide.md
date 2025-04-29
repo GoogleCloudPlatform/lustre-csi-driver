@@ -19,8 +19,8 @@ limitations under the License.
 This guide provides a simple example of how to use the Lustre CSI driver to import and connect to an existing Lustre instance that has been pre-provisioned by an administrator.
 
 ## Importing a Lustre Instance as a Persistent Volume
-<!-- TODO(tyuchn): Replace with public links once available -->
-If you haven't already provisioned a Google Cloud Managed Lustre instance, follow the instructions [here](https://docs.google.com/document/d/1gtUVnP7oSFYy5aXbzvAtuINv4yHaU13HZlTWsh9Vr5Y/edit?resourcekey=0-KBYX96tpMJDmI61dYHQeEw&tab=t.0#heading=h.fu6cclsk6hp) to create one.
+
+If you haven't already provisioned a Google Cloud Managed Lustre instance, follow the instructions [here](https://cloud.google.com/managed-lustre/docs/create-instance) to create one.
 
 ## Creating a Persistent Volume for a Lustre Instance
 
