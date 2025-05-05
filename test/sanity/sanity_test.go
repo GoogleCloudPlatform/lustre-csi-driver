@@ -40,7 +40,6 @@ const (
 	stagingPath   = "/tmp/csi/staging"
 
 	GiB = 1024 * 1024 * 1024
-	TiB = 1024 * GiB
 )
 
 func TestSanity(t *testing.T) {
@@ -98,7 +97,7 @@ func TestSanity(t *testing.T) {
 		Address:        endpoint,
 		DialOptions:    []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
 		IDGen:          &sanity.DefaultIDGenerator{},
-		TestVolumeSize: int64(16 * TiB),
+		TestVolumeSize: int64(18000 * GiB),
 	}
 	sanity.Test(t, testConfig)
 }

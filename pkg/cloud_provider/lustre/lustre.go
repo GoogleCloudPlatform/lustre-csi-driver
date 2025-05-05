@@ -340,20 +340,21 @@ func IsNotFoundErr(err error) bool {
 
 func CompareInstances(a, b *ServiceInstance) error {
 	mismatches := []string{}
+
 	if a.Name != b.Name {
-		mismatches = append(mismatches, "instance name")
+		mismatches = append(mismatches, fmt.Sprintf("instance name: expected %q, got %q", a.Name, b.Name))
 	}
 	if a.Project != b.Project {
-		mismatches = append(mismatches, "instance project")
+		mismatches = append(mismatches, fmt.Sprintf("instance project: expected %q, got %q", a.Project, b.Project))
 	}
 	if a.Location != b.Location {
-		mismatches = append(mismatches, "instance location")
+		mismatches = append(mismatches, fmt.Sprintf("instance location: expected %q, got %q", a.Location, b.Location))
 	}
 	if a.CapacityGib != b.CapacityGib {
-		mismatches = append(mismatches, "instance size")
+		mismatches = append(mismatches, fmt.Sprintf("instance size: expected %d GiB, got %d GiB", a.CapacityGib, b.CapacityGib))
 	}
 	if a.Network != b.Network {
-		mismatches = append(mismatches, "network name")
+		mismatches = append(mismatches, fmt.Sprintf("network name: expected %q, got %q", a.Network, b.Network))
 	}
 
 	if len(mismatches) > 0 {

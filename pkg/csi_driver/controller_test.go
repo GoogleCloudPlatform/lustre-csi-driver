@@ -72,7 +72,7 @@ func TestCreateVolume(t *testing.T) {
 			},
 			resp: &csi.CreateVolumeResponse{
 				Volume: &csi.Volume{
-					CapacityBytes: 16 * util.Tib,
+					CapacityBytes: 18000 * util.Gib,
 					VolumeId:      testVolumeID,
 					VolumeContext: map[string]string{
 						keyFilesystem: testFSName,
@@ -131,7 +131,7 @@ func TestCreateVolume(t *testing.T) {
 			},
 			resp: &csi.CreateVolumeResponse{
 				Volume: &csi.Volume{
-					CapacityBytes: 16 * util.Tib,
+					CapacityBytes: 18000 * util.Gib,
 					VolumeId:      "test-project/us-central1-a/existing-instance",
 					VolumeContext: map[string]string{
 						keyFilesystem: "existing",

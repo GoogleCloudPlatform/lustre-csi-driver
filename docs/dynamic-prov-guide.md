@@ -61,7 +61,7 @@ Expected output:
 
 ```bash
 NAME         STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
-lustre-pvc   Bound    pvc-be98607a-7a37-40b7-b7d7-28c9adce7b77   16Ti       RWX            lustre-rwx     <unset>                 24s
+lustre-pvc   Bound    pvc-be98607a-7a37-40b7-b7d7-28c9adce7b77   18000Gi       RWX            lustre-rwx     <unset>                 24s
 ```
 
 ## Using the Persistent Volume in a Pod
