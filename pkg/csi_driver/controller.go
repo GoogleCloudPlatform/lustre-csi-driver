@@ -35,17 +35,21 @@ import (
 )
 
 const (
-	// Keys for PV and PVC parameters as reported by external-provisioner.
-	ParameterKeyPVCName      = "csi.storage.k8s.io/pvc/name"
-	ParameterKeyPVCNamespace = "csi.storage.k8s.io/pvc/namespace"
-	ParameterKeyPVName       = "csi.storage.k8s.io/pv/name"
+	// Kubernetes prefixes.
+	csiPrefixKubernetesStorage = "csi.storage.k8s.io"
 
-	paramNetwork     = "network"
-	paramDescription = "description"
-	paramFilesystem  = "filesystem"
+	// Storage Class K8s parameters.
+	keyPVCName      = "csi.storage.k8s.io/pvc/name"
+	keyPVCNamespace = "csi.storage.k8s.io/pvc/namespace"
+	keyPVName       = "csi.storage.k8s.io/pv/name"
 
-	// User provided labels.
-	ParameterKeyLabels = "labels"
+	// StorageClass user provided parameters.
+	keyDescription = "description"
+	keyLabels      = "labels"
+	keyNetwork     = "network"
+
+	// Shared keys between StorageClass parameters and PersistentVolume volumeAttributes.
+	keyFilesystem = "filesystem"
 
 	// Keys for tags to attach to the provisioned disk.
 	tagKeyCreatedForClaimNamespace = "kubernetes_io_created-for_pvc_namespace"
@@ -60,13 +64,28 @@ const (
 	// Keys for Topology.
 	TopologyKeyZone = "topology.gke.io/zone"
 
-	// Volume attributes.
-	attrInstanceIP     = "ip"
-	attrFilesystemName = "filesystem"
+	// PV Volume attributes.
+	keyInstanceIP = "ip"
 
 	defaultNetwork = "default"
 
 	fsnamePrefix = "lfs"
+)
+
+var (
+	// Supported parameters.
+	paramKeys = []string{
+		keyDescription,
+		keyLabels,
+		keyNetwork,
+		keyFilesystem,
+	}
+
+	// Supported volume attribute keys.
+	volumeAttributes = []string{
+		keyInstanceIP,
+		keyFilesystem,
+	}
 )
 
 // controllerServer handles volume provisioning.
@@ -105,6 +124,16 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 		}, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	params, err := normalizeParams(req.GetParameters())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	vc, err := normalizeVolumeContext(req.GetVolumeContext())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	// Check the volume exists or not.
 	instance, err := volumeIDToInstance(volumeID)
 	if err != nil {
@@ -122,9 +151,9 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 
 	return &csi.ValidateVolumeCapabilitiesResponse{
 		Confirmed: &csi.ValidateVolumeCapabilitiesResponse_Confirmed{
-			VolumeContext:      req.GetVolumeContext(),
+			VolumeContext:      vc,
 			VolumeCapabilities: req.GetVolumeCapabilities(),
-			Parameters:         req.GetParameters(),
+			Parameters:         params,
 		},
 	}, nil
 }
@@ -145,7 +174,12 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	newInstance, err := s.prepareNewInstance(volumeName, capBytes, req.GetParameters(), req.GetAccessibilityRequirements())
+	params, err := normalizeParams(req.GetParameters())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	newInstance, err := s.prepareNewInstance(volumeName, capBytes, params, req.GetAccessibilityRequirements())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -189,8 +223,7 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 			return nil, status.Error(codes.Code(op.GetError().GetCode()), op.GetError().GetMessage())
 		}
 		// Add labels.
-		param := req.GetParameters()
-		labels, err := extractLabels(param, s.driver.config.Name)
+		labels, err := extractLabels(params, s.driver.config.Name)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
@@ -224,8 +257,8 @@ func instanceToCSIVolume(instance *lustre.ServiceInstance) *csi.Volume {
 		VolumeId:      instanceToVolumeID(instance),
 		CapacityBytes: instance.CapacityGib * util.Gib,
 		VolumeContext: map[string]string{
-			attrInstanceIP:     instance.IP,
-			attrFilesystemName: instance.Filesystem,
+			keyInstanceIP: instance.IP,
+			keyFilesystem: instance.Filesystem,
 		},
 	}
 }
@@ -321,7 +354,7 @@ func (s *controllerServer) prepareNewInstance(name string, capBytes int64, param
 	networkFullNamePattern := regexp.MustCompile(`projects/([^/]+)/global/networks/([^/]+)`)
 	networkNamePattern := regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 	networkFullName := fmt.Sprintf("projects/%s/global/networks/%s", s.cloudProvider.Project, defaultNetwork)
-	if v, exists := params[paramNetwork]; exists {
+	if v, exists := params[keyNetwork]; exists {
 		if networkNamePattern.MatchString(v) {
 			networkFullName = fmt.Sprintf("projects/%s/global/networks/%s", s.cloudProvider.Project, v)
 		}
@@ -337,14 +370,14 @@ func (s *controllerServer) prepareNewInstance(name string, capBytes int64, param
 		Network:           networkFullName,
 		GkeSupportEnabled: s.driver.config.EnableLegacyLustrePort,
 	}
-	if v, exists := params[paramDescription]; exists {
+	if v, exists := params[keyDescription]; exists {
 		if len(v) > 2048 {
 			klog.Warningf("Instance %v description exceeds 2048 characters, truncating", name)
 			v = v[:2048]
 		}
 		instance.Description = v
 	}
-	if v, exists := params[paramFilesystem]; exists {
+	if v, exists := params[keyFilesystem]; exists {
 		instance.Filesystem = v
 	}
 
@@ -422,13 +455,13 @@ func extractLabels(parameters map[string]string, driverName string) (map[string]
 	scLables := make(map[string]string)
 	for k, v := range parameters {
 		switch strings.ToLower(k) {
-		case ParameterKeyPVCName:
+		case keyPVCName:
 			labels[tagKeyCreatedForClaimName] = v
-		case ParameterKeyPVCNamespace:
+		case keyPVCNamespace:
 			labels[tagKeyCreatedForClaimNamespace] = v
-		case ParameterKeyPVName:
+		case keyPVName:
 			labels[tagKeyCreatedForVolumeName] = v
-		case ParameterKeyLabels:
+		case keyLabels:
 			var err error
 			scLables, err = util.ConvertLabelsStringToMap(v)
 			if err != nil {
