@@ -35,7 +35,7 @@
 //
 // To get started with this package, create a client.
 //
-//	// go get cloud.google.com/go/lustre/apiv1alpha@latest
+//	// go get cloud.google.com/go/lustre/apiv1@latest
 //	ctx := context.Background()
 //	// This snippet has been automatically generated and should be regarded as a code template only.
 //	// It will require modifications to work:
@@ -58,7 +58,7 @@
 //
 //	req := &lustrepb.CreateInstanceRequest{
 //		// TODO: Fill request struct fields.
-//		// See https://pkg.go.dev/cloud.google.com/go/lustre/apiv1alpha/lustrepb#CreateInstanceRequest.
+//		// See https://pkg.go.dev/cloud.google.com/go/lustre/apiv1/lustrepb#CreateInstanceRequest.
 //	}
 //	op, err := c.CreateInstance(ctx, req)
 //	if err != nil {
@@ -85,4 +85,4 @@
 // [Testing against Client Libraries]: https://pkg.go.dev/cloud.google.com/go#hdr-Testing
 // [Debugging Client Libraries]: https://pkg.go.dev/cloud.google.com/go#hdr-Debugging
 // [Inspecting errors]: https://pkg.go.dev/cloud.google.com/go#hdr-Inspecting_errors
-package lustre // import "cloud.google.com/go/lustre/apiv1alpha"
+package lustre // import "cloud.google.com/go/lustre/apiv1"

@@ -29,6 +29,11 @@ cloud.google.com/go/compute/metadata
 cloud.google.com/go/longrunning
 cloud.google.com/go/longrunning/autogen
 cloud.google.com/go/longrunning/autogen/longrunningpb
+# cloud.google.com/go/lustre v0.1.0
+## explicit; go 1.23.0
+cloud.google.com/go/lustre/apiv1
+cloud.google.com/go/lustre/apiv1/lustrepb
+cloud.google.com/go/lustre/internal
 # github.com/beorn7/perks v1.0.1
 ## explicit; go 1.11
 github.com/beorn7/perks/quantile
@@ -446,10 +451,10 @@ google.golang.org/api/option
 google.golang.org/api/option/internaloption
 google.golang.org/api/transport/grpc
 google.golang.org/api/transport/http
-# google.golang.org/genproto v0.0.0-20250303144028-a0af3efb3deb
+# google.golang.org/genproto v0.0.0-20250422160041-2d3770c4ea7f
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/cloud/location
-# google.golang.org/genproto/googleapis/api v0.0.0-20250414145226-207652e42e2e
+# google.golang.org/genproto/googleapis/api v0.0.0-20250422160041-2d3770c4ea7f
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations

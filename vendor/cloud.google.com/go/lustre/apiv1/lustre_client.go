@@ -28,7 +28,7 @@ import (
 	"cloud.google.com/go/longrunning"
 	lroauto "cloud.google.com/go/longrunning/autogen"
 	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
-	lustrepb "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre/apiv1alpha/lustrepb"
+	lustrepb "cloud.google.com/go/lustre/apiv1/lustrepb"
 	gax "github.com/googleapis/gax-go/v2"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -800,7 +800,7 @@ func (c *restClient) ListInstances(ctx context.Context, req *lustrepb.ListInstan
 		if err != nil {
 			return nil, "", err
 		}
-		baseUrl.Path += fmt.Sprintf("/v1alpha/%v/instances", req.GetParent())
+		baseUrl.Path += fmt.Sprintf("/v1/%v/instances", req.GetParent())
 
 		params := url.Values{}
 		params.Add("$alt", "json;enum-encoding=int")
@@ -871,7 +871,7 @@ func (c *restClient) GetInstance(ctx context.Context, req *lustrepb.GetInstanceR
 	if err != nil {
 		return nil, err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v", req.GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v", req.GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -928,7 +928,7 @@ func (c *restClient) CreateInstance(ctx context.Context, req *lustrepb.CreateIns
 	if err != nil {
 		return nil, err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v/instances", req.GetParent())
+	baseUrl.Path += fmt.Sprintf("/v1/%v/instances", req.GetParent())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -972,7 +972,7 @@ func (c *restClient) CreateInstance(ctx context.Context, req *lustrepb.CreateIns
 		return nil, e
 	}
 
-	override := fmt.Sprintf("/v1alpha/%s", resp.GetName())
+	override := fmt.Sprintf("/v1/%s", resp.GetName())
 	return &CreateInstanceOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, resp),
 		pollPath: override,
@@ -992,7 +992,7 @@ func (c *restClient) UpdateInstance(ctx context.Context, req *lustrepb.UpdateIns
 	if err != nil {
 		return nil, err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v", req.GetInstance().GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v", req.GetInstance().GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -1042,7 +1042,7 @@ func (c *restClient) UpdateInstance(ctx context.Context, req *lustrepb.UpdateIns
 		return nil, e
 	}
 
-	override := fmt.Sprintf("/v1alpha/%s", resp.GetName())
+	override := fmt.Sprintf("/v1/%s", resp.GetName())
 	return &UpdateInstanceOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, resp),
 		pollPath: override,
@@ -1055,7 +1055,7 @@ func (c *restClient) DeleteInstance(ctx context.Context, req *lustrepb.DeleteIns
 	if err != nil {
 		return nil, err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v", req.GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v", req.GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -1098,7 +1098,7 @@ func (c *restClient) DeleteInstance(ctx context.Context, req *lustrepb.DeleteIns
 		return nil, e
 	}
 
-	override := fmt.Sprintf("/v1alpha/%s", resp.GetName())
+	override := fmt.Sprintf("/v1/%s", resp.GetName())
 	return &DeleteInstanceOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, resp),
 		pollPath: override,
@@ -1117,7 +1117,7 @@ func (c *restClient) ImportData(ctx context.Context, req *lustrepb.ImportDataReq
 	if err != nil {
 		return nil, err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v:importData", req.GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v:importData", req.GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -1157,7 +1157,7 @@ func (c *restClient) ImportData(ctx context.Context, req *lustrepb.ImportDataReq
 		return nil, e
 	}
 
-	override := fmt.Sprintf("/v1alpha/%s", resp.GetName())
+	override := fmt.Sprintf("/v1/%s", resp.GetName())
 	return &ImportDataOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, resp),
 		pollPath: override,
@@ -1176,7 +1176,7 @@ func (c *restClient) ExportData(ctx context.Context, req *lustrepb.ExportDataReq
 	if err != nil {
 		return nil, err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v:exportData", req.GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v:exportData", req.GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -1216,7 +1216,7 @@ func (c *restClient) ExportData(ctx context.Context, req *lustrepb.ExportDataReq
 		return nil, e
 	}
 
-	override := fmt.Sprintf("/v1alpha/%s", resp.GetName())
+	override := fmt.Sprintf("/v1/%s", resp.GetName())
 	return &ExportDataOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, resp),
 		pollPath: override,
@@ -1229,7 +1229,7 @@ func (c *restClient) GetLocation(ctx context.Context, req *locationpb.GetLocatio
 	if err != nil {
 		return nil, err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v", req.GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v", req.GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -1292,7 +1292,7 @@ func (c *restClient) ListLocations(ctx context.Context, req *locationpb.ListLoca
 		if err != nil {
 			return nil, "", err
 		}
-		baseUrl.Path += fmt.Sprintf("/v1alpha/%v/locations", req.GetName())
+		baseUrl.Path += fmt.Sprintf("/v1/%v/locations", req.GetName())
 
 		params := url.Values{}
 		params.Add("$alt", "json;enum-encoding=int")
@@ -1356,17 +1356,11 @@ func (c *restClient) ListLocations(ctx context.Context, req *locationpb.ListLoca
 
 // CancelOperation is a utility method from google.longrunning.Operations.
 func (c *restClient) CancelOperation(ctx context.Context, req *longrunningpb.CancelOperationRequest, opts ...gax.CallOption) error {
-	m := protojson.MarshalOptions{AllowPartial: true, UseEnumNumbers: true}
-	jsonReq, err := m.Marshal(req)
-	if err != nil {
-		return err
-	}
-
 	baseUrl, err := url.Parse(c.endpoint)
 	if err != nil {
 		return err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v:cancel", req.GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v:cancel", req.GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -1383,14 +1377,14 @@ func (c *restClient) CancelOperation(ctx context.Context, req *longrunningpb.Can
 		if settings.Path != "" {
 			baseUrl.Path = settings.Path
 		}
-		httpReq, err := http.NewRequest("POST", baseUrl.String(), bytes.NewReader(jsonReq))
+		httpReq, err := http.NewRequest("POST", baseUrl.String(), nil)
 		if err != nil {
 			return err
 		}
 		httpReq = httpReq.WithContext(ctx)
 		httpReq.Header = headers
 
-		_, err = executeHTTPRequest(ctx, c.httpClient, httpReq, c.logger, jsonReq, "CancelOperation")
+		_, err = executeHTTPRequest(ctx, c.httpClient, httpReq, c.logger, nil, "CancelOperation")
 		return err
 	}, opts...)
 }
@@ -1401,7 +1395,7 @@ func (c *restClient) DeleteOperation(ctx context.Context, req *longrunningpb.Del
 	if err != nil {
 		return err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v", req.GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v", req.GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -1436,7 +1430,7 @@ func (c *restClient) GetOperation(ctx context.Context, req *longrunningpb.GetOpe
 	if err != nil {
 		return nil, err
 	}
-	baseUrl.Path += fmt.Sprintf("/v1alpha/%v", req.GetName())
+	baseUrl.Path += fmt.Sprintf("/v1/%v", req.GetName())
 
 	params := url.Values{}
 	params.Add("$alt", "json;enum-encoding=int")
@@ -1499,7 +1493,7 @@ func (c *restClient) ListOperations(ctx context.Context, req *longrunningpb.List
 		if err != nil {
 			return nil, "", err
 		}
-		baseUrl.Path += fmt.Sprintf("/v1alpha/%v/operations", req.GetName())
+		baseUrl.Path += fmt.Sprintf("/v1/%v/operations", req.GetName())
 
 		params := url.Values{}
 		params.Add("$alt", "json;enum-encoding=int")
@@ -1572,7 +1566,7 @@ func (c *gRPCClient) CreateInstanceOperation(name string) *CreateInstanceOperati
 // CreateInstanceOperation returns a new CreateInstanceOperation from a given name.
 // The name must be that of a previously created CreateInstanceOperation, possibly from a different process.
 func (c *restClient) CreateInstanceOperation(name string) *CreateInstanceOperation {
-	override := fmt.Sprintf("/v1alpha/%s", name)
+	override := fmt.Sprintf("/v1/%s", name)
 	return &CreateInstanceOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, &longrunningpb.Operation{Name: name}),
 		pollPath: override,
@@ -1590,7 +1584,7 @@ func (c *gRPCClient) DeleteInstanceOperation(name string) *DeleteInstanceOperati
 // DeleteInstanceOperation returns a new DeleteInstanceOperation from a given name.
 // The name must be that of a previously created DeleteInstanceOperation, possibly from a different process.
 func (c *restClient) DeleteInstanceOperation(name string) *DeleteInstanceOperation {
-	override := fmt.Sprintf("/v1alpha/%s", name)
+	override := fmt.Sprintf("/v1/%s", name)
 	return &DeleteInstanceOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, &longrunningpb.Operation{Name: name}),
 		pollPath: override,
@@ -1608,7 +1602,7 @@ func (c *gRPCClient) ExportDataOperation(name string) *ExportDataOperation {
 // ExportDataOperation returns a new ExportDataOperation from a given name.
 // The name must be that of a previously created ExportDataOperation, possibly from a different process.
 func (c *restClient) ExportDataOperation(name string) *ExportDataOperation {
-	override := fmt.Sprintf("/v1alpha/%s", name)
+	override := fmt.Sprintf("/v1/%s", name)
 	return &ExportDataOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, &longrunningpb.Operation{Name: name}),
 		pollPath: override,
@@ -1626,7 +1620,7 @@ func (c *gRPCClient) ImportDataOperation(name string) *ImportDataOperation {
 // ImportDataOperation returns a new ImportDataOperation from a given name.
 // The name must be that of a previously created ImportDataOperation, possibly from a different process.
 func (c *restClient) ImportDataOperation(name string) *ImportDataOperation {
-	override := fmt.Sprintf("/v1alpha/%s", name)
+	override := fmt.Sprintf("/v1/%s", name)
 	return &ImportDataOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, &longrunningpb.Operation{Name: name}),
 		pollPath: override,
@@ -1644,7 +1638,7 @@ func (c *gRPCClient) UpdateInstanceOperation(name string) *UpdateInstanceOperati
 // UpdateInstanceOperation returns a new UpdateInstanceOperation from a given name.
 // The name must be that of a previously created UpdateInstanceOperation, possibly from a different process.
 func (c *restClient) UpdateInstanceOperation(name string) *UpdateInstanceOperation {
-	override := fmt.Sprintf("/v1alpha/%s", name)
+	override := fmt.Sprintf("/v1/%s", name)
 	return &UpdateInstanceOperation{
 		lro:      longrunning.InternalNewOperation(*c.LROClient, &longrunningpb.Operation{Name: name}),
 		pollPath: override,

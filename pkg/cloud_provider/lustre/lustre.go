@@ -26,8 +26,8 @@ import (
 	"strings"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
-	lustre "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre/apiv1alpha"
-	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre/apiv1alpha/lustrepb"
+	lustre "cloud.google.com/go/lustre/apiv1"
+	"cloud.google.com/go/lustre/apiv1/lustrepb"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/common"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/googleapi"
@@ -51,7 +51,7 @@ const (
 	staging  = "staging"
 	prod     = "prod"
 
-	v1alphaMessageType = "google.cloud.lustre.v1alpha.OperationMetadata"
+	v1MessageType = "google.cloud.lustre.v1.OperationMetadata"
 )
 
 // userErrorCodeMap tells how API error types are translated to error codes.
@@ -249,8 +249,8 @@ func (sm *lustreServiceManager) GetCreateInstanceOp(ctx context.Context, instanc
 			return nil, fmt.Errorf("ListOperations failed for request %v: %w", req, err)
 		}
 
-		if resp.GetMetadata().MessageName() != v1alphaMessageType {
-			klog.V(4).Infof("Skipping operation %q due to invalid message type: got %q, expected %q", resp.GetName(), resp.GetMetadata().MessageName(), v1alphaMessageType)
+		if resp.GetMetadata().MessageName() != v1MessageType {
+			klog.V(4).Infof("Skipping operation %q due to invalid message type: got %q, expected %q", resp.GetName(), resp.GetMetadata().MessageName(), v1MessageType)
 
 			continue
 		}
