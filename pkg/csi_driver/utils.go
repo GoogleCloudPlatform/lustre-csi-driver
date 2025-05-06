@@ -73,8 +73,9 @@ func normalizeKeys(input map[string]string, supported map[string]struct{}) (map[
 	for inputKey, inputVal := range input {
 		normalizedKey := normalize(inputKey)
 
-		// Don't validate k8s keys, keys such as csi.storage.k8s.io/pvc/name are added by the system.
-		isK8sKey := strings.HasPrefix(normalizedKey, csiPrefixKubernetesStorage)
+		// Don't validate k8s keys, keys such as csi.storage.k8s.io/pvc/name and storage.kubernetes.io are added by the system.
+		isK8sKey := strings.HasPrefix(normalizedKey, csiPrefixKubernetesStorage) ||
+			strings.HasPrefix(normalizedKey, storagePrefixKubernetes)
 
 		if _, ok := supported[normalizedKey]; !ok && !isK8sKey {
 			unsupported = append(unsupported, inputKey)

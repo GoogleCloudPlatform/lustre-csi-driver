@@ -37,6 +37,7 @@ import (
 const (
 	// Kubernetes prefixes.
 	csiPrefixKubernetesStorage = "csi.storage.k8s.io"
+	storagePrefixKubernetes    = "storage.kubernetes.io"
 
 	// Storage Class K8s parameters.
 	keyPVCName      = "csi.storage.k8s.io/pvc/name"
