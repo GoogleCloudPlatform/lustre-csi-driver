@@ -69,7 +69,7 @@ fi
 # TODO: Set module version to 2.14 when gke picks up cos-117-18613-164-93.
 /usr/bin/cos-dkms install lustre-client-drivers \
     --gcs-bucket=cos-default \
-    --module-version=2.16.0 \
+    --module-version=2.14.0_p184 \
     --kernelmodulestree=/host_modules \
     --module-arg=lnet.accept_port=${LNET_PORT} \
     --lsb-release-path=/host_etc/lsb-release \
