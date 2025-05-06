@@ -5,7 +5,7 @@ go 1.24.1
 require (
 	cloud.google.com/go/compute/metadata v0.6.0
 	cloud.google.com/go/longrunning v0.6.7
-	github.com/container-storage-interface/spec v1.9.0
+	github.com/container-storage-interface/spec v1.11.0
 	github.com/googleapis/gax-go/v2 v2.14.1
 	github.com/kubernetes-csi/csi-lib-utils v0.19.0
 	github.com/kubernetes-csi/csi-test/v5 v5.2.0
