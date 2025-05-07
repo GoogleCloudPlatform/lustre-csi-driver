@@ -43,48 +43,20 @@ spec:
         kubernetes.io/arch: amd64
         cloud.google.com/gke-os-distribution: cos
       initContainers:
-      - name: disable-loadpin
-        image: "{{ .Values.image.cos.repository }}:{{ .Values.image.cos.tag }}"
+      - name: lustre-kmod-installer
+        image: "{{ .Values.image.kmod.repository }}:{{ .Values.image.kmod.tag | default .Chart.AppVersion }}"
         securityContext:
-          privileged: true
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            # Disable LoadPin if it's not already disabled
-            if cat /proc/cmdline | grep "loadpin"; then
-              echo "LoadPin has already been disabled. Move to kmod installation."
-            else
-              echo "Sleep 60s until the node is ready"
-              sleep 60
-              echo "LoadPin is not disabled. Disabling LoadPin now."
-              mkdir -p /mnt/disks
-              mount /dev/disk/by-label/EFI-SYSTEM /mnt/disks
-              sed -i -e 's|module.sig_enforce=0|module.sig_enforce=0 loadpin.enforce=0|g' /mnt/disks/efi/boot/grub.cfg
-              umount /mnt/disks
-              echo 1 > /proc/sys/kernel/sysrq
-              echo b > /proc/sysrq-trigger
-            fi
+         privileged: true
+        env:
+        - name: ENABLE_LEGACY_LUSTRE_PORT
+          value: "true"
+        - name: CHECK_LOADPIN
+          value: "true"
         volumeMounts:
         - name: dev
           mountPath: /dev
-      - name: install-lustre-mods
-        image: "{{ .Values.image.cos.repository }}:{{ .Values.image.cos.tag }}"
-        securityContext:
-         privileged: true
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            # Install the latest Lustre client drivers.
-            #
-            # --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
-            # --latest: Installs the latest available driver version.
-            # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
-            # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
-            # --insert-on-install: Inserts the module into the kernel after installation.
-            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --latest --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
-        volumeMounts:
         - name: host-etc
-          mountPath: /host_etc
+          mountPath: /host_etc/lsb-release
         - name: host-modules
           mountPath: /host_modules
       containers:
@@ -160,7 +132,8 @@ spec:
             type: DirectoryOrCreate
         - name: host-etc
           hostPath:
-            path: /etc
+            path: /etc/lsb-release
+            type: File
         - name: host-modules
           hostPath:
             path: /lib/modules
