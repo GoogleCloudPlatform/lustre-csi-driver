@@ -56,7 +56,8 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
     ```sh
     kubectl create secret generic lustre-csi-driver-sa \
         --from-file=${GSA_DIR}/lustre_csi_driver_sa.json \
-        --namespace=${NAMESPACE}
+        --namespace=${NAMESPACE} \
+        --create-namespace
     ```
 
     > Note: After successfully creating the secret, make sure to securely remove the service account key file.
@@ -67,7 +68,6 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
     ```sh
     helm upgrade -i lustre-csi-driver lustre-csi-driver \
       --namespace ${NAMESPACE} \
-      --create-namespace \
       --set image.lustre.tag="$VERSION"
     ```
 

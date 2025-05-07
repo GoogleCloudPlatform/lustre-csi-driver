@@ -98,6 +98,8 @@ spec:
             - "--endpoint=unix:/csi/csi.sock"
             - "--nodeid=$(KUBE_NODE_NAME)"
             - "--controller=true"
+            - "--lustre-endpoint=$(ENDPOINT)"
+            - "--enable-legacy-lustre-port=true"
           ports:
             - containerPort: 29633
               name: healthz
@@ -124,6 +126,11 @@ spec:
                   fieldPath: spec.nodeName
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "/etc/cloud_sa/lustre_csi_driver_sa.json"
+            - name: ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: lustre-config
+                  key: endpoint
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
@@ -136,3 +143,11 @@ spec:
         - name: cloud-sa-volume
           secret:
             secretName: lustre-csi-driver-sa
+---
+# Not required for managed driver.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lustre-config
+data:
+  endpoint: prod
