@@ -33,10 +33,6 @@ import (
 )
 
 const (
-	// NodePublishVolume VolumeContext parameters.
-	volumeContextIP     = "ip"
-	volumeContextFSName = "filesystem"
-
 	rwMask   = os.FileMode(0o660)
 	roMask   = os.FileMode(0o440)
 	execMask = os.FileMode(0o110)
@@ -77,9 +73,12 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
 	}
 
-	context := req.GetVolumeContext()
-	ip := context[volumeContextIP]
-	fsname := context[volumeContextFSName]
+	vc, err := normalizeVolumeContext(req.GetVolumeContext())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	ip := vc[keyInstanceIP]
+	fsname := vc[keyFilesystem]
 
 	if len(ip) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Lustre instance IP is not provided")

@@ -19,7 +19,7 @@ metadata:
 spec:
   storageClassName: ""
   capacity:
-    storage: 16Ti
+    storage: 18000Gi
   accessModes:
     - ReadWriteMany
   persistentVolumeReclaimPolicy: Retain
@@ -42,4 +42,4 @@ spec:
   volumeName: preprov-pv
   resources:
     requests:
-      storage: 16Ti
+      storage: 18000Gi

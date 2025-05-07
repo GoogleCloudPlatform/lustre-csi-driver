@@ -26,8 +26,8 @@ import (
 	"strings"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
-	lustre "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre/apiv1alpha"
-	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre/apiv1alpha/lustrepb"
+	lustre "cloud.google.com/go/lustre/apiv1"
+	"cloud.google.com/go/lustre/apiv1/lustrepb"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/common"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/googleapi"
@@ -51,7 +51,7 @@ const (
 	staging  = "staging"
 	prod     = "prod"
 
-	v1alphaMessageType = "google.cloud.lustre.v1alpha.OperationMetadata"
+	v1MessageType = "google.cloud.lustre.v1.OperationMetadata"
 )
 
 // userErrorCodeMap tells how API error types are translated to error codes.
@@ -249,8 +249,8 @@ func (sm *lustreServiceManager) GetCreateInstanceOp(ctx context.Context, instanc
 			return nil, fmt.Errorf("ListOperations failed for request %v: %w", req, err)
 		}
 
-		if resp.GetMetadata().MessageName() != v1alphaMessageType {
-			klog.V(4).Infof("Skipping operation %q due to invalid message type: got %q, expected %q", resp.GetName(), resp.GetMetadata().MessageName(), v1alphaMessageType)
+		if resp.GetMetadata().MessageName() != v1MessageType {
+			klog.V(4).Infof("Skipping operation %q due to invalid message type: got %q, expected %q", resp.GetName(), resp.GetMetadata().MessageName(), v1MessageType)
 
 			continue
 		}
@@ -340,20 +340,21 @@ func IsNotFoundErr(err error) bool {
 
 func CompareInstances(a, b *ServiceInstance) error {
 	mismatches := []string{}
+
 	if a.Name != b.Name {
-		mismatches = append(mismatches, "instance name")
+		mismatches = append(mismatches, fmt.Sprintf("instance name: expected %q, got %q", a.Name, b.Name))
 	}
 	if a.Project != b.Project {
-		mismatches = append(mismatches, "instance project")
+		mismatches = append(mismatches, fmt.Sprintf("instance project: expected %q, got %q", a.Project, b.Project))
 	}
 	if a.Location != b.Location {
-		mismatches = append(mismatches, "instance location")
+		mismatches = append(mismatches, fmt.Sprintf("instance location: expected %q, got %q", a.Location, b.Location))
 	}
 	if a.CapacityGib != b.CapacityGib {
-		mismatches = append(mismatches, "instance size")
+		mismatches = append(mismatches, fmt.Sprintf("instance size: expected %d GiB, got %d GiB", a.CapacityGib, b.CapacityGib))
 	}
 	if a.Network != b.Network {
-		mismatches = append(mismatches, "network name")
+		mismatches = append(mismatches, fmt.Sprintf("network name: expected %q, got %q", a.Network, b.Network))
 	}
 
 	if len(mismatches) > 0 {

@@ -52,7 +52,7 @@ Expected output:
 
 ```bash
 NAME          STATUS   VOLUME        CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-preprov-pvc   Bound    preprov-pv   16Ti           RWX                        76s
+preprov-pvc   Bound    preprov-pv    18000Gi         RWX                      76s
 ```
 
 ## Using the Persistent Volume in a Pod
@@ -103,7 +103,7 @@ Expected output:
 
 ```bash
 NAME        CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS     CLAIM                 STORAGECLASS   REASON   AGE
-preprov-pv   16Ti      RWX            Retain           Released   default/preprov-pvc                           2m28s
+preprov-pv   18000Gi      RWX            Retain        Released   default/preprov-pvc                           2m28s
 ```
 
 ### 3. Reuse the PV
@@ -124,7 +124,7 @@ Expected output:
 
 ```bash
 NAME        CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM   STORAGECLASS   REASON   AGE
-preprov-pv   16Ti      RWX            Retain           Available                                   19m
+preprov-pv   18000Gi      RWX           Retain         Available                                   19m
 ```
 
 ### 4. Delete the PV (If No Longer Needed)
