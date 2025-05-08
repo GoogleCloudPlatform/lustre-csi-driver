@@ -63,17 +63,18 @@ var userErrorCodeMap = map[int]codes.Code{
 }
 
 type ServiceInstance struct {
-	Project           string
-	Location          string
-	Name              string
-	Filesystem        string
-	Network           string
-	IP                string
-	Description       string
-	State             string
-	Labels            map[string]string
-	CapacityGib       int64
-	GkeSupportEnabled bool
+	Project                  string
+	Location                 string
+	Name                     string
+	Filesystem               string
+	Network                  string
+	IP                       string
+	Description              string
+	State                    string
+	Labels                   map[string]string
+	CapacityGib              int64
+	GkeSupportEnabled        bool
+	PerUnitStorageThroughput string
 }
 
 type ListFilter struct {

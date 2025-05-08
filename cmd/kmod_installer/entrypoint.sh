@@ -65,8 +65,6 @@ fi
 #                                     parameter configures the port LNET will use. This is
 #                                     essential for proper communication between Lustre clients
 #                                     and servers. The default value is 988.
-
-# TODO: Set module version to 2.14 when gke picks up cos-117-18613-164-93.
 /usr/bin/cos-dkms install lustre-client-drivers \
     --gcs-bucket=cos-default \
     --module-version=2.14.0_p184 \

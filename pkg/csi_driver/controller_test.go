@@ -67,7 +67,8 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					keyFilesystem: testFSName,
+					keyFilesystem:               testFSName,
+					keyPerUnitStorageThroughput: "1000",
 				},
 			},
 			resp: &csi.CreateVolumeResponse{
@@ -80,6 +81,27 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 			},
+		},
+		{
+			name: "invalid PerUnitStorageThroughput",
+			req: &csi.CreateVolumeRequest{
+				Name: testCSIVolume,
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+						},
+					},
+				},
+				Parameters: map[string]string{
+					keyFilesystem:               testFSName,
+					keyPerUnitStorageThroughput: "100",
+				},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "invalid PerUnitStorageThroughput 100, must be 1000, 500, or 250"),
 		},
 		{
 			name: "empty name",
