@@ -45,9 +45,10 @@ const (
 	keyPVName       = "csi.storage.k8s.io/pv/name"
 
 	// StorageClass user provided parameters.
-	keyDescription = "description"
-	keyLabels      = "labels"
-	keyNetwork     = "network"
+	keyDescription              = "description"
+	keyLabels                   = "labels"
+	keyNetwork                  = "network"
+	keyPerUnitStorageThroughput = "perunitstoragethroughput"
 
 	// Shared keys between StorageClass parameters and PersistentVolume volumeAttributes.
 	keyFilesystem = "filesystem"
@@ -80,6 +81,7 @@ var (
 		keyLabels,
 		keyNetwork,
 		keyFilesystem,
+		keyPerUnitStorageThroughput,
 	}
 
 	// Supported volume attribute keys.
@@ -380,6 +382,12 @@ func (s *controllerServer) prepareNewInstance(name string, capBytes int64, param
 	}
 	if v, exists := params[keyFilesystem]; exists {
 		instance.Filesystem = v
+	}
+	if v, exists := params[keyPerUnitStorageThroughput]; exists {
+		if !(v == "1000" || v == "500" || v == "250") {
+			return nil, fmt.Errorf("invalid PerUnitStorageThroughput %s, must be 1000, 500, or 250", v)
+		}
+		instance.PerUnitStorageThroughput = v
 	}
 
 	return instance, nil
