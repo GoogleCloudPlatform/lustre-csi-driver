@@ -50,8 +50,6 @@ const (
 	autopush = "autopush"
 	staging  = "staging"
 	prod     = "prod"
-
-	v1MessageType = "google.cloud.lustre.v1.OperationMetadata"
 )
 
 // userErrorCodeMap tells how API error types are translated to error codes.
@@ -239,6 +237,9 @@ func (sm *lustreServiceManager) GetInstance(ctx context.Context, instance *Servi
 func (sm *lustreServiceManager) GetCreateInstanceOp(ctx context.Context, instance *ServiceInstance) (*longrunningpb.Operation, error) {
 	req := &longrunningpb.ListOperationsRequest{
 		Name: fmt.Sprintf("projects/%s/locations/%s", instance.Project, instance.Location),
+		// Filter to include only v1 API operations.
+		// Including other versions (e.g., v1alpha) may cause the HTTP client to error when parsing the response.
+		Filter: "metadata.apiVersion=\"v1\"",
 	}
 	it := sm.lustreClient.ListOperations(ctx, req)
 	for {
@@ -248,12 +249,6 @@ func (sm *lustreServiceManager) GetCreateInstanceOp(ctx context.Context, instanc
 		}
 		if err != nil {
 			return nil, fmt.Errorf("ListOperations failed for request %v: %w", req, err)
-		}
-
-		if resp.GetMetadata().MessageName() != v1MessageType {
-			klog.V(4).Infof("Skipping operation %q due to invalid message type: got %q, expected %q", resp.GetName(), resp.GetMetadata().MessageName(), v1MessageType)
-
-			continue
 		}
 
 		var metaData lustrepb.OperationMetadata
