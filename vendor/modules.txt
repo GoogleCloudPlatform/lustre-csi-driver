@@ -435,7 +435,7 @@ golang.org/x/time/rate
 golang.org/x/tools/cover
 golang.org/x/tools/go/ast/inspector
 golang.org/x/tools/internal/astutil/edge
-# google.golang.org/api v0.231.0
+# google.golang.org/api v0.232.0
 ## explicit; go 1.23.0
 google.golang.org/api/cloudresourcemanager/v1
 google.golang.org/api/compute/v1
@@ -458,7 +458,7 @@ google.golang.org/genproto/googleapis/cloud/location
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations
-# google.golang.org/genproto/googleapis/rpc v0.0.0-20250425173222-7b384671a197
+# google.golang.org/genproto/googleapis/rpc v0.0.0-20250428153025-10db94c68c34
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/rpc/code
 google.golang.org/genproto/googleapis/rpc/errdetails
