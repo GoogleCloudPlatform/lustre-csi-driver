@@ -19,8 +19,10 @@ package driver
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -128,6 +130,14 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 
 	if mounted {
 		klog.V(4).Infof("NodeStageVolume successfully mounted device %v to path %s on node %s, mount already exists.", volumeID, target, nodeName)
+		if err := setClientCaching(context); err != nil {
+			klog.Infof("setClientCaching failed for volume %q, cleaning up mount point %s on node %s", volumeID, target, nodeName)
+			if unmntErr := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+				klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr.Error())
+			}
+
+			return nil, status.Error(codes.Internal, err.Error())
+		}
 
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
@@ -153,6 +163,15 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 		}
 
 		return nil, status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, target, nodeName, err)
+	}
+
+	if err := setClientCaching(context); err != nil {
+		klog.Infof("setClientCaching failed for volume %q, cleaning up mount point %s on node %s", volumeID, target, nodeName)
+		if unmntErr := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr.Error())
+		}
+
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	klog.V(4).Infof("NodeStageVolume successfully mounted volume %v to path %s on node %s", volumeID, target, nodeName)
@@ -529,6 +548,29 @@ func setVolumeOwnershipTopLevel(volumeID, dir, fsGroup string, readOnly bool) er
 		return err
 	}
 	klog.InfoS("NodePublishVolume successfully changed ownership and permissions of top-level directory", "volume", volumeID, "path", dir, "fsGroup", fsGroup)
+
+	return nil
+}
+
+func setClientCaching(volumeContext map[string]string) error {
+	var params []string
+	for key, value := range volumeContext {
+		if strings.HasPrefix(key, "llite") {
+			params = append(params, fmt.Sprintf("%s=%s", key, value))
+		}
+	}
+
+	if len(params) == 0 {
+		return nil
+	}
+
+	klog.Infof("Setting lustre client caching params: %q", params)
+	cmd := exec.Command("lctl", append([]string{"set_param"}, params...)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
 
 	return nil
 }
