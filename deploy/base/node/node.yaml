@@ -51,6 +51,8 @@ spec:
         env:
         - name: ENABLE_LEGACY_LUSTRE_PORT
           value: "true"
+        - name: CHECK_LOADPIN
+          value: "true"
         volumeMounts:
         - name: dev # TODO(tyuchn): Remove this volume once LoadPin excludes kernel modules.
           mountPath: /dev
