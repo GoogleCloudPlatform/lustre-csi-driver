@@ -1,4 +1,4 @@
-# cloud.google.com/go v0.121.0
+# cloud.google.com/go v0.121.1
 ## explicit; go 1.23.0
 cloud.google.com/go
 # cloud.google.com/go/auth v0.16.1
@@ -454,11 +454,11 @@ google.golang.org/api/transport/http
 # google.golang.org/genproto v0.0.0-20250422160041-2d3770c4ea7f
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/cloud/location
-# google.golang.org/genproto/googleapis/api v0.0.0-20250422160041-2d3770c4ea7f
+# google.golang.org/genproto/googleapis/api v0.0.0-20250425173222-7b384671a197
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations
-# google.golang.org/genproto/googleapis/rpc v0.0.0-20250428153025-10db94c68c34
+# google.golang.org/genproto/googleapis/rpc v0.0.0-20250505200425-f936aa4a68b2
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/rpc/code
 google.golang.org/genproto/googleapis/rpc/errdetails
