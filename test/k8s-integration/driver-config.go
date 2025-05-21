@@ -42,7 +42,7 @@ const (
 	// configurable timeouts for the k8s e2e testsuites.
 	podStartTimeout       = "600s"
 	claimProvisionTimeout = "3600s"
-	pvDeleteTimeout       = "1800s"
+	pvDeleteTimeout       = "3600s"
 
 	// These are keys for the configurable timeout map.
 	podStartTimeoutKey       = "PodStart"
@@ -88,11 +88,16 @@ func generateDriverConfigFile(testParams *testParameters, storageClassFile strin
 		pvDeleteTimeoutKey:       pvDeleteTimeout,
 	}
 
+	minVolumeSize := "1Ti"
+	if testParams.gkeManagedDriver {
+		minVolumeSize = "18000Gi"
+	}
+
 	params := driverConfig{
 		StorageClassFile:  filepath.Join(testParams.pkgDir, testConfigDir, storageClassFile),
 		StorageClass:      storageClassFile[:strings.LastIndex(storageClassFile, ".")],
 		Capabilities:      caps,
-		MinimumVolumeSize: "1Ti",
+		MinimumVolumeSize: minVolumeSize,
 		Timeouts:          timeouts,
 	}
 

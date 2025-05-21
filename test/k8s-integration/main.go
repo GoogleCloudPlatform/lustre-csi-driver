@@ -81,6 +81,7 @@ type testParameters struct {
 	imageType         string
 	nodeVersion       string
 	parallel          int
+	gkeManagedDriver  bool
 }
 
 func main() {
@@ -141,11 +142,12 @@ func handle() error {
 	defer syscall.Umask(oldmask)
 
 	testParams := &testParameters{
-		testFocus:      *testFocus,
-		stagingVersion: string(uuid.NewUUID()),
-		imageType:      *imageType,
-		parallel:       *parallel,
-		pkgDir:         *pkgDir,
+		testFocus:        *testFocus,
+		stagingVersion:   string(uuid.NewUUID()),
+		imageType:        *imageType,
+		parallel:         *parallel,
+		pkgDir:           *pkgDir,
+		gkeManagedDriver: *useManagedDriver,
 	}
 	// If running in Prow, then acquire and set up a project through Boskos
 	if *inProw {

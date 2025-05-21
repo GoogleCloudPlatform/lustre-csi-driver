@@ -17,4 +17,4 @@ DriverInfo:
   {{end}}
   SupportedSizeRange:
     Min: {{.MinimumVolumeSize}}
-    Max: 1Pi
+    Max: 936000Gi
