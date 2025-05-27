@@ -58,7 +58,9 @@ check_lnet_port() {
 
 install_lustre_client_drivers() {
     # --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
-    # --module-version: Sets the lustre client driver version.
+    # --latest: Installs the latest available driver version that is compatible with the kernel version running on the current node. 
+    #           We can’t pin to a specific driver version because GKE nodes can skew from the control plane version. 
+    #           If we pin to a fixed version and the control plane is ahead of the node, it could result in a kmod installer failure due to the node's kernel being too old for the specified driver version.
     # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
     # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
     # --insert-on-install: Inserts the module into the kernel after installation.
@@ -69,7 +71,7 @@ install_lustre_client_drivers() {
     #                                     and servers. The default value is 988.
     /usr/bin/cos-dkms install lustre-client-drivers \
         --gcs-bucket=cos-default \
-        --module-version=2.14.0_p184 \
+        --latest \
         --kernelmodulestree=/host_modules \
         --module-arg=lnet.accept_port=${LNET_PORT} \
         --lsb-release-path=/host_etc/lsb-release \
