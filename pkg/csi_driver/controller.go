@@ -60,7 +60,7 @@ const (
 	tagKeyCreatedBy                = "storage_gke_io_created-by"
 
 	MinVolumeSizeBytes     int64 = 18000 * util.Gib
-	MaxVolumeSizeBytes     int64 = 936000 * util.Gib
+	MaxVolumeSizeBytes     int64 = 954000 * util.Gib
 	thinInstanceSizeBytyes int64 = 1 * util.Tib
 
 	// Keys for Topology.
