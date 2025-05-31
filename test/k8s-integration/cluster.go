@@ -171,7 +171,7 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 	if useManagedDriver {
 		cmdParams = append(cmdParams, "--addons", "LustreCsiDriver", "--enable-legacy-lustre-port")
 		// TODO(tyuchn): Remove hard coded version once gke driver is rolled out to rapid.
-		cmdParams = append(cmdParams, "--cluster-version", "1.33.0-gke.2004000")
+		cmdParams = append(cmdParams, "--cluster-version", "1.33.1-gke.1375000")
 	}
 
 	// TODO(tyuchn): Remove beta once gke driver is rolled out to rapid.
