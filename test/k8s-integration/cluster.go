@@ -152,6 +152,11 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 	}
 
 	// TODO(tyuchn): remove these debugging commands.
+	out, err = exec.Command("gcloud", "components", "update").CombinedOutput()
+	klog.Infof("gcloud components update: %s", out)
+	if err != nil {
+		return fmt.Errorf("failed to update gcloud version: %w", err)
+	}
 	out, err = exec.Command("gcloud", "--version").CombinedOutput()
 	klog.Infof("gcloud --version: %s", out)
 	if err != nil {
