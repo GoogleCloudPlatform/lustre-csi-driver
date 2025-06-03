@@ -31,13 +31,14 @@ import (
 )
 
 const (
-	driverName    = "test-driver"
-	driverVersion = "test-driver-version"
-	nodeID        = "io.kubernetes.storage.mock"
-	endpoint      = "unix:/tmp/csi.sock"
-	tmpDir        = "/tmp/csi"
-	targetPath    = "/tmp/csi/target"
-	stagingPath   = "/tmp/csi/staging"
+	driverName                    = "test-driver"
+	driverVersion                 = "test-driver-version"
+	nodeID                        = "io.kubernetes.storage.mock"
+	endpoint                      = "unix:/tmp/csi.sock"
+	tmpDir                        = "/tmp/csi"
+	targetPath                    = "/tmp/csi/target"
+	stagingPath                   = "/tmp/csi/staging"
+	paramPerUnitStorageThroughput = "perUnitStorageThroughput"
 
 	GiB = 1024 * 1024 * 1024
 )
@@ -98,6 +99,9 @@ func TestSanity(t *testing.T) {
 		DialOptions:    []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
 		IDGen:          &sanity.DefaultIDGenerator{},
 		TestVolumeSize: int64(18000 * GiB),
+		TestVolumeParameters: map[string]string{
+			paramPerUnitStorageThroughput: "1000",
+		},
 	}
 	sanity.Test(t, testConfig)
 }

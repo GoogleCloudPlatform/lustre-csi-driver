@@ -101,7 +101,27 @@ func TestCreateVolume(t *testing.T) {
 					keyPerUnitStorageThroughput: "100",
 				},
 			},
-			expectErr: status.Error(codes.InvalidArgument, "invalid PerUnitStorageThroughput 100, must be 1000, 500, or 250"),
+			expectErr: status.Error(codes.InvalidArgument, "invalid perUnitStorageThroughput 100, must be 1000, 500, 250 or 125"),
+		},
+		{
+			name: "perUnitStorageThroughput not specified",
+			req: &csi.CreateVolumeRequest{
+				Name: testCSIVolume,
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+						},
+					},
+				},
+				Parameters: map[string]string{
+					keyFilesystem: testFSName,
+				},
+			},
+			expectErr: status.Error(codes.InvalidArgument, "parameter 'perUnitStorageThroughput' is required; supported values are 1000, 500, 250, or 125"),
 		},
 		{
 			name: "empty name",
@@ -148,7 +168,8 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					keyFilesystem: "existing",
+					keyFilesystem:               "existing",
+					keyPerUnitStorageThroughput: "1000",
 				},
 			},
 			resp: &csi.CreateVolumeResponse{
@@ -177,7 +198,8 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					keyFilesystem: "creating",
+					keyFilesystem:               "creating",
+					keyPerUnitStorageThroughput: "1000",
 				},
 			},
 			expectErr: status.Error(codes.DeadlineExceeded, "Volume creating-instance not ready, current state: CREATING"),
@@ -197,7 +219,8 @@ func TestCreateVolume(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					keyFilesystem: "unknown",
+					keyFilesystem:               "unknown",
+					keyPerUnitStorageThroughput: "1000",
 				},
 			},
 			expectErr: status.Error(codes.Unavailable, "Volume unknown-instance not ready, current state: STATE_UNSPECIFIED"),

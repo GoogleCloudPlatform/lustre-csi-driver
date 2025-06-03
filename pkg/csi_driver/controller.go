@@ -383,12 +383,15 @@ func (s *controllerServer) prepareNewInstance(name string, capBytes int64, param
 	if v, exists := params[keyFilesystem]; exists {
 		instance.Filesystem = v
 	}
-	if v, exists := params[keyPerUnitStorageThroughput]; exists {
-		if !(v == "1000" || v == "500" || v == "250") {
-			return nil, fmt.Errorf("invalid PerUnitStorageThroughput %s, must be 1000, 500, or 250", v)
-		}
-		instance.PerUnitStorageThroughput = v
+
+	v, exists := params[keyPerUnitStorageThroughput]
+	if !exists {
+		return nil, fmt.Errorf("parameter 'perUnitStorageThroughput' is required; supported values are 1000, 500, 250, or 125")
 	}
+	if !(v == "1000" || v == "500" || v == "250" || v == "125") {
+		return nil, fmt.Errorf("invalid perUnitStorageThroughput %s, must be 1000, 500, 250 or 125", v)
+	}
+	instance.PerUnitStorageThroughput = v
 
 	return instance, nil
 }
