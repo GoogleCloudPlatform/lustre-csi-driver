@@ -24,3 +24,5 @@ allowedTopologies:
     - key: topology.gke.io/zone
       values:
         - us-central1-a
+parameters:
+  perUnitStorageThroughput: "1000"
