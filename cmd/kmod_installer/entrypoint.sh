@@ -24,7 +24,6 @@ fi
 
 disable_loadpin_if_needed() {
     # Check if LoadPin is already disabled.
-    # TODO: Remove this function once LoadPin excludes kernel modules.
     if grep -q "loadpin" /proc/cmdline; then
         echo "LoadPin has already been disabled. Moving to kmod installation."
     else
