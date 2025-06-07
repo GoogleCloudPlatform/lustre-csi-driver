@@ -166,8 +166,8 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 		"--quiet", "--machine-type", "n1-standard-2", "--image-type", imageType, "--network", *clusterNewtwork,
 		"--workload-pool", project + ".svc.id.goog",
 	}
-	// TODO(tyuchn): Remove `!useManagedDriver` check once gke driver is rolled out to rapid.
-	if isVariableSet(gkeClusterVersion) && !useManagedDriver {
+
+	if isVariableSet(gkeClusterVersion) {
 		cmdParams = append(cmdParams, "--cluster-version", *gkeClusterVersion)
 		cmdParams = append(cmdParams, "--release-channel", "rapid")
 	}
@@ -178,12 +178,9 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 
 	if useManagedDriver {
 		cmdParams = append(cmdParams, "--addons", "LustreCsiDriver", "--enable-legacy-lustre-port")
-		// TODO(tyuchn): Remove hard coded version once gke driver is rolled out to rapid.
-		cmdParams = append(cmdParams, "--cluster-version", "1.33.1-gke.1375000")
 	}
 
-	// TODO(tyuchn): Remove beta once gke driver is rolled out to rapid.
-	cmd = exec.Command("gcloud", "beta")
+	cmd = exec.Command("gcloud")
 	cmd.Args = append(cmd.Args, cmdParams...)
 	err = runCommand("Starting E2E Cluster on GKE", cmd)
 	if err != nil {

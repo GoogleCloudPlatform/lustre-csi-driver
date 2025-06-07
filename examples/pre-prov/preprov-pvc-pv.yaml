@@ -24,6 +24,9 @@ spec:
     - ReadWriteMany
   persistentVolumeReclaimPolicy: Retain
   volumeMode: Filesystem
+  claimRef:
+    namespace: default
+    name: preprov-pvc
   csi:
     driver: lustre.csi.storage.gke.io
     volumeHandle: <project-id>/<instance-location>/<instance-name> # Modify this to use the project, zone, and mananged lustre instance name.
