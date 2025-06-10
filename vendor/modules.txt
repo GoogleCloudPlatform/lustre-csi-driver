@@ -29,7 +29,7 @@ cloud.google.com/go/compute/metadata
 cloud.google.com/go/longrunning
 cloud.google.com/go/longrunning/autogen
 cloud.google.com/go/longrunning/autogen/longrunningpb
-# cloud.google.com/go/lustre v0.1.0
+# cloud.google.com/go/lustre v0.1.1
 ## explicit; go 1.23.0
 cloud.google.com/go/lustre/apiv1
 cloud.google.com/go/lustre/apiv1/lustrepb
@@ -454,11 +454,11 @@ google.golang.org/api/transport/http
 # google.golang.org/genproto v0.0.0-20250505200425-f936aa4a68b2
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/cloud/location
-# google.golang.org/genproto/googleapis/api v0.0.0-20250505200425-f936aa4a68b2
+# google.golang.org/genproto/googleapis/api v0.0.0-20250528174236-200df99c418a
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations
-# google.golang.org/genproto/googleapis/rpc v0.0.0-20250519155744-55703ea1f237
+# google.golang.org/genproto/googleapis/rpc v0.0.0-20250528174236-200df99c418a
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/rpc/code
 google.golang.org/genproto/googleapis/rpc/errdetails
