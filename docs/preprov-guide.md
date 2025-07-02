@@ -20,7 +20,7 @@ This guide provides a simple example of how to use the Lustre CSI driver to impo
 
 ## Importing a Lustre Instance as a Persistent Volume
 
-If you haven't already provisioned a Google Cloud Managed Lustre instance, follow the instructions [here](https://cloud.google.com/managed-lustre/docs/create-instance) to create one.
+If you haven't already provisioned a Google Cloud Managed Lustre instance, follow the instructions [here](https://cloud.google.com/managed-lustre/docs/create-instance) to create one. Make sure to specify the `gke-support-enabled` flag when creating the instance.
 
 ## Creating a Persistent Volume for a Lustre Instance
 

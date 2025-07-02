@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
 1. Environment Setup
 
     ```sh
-    export VERSION=1.0.0    # Set lustre-csi-driver image tag
+    export VERSION=v0.2.1-gke.0    # Set lustre-csi-driver image tag
     export NAMESPACE="lustre-csi-driver"
     ```
 
@@ -54,6 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
     - Create a Kubernetes secret from the service account key:
 
     ```sh
+    kubectl create namespace ${NAMESPACE}
     kubectl create secret generic lustre-csi-driver-sa \
         --from-file=${GSA_DIR}/lustre_csi_driver_sa.json \
         --namespace=${NAMESPACE}
@@ -67,7 +68,6 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
     ```sh
     helm upgrade -i lustre-csi-driver lustre-csi-driver \
       --namespace ${NAMESPACE} \
-      --create-namespace \
       --set image.lustre.tag="$VERSION"
     ```
 

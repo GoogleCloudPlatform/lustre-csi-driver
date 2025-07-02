@@ -96,7 +96,7 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
 - Solutions:
 
-  This error means your GKE cluster cannot connect to the Lustre instance using the specified IP and filesystem name. Ensure the instance IP is correct and that your GKE cluster is in the same VPC network as your Lustre instance.
+  This error means your GKE cluster cannot connect to the Lustre instance using the specified IP and filesystem name. Ensure the instance IP is correct and that your GKE cluster is in the same VPC network as your Lustre instance. Additionally, if you're using a [statically provisioned](./preprov-guide.md) volume, ensure that the Lustre instance has the [gke-support-enabled](https://cloud.google.com/managed-lustre/docs/create-instance#create_an_instance) flag set.
 
 ---
 

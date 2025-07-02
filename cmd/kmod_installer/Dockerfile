@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.4-gke.17
+FROM gke.gcr.io/debian-base:bookworm-v1.0.5-gke.1
 
 # Set non-interactive mode for apt to prevent prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.2 /usr/bin/cos-dkms /usr/bin/cos-dkms
+COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.4 /usr/bin/cos-dkms /usr/bin/cos-dkms
 
 COPY /cmd/kmod_installer/entrypoint.sh /usr/bin/entrypoint.sh
 RUN chmod +x /usr/bin/entrypoint.sh
