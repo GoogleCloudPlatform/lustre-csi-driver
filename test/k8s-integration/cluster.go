@@ -179,8 +179,8 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 
 	if useManagedDriver {
 		cmdParams = append(cmdParams, "--addons", "LustreCsiDriver", "--enable-legacy-lustre-port")
-		// TODO(tyuchn): Remove hard coded version once loadPin fix is rolled out to prod.
-		cmdParams = append(cmdParams, "--cluster-version", "1.33.1-gke.1375000")
+		// TODO(tyuchn): Remove hard coded version once 1.33.2-gke.1111000 becomes default for rapid channel.
+		cmdParams = append(cmdParams, "--cluster-version", "1.33.2-gke.1111000")
 	}
 
 	cmd = exec.Command("gcloud")
