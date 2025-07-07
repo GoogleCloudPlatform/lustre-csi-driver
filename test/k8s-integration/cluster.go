@@ -174,7 +174,10 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 	}
 
 	if isVariableSet(gkeNodeVersion) {
-		cmdParams = append(cmdParams, "--node-version", *gkeNodeVersion)
+		// The minimum supported node version for the managed csi driver is 1.33.2-gke.1072000.
+		// TODO(tyuchn): Remove the hardcoded version once 1.34 becomes available.
+		cmdParams = append(cmdParams, "--node-version", "1.33.2-gke.1072000")
+		// cmdParams = append(cmdParams, "--node-version", *gkeNodeVersion)
 	}
 
 	if useManagedDriver {
