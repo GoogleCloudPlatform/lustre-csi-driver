@@ -18,7 +18,9 @@ limitations under the License.
 
 The Google Cloud Managed Lustre Container Storage Interface (CSI) Plugin.
 
-> WARNING: Manual deployment of the driver is intended for test environments only. DO NOT use it in production clusters. Instead, customers should rely on GKE to automatically deploy and manage the CSI driver as an add-on feature, which will be available in Q2 2025.
+> WARNING: Manual deployment of the driver is intended for test environments only. DO NOT use it in production clusters. Instead, customers should rely on GKE to automatically deploy and manage the CSI driver as an add-on feature. For more information, please refer to the [GKE-managed Lustre CSI driver documentation](https://cloud.google.com/kubernetes-engine/docs/how-to/persistent-volumes/lustre-csi-driver).
+
+> DISCLAIMER: Manual deployment of the driver to your cluster is not officially supported by Google.
 
 ## Project Overview
 
@@ -26,7 +28,7 @@ The Lustre CSI driver allows k8s workloads (a group of k8s pods) to connect to G
 
 ## Project Status
 
-Status: Private GA (Allowlist required – contact your sales representative for access)
+Status: General Availability
 
 ## Get Started
 
