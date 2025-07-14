@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM google-go.pkg.dev/golang:1.24.4@sha256:747649f495b7858869c147b743205dda7050af8530088b35cb46e000ee5a0c8a AS driverbuilder
+FROM google-go.pkg.dev/golang:1.24.5@sha256:579ae701e259b1bb4200e2f5713751c62401220277df267c6914e06df12f1a9b AS driverbuilder
 
 ARG STAGINGVERSION
 ARG TARGETPLATFORM
