@@ -7,14 +7,14 @@ require (
 	cloud.google.com/go/longrunning v0.6.7
 	cloud.google.com/go/lustre v0.1.1
 	github.com/container-storage-interface/spec v1.9.0
-	github.com/googleapis/gax-go/v2 v2.14.2
+	github.com/googleapis/gax-go/v2 v2.15.0
 	github.com/kubernetes-csi/csi-lib-utils v0.19.0
 	github.com/kubernetes-csi/csi-test/v5 v5.2.0
 	golang.org/x/net v0.41.0
 	golang.org/x/oauth2 v0.30.0
 	golang.org/x/sys v0.33.0
 	google.golang.org/api v0.241.0
-	google.golang.org/genproto v0.0.0-20250505200425-f936aa4a68b2
+	google.golang.org/genproto v0.0.0-20250603155806-513f23925822
 	google.golang.org/grpc v1.73.0
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/gcfg.v1 v1.2.3
@@ -99,7 +99,7 @@ require (
 	golang.org/x/text v0.26.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.34.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250528174236-200df99c418a // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250603155806-513f23925822 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
