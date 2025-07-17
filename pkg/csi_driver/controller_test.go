@@ -24,8 +24,10 @@ import (
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/google/go-cmp/cmp"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 const (
@@ -238,8 +240,8 @@ func TestCreateVolume(t *testing.T) {
 			if test.expectErr != nil && !errors.Is(err, test.expectErr) {
 				t.Errorf("test %q failed:\ngot error %q,\nexpected error %q", test.name, err, test.expectErr)
 			}
-			if !reflect.DeepEqual(resp, test.resp) {
-				t.Errorf("test %q failed:\ngot resp %+v,\nexpected resp %+v", test.name, resp, test.resp)
+			if !cmp.Equal(resp, test.resp, protocmp.Transform()) {
+				t.Errorf("test %q failed:\ngot resp %+v,\nexpected %+v, diff: %s", test.name, resp, test.resp, cmp.Diff(resp, test.resp, protocmp.Transform()))
 			}
 		})
 	}

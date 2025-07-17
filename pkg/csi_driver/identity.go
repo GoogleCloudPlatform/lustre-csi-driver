@@ -23,6 +23,9 @@ import (
 
 type identityServer struct {
 	driver *LustreDriver
+	// Embed UnimplementedIdentityServer to ensure the driver returns Unimplemented for any
+	// new RPC methods that might be introduced in future versions of the spec.
+	csi.UnimplementedIdentityServer
 }
 
 func newIdentityServer(driver *LustreDriver) csi.IdentityServer {
