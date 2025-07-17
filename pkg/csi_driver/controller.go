@@ -93,6 +93,9 @@ var (
 
 // controllerServer handles volume provisioning.
 type controllerServer struct {
+	// Embed UnimplementedIdentityServer to ensure the driver returns Unimplemented for any
+	// new RPC methods that might be introduced in future versions of the spec.
+	csi.UnimplementedControllerServer
 	driver        *LustreDriver
 	cloudProvider *lustre.Cloud
 	volumeLocks   *util.VolumeLocks
