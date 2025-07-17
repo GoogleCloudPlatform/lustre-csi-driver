@@ -68,9 +68,11 @@ install_lustre_client_drivers() {
     #                                     parameter configures the port LNET will use. This is
     #                                     essential for proper communication between Lustre clients
     #                                     and servers. The default value is 988.
+    # -w Set the number of parallel downloads (`0` downloads all files in parallel).
     /usr/bin/cos-dkms install lustre-client-drivers \
         --gcs-bucket=cos-default \
         --latest \
+        -w 0 \
         --kernelmodulestree=/host_modules \
         --module-arg=lnet.accept_port=${LNET_PORT} \
         --lsb-release-path=/host_etc/lsb-release \
