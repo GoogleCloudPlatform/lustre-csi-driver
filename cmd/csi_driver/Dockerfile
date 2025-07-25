@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM google-go.pkg.dev/golang:1.24.5@sha256:579ae701e259b1bb4200e2f5713751c62401220277df267c6914e06df12f1a9b AS driverbuilder
+FROM --platform=$BUILDPLATFORM google-go.pkg.dev/golang:1.24.5@sha256:579ae701e259b1bb4200e2f5713751c62401220277df267c6914e06df12f1a9b AS driverbuilder
 
 ARG STAGINGVERSION
-ARG TARGETPLATFORM
+ARG TARGETARCH
 
 WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
 ADD . .
-RUN GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') make driver BINDIR=/bin
+RUN make driver GOARCH=${TARGETARCH} BINDIR=/bin
 
 FROM gke.gcr.io/debian-base:bookworm-v1.0.5-gke.1 AS debian
+ENV DEBIAN_FRONTEND=noninteractive
+ARG TARGETPLATFORM
 
 # Install necessary dependencies and tools.
 RUN clean-install bash
@@ -44,7 +46,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-COPY /bin/lustre/lustre-client.deb /lustre/lustre-client.deb
+COPY /bin/lustre/$TARGETPLATFORM/lustre-client.deb /lustre/lustre-client.deb
 
 # Install Lustre client utilities.
 RUN dpkg -i /lustre/lustre-client.deb || apt-get -f install -y
@@ -55,6 +57,7 @@ RUN dpkg-query -l | grep lustre || (echo "ERROR: Lustre client not installed!" &
 # Clean up temporary files.
 RUN rm -rf /lustre
 
+FROM debian
 ARG DRIVER_BINARY=lustre-csi-driver
 COPY --from=driverbuilder /bin/${DRIVER_BINARY} /${DRIVER_BINARY}
 ENTRYPOINT ["/lustre-csi-driver"]
