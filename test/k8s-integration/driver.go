@@ -81,7 +81,7 @@ func pushImage(pkgDir, stagingVersion string) error {
 		return fmt.Errorf("failed to auth AR: %w", err)
 	}
 
-	cmd = exec.Command("make", "-C", pkgDir, "build-all-image-and-push",
+	cmd = exec.Command("make", "-C", pkgDir, "build-all-image-and-push-multi-arch",
 		fmt.Sprintf("STAGINGVERSION=%s", stagingVersion))
 	err = runCommand("Pushing GCP Container for Linux", cmd)
 	if err != nil {

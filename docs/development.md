@@ -34,7 +34,7 @@ The following software are required for local development.
 Run the following command to build and push the images.
 
 ```bash
-make build-all-image-and-push REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version>
+make build-all-image-and-push-multi-arch REGISTRY=<your-container-registry> STAGINGVERSION=<staging-version>
 ```
 
 - `REGISTRY`: Optional. Specifies your container or artifact registry. If not set, the default is `gcr.io/<your-project-id>`. Ensure you are logged into your registry with the necessary image pull/push permissions.
