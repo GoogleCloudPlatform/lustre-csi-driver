@@ -16,6 +16,7 @@ export OVERLAY ?= dev
 export STAGINGVERSION ?= $(shell git describe --long --tags --match='v*' --dirty 2>/dev/null || git rev-list -n1 HEAD)
 DRIVER_BINARY = lustre-csi-driver
 KMOD_INSTALLER_BINARY = lustre-kmod-installer
+LDFLAGS ?= -s -w -X main.version=${STAGINGVERSION} -extldflags '-static'
 
 PROJECT ?= $(shell gcloud config list --format 'value(core.project)')
 REGISTRY ?= gcr.io/$(PROJECT)
@@ -25,6 +26,11 @@ GSA_FILE ?= ${HOME}/lustre_csi_driver_sa.json
 GSA_NS=lustre-csi-driver
 LUSTRE_ENDPOINT ?= prod
 
+DOCKER_BUILDX_ARGS ?= --push --builder multiarch-multiplatform-builder --build-arg STAGINGVERSION=${STAGINGVERSION}
+ifneq ("$(shell docker buildx build --help | grep 'provenance')", "")
+DOCKER_BUILDX_ARGS += --provenance=false
+endif
+
 $(info OVERLAY is ${OVERLAY})
 $(info STAGINGVERSION is ${STAGINGVERSION})
 $(info DRIVER_IMAGE is $(DRIVER_IMAGE))
@@ -32,48 +38,62 @@ $(info KMOD_INSTALLER_IMAGE is $(KMOD_INSTALLER_IMAGE))
 $(info LUSTRE_ENDPOINT is $(LUSTRE_ENDPOINT))
 
 BINDIR?=bin
-LUSTRE_CLIENT_PATH ?= $(shell cat cmd/csi_driver/lustre_client_utils)
+LUSTRE_CLIENT_PATH_AMD64 ?= $(shell cat cmd/csi_driver/lustre_client_utils_amd64)
+LUSTRE_CLIENT_PATH_ARM64 ?= $(shell cat cmd/csi_driver/lustre_client_utils_arm64)
 
 all: driver
 
-build-all-image-and-push: build-driver-image-and-push build-kmod-installer-image-and-push
+build-all-image-and-push-multi-arch: init-buildx download-lustre-client-utils build-image-linux-amd64 build-image-linux-arm64
+	docker manifest create --amend $(DRIVER_IMAGE):$(STAGINGVERSION) $(DRIVER_IMAGE):$(STAGINGVERSION)_linux_amd64 $(DRIVER_IMAGE):$(STAGINGVERSION)_linux_arm64
+	docker manifest create --amend $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION) $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)_linux_amd64 $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)_linux_arm64
+	docker manifest push -p $(DRIVER_IMAGE):$(STAGINGVERSION)
+	docker manifest push -p $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)
 
-build-driver-image-and-push: init-buildx download-lustre-client-utils
-		{                                                                   \
-		set -e ;                                                            \
-		docker buildx build \
-			--platform linux/amd64 \
-			--build-arg STAGINGVERSION=$(STAGINGVERSION) \
-			--build-arg TARGETPLATFORM=linux/amd64 \
-			-f ./cmd/csi_driver/Dockerfile \
-			-t $(DRIVER_IMAGE):$(STAGINGVERSION) --push .; \
-		}
+build-image-linux-amd64:
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/csi_driver/Dockerfile \
+		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 \
+		--platform linux/amd64 \
+		--build-arg TARGETPLATFORM=linux/amd64 .
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/kmod_installer/Dockerfile \
+		--tag ${KMOD_INSTALLER_IMAGE}:${STAGINGVERSION}_linux_amd64 \
+		--platform linux/amd64 \
+		--build-arg TARGETPLATFORM=linux/amd64 .
 
-build-kmod-installer-image-and-push: init-buildx
-		{                                                                   \
-		set -e ;                                                            \
-		docker buildx build \
-			--platform linux/amd64 \
-			--build-arg STAGINGVERSION=$(STAGINGVERSION) \
-			--build-arg TARGETPLATFORM=linux/amd64 \
-			-f ./cmd/kmod_installer/Dockerfile \
-			-t $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION) --push .; \
-		}
+build-image-linux-arm64:
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/csi_driver/Dockerfile \
+		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
+		--platform linux/arm64 \
+		--build-arg TARGETPLATFORM=linux/arm64 .
+	docker buildx build ${DOCKER_BUILDX_ARGS} \
+		--file ./cmd/kmod_installer/Dockerfile \
+		--tag ${KMOD_INSTALLER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
+		--platform linux/arm64 \
+		--build-arg TARGETPLATFORM=linux/arm64 .
 
 driver:
 	mkdir -p ${BINDIR}
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(shell dpkg --print-architecture) go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${DRIVER_BINARY} cmd/csi_driver/main.go
+	CGO_ENABLED=0 GOOS=linux go build -mod vendor -ldflags "${LDFLAGS}" -o ${BINDIR}/${DRIVER_BINARY} cmd/csi_driver/main.go
 
 download-lustre-client-utils:
-	rm -rf ${BINDIR}/lustre/*
-	mkdir -p ${BINDIR}/lustre
+	rm -rf ${BINDIR}/lustre/linux/*
+	mkdir -p ${BINDIR}/lustre/linux/amd64 ${BINDIR}/lustre/linux/arm64
 	gcloud artifacts files download \
 		--project=lustre-client-binaries \
 		--location=us \
 		--repository=lustre-client-debian-bookworm \
-		--destination=${BINDIR}/lustre \
-		${LUSTRE_CLIENT_PATH}
-	mv ${BINDIR}/lustre/*.deb ${BINDIR}/lustre/lustre-client.deb
+		--destination=${BINDIR}/lustre/linux/amd64 \
+		${LUSTRE_CLIENT_PATH_AMD64}
+	gcloud artifacts files download \
+		--project=lustre-client-binaries \
+		--location=us \
+		--repository=lustre-client-debian-bookworm \
+		--destination=${BINDIR}/lustre/linux/arm64 \
+		${LUSTRE_CLIENT_PATH_ARM64}
+	mv ${BINDIR}/lustre/linux/amd64/*.deb ${BINDIR}/lustre/linux/amd64/lustre-client.deb
+	mv ${BINDIR}/lustre/linux/arm64/*.deb ${BINDIR}/lustre/linux/arm64/lustre-client.deb
 
 install:
 	make generate-spec-yaml OVERLAY=${OVERLAY} STAGINGVERSION=${STAGINGVERSION}
