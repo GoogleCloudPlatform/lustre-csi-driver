@@ -130,7 +130,7 @@ func clusterDownGKE(gceZone, gceRegion string) error {
 	return nil
 }
 
-func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, useManagedDriver bool) error {
+func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, useManagedDriver, enableLegacyLustrePort bool) error {
 	locationArg, locationVal, err := gkeLocationArgs(gceZone, gceRegion)
 	if err != nil {
 		return err
@@ -181,9 +181,12 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 	}
 
 	if useManagedDriver {
-		cmdParams = append(cmdParams, "--addons", "LustreCsiDriver", "--enable-legacy-lustre-port")
-		// TODO(tyuchn): Remove hard coded version once 1.33.2-gke.1111000 becomes default for rapid channel.
-		cmdParams = append(cmdParams, "--cluster-version", "1.33.2-gke.1111000")
+		cmdParams = append(cmdParams, "--addons", "LustreCsiDriver")
+		if enableLegacyLustrePort {
+			cmdParams = append(cmdParams, "--enable-legacy-lustre-port")
+		}
+		// TODO(tyuchn): Remove hard coded version once 1.33.2-gke.4780000 becomes default for rapid channel.
+		cmdParams = append(cmdParams, "--cluster-version", "1.33.2-gke.4780000")
 	}
 
 	cmd = exec.Command("gcloud")
