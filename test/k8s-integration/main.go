@@ -57,12 +57,13 @@ var (
 	parallel  = flag.Int("parallel", 8, "the number of parallel tests setting for ginkgo parallelism")
 
 	// GKE specific flags.
-	gkeClusterVersion  = flag.String("gke-cluster-version", "", "version of k8s master and node for GKE cluster")
-	gkeNodeVersion     = flag.String("gke-node-version", "", "GKE cluster worker node version")
-	gkeTestClusterName = flag.String("gke-cluster-name", "", "GKE cluster name")
-	gceZone            = flag.String("gce-zone", "", "zone that the gke zonal cluster is created/found in")
-	gceRegion          = flag.String("gce-region", "", "region that the gke regional cluster should be created in")
-	clusterNewtwork    = flag.String("cluster-network", "lustre-network", "the VPC network to be used by the GKE cluster")
+	gkeClusterVersion      = flag.String("gke-cluster-version", "", "version of k8s master and node for GKE cluster")
+	gkeNodeVersion         = flag.String("gke-node-version", "", "GKE cluster worker node version")
+	gkeTestClusterName     = flag.String("gke-cluster-name", "", "GKE cluster name")
+	gceZone                = flag.String("gce-zone", "", "zone that the gke zonal cluster is created/found in")
+	gceRegion              = flag.String("gce-region", "", "region that the gke regional cluster should be created in")
+	clusterNewtwork        = flag.String("cluster-network", "lustre-network", "the VPC network to be used by the GKE cluster")
+	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "whether to enable the legacy Lustre port")
 )
 
 const (
@@ -209,7 +210,7 @@ func handle() error {
 	}
 
 	if *bringupCluster {
-		if err := clusterUpGKE(project, *gceZone, *gceRegion, testParams.imageType, *numNodes, *useManagedDriver); err != nil {
+		if err := clusterUpGKE(project, *gceZone, *gceRegion, testParams.imageType, *numNodes, *useManagedDriver, *enableLegacyLustrePort); err != nil {
 			return fmt.Errorf("failed to cluster up: %w", err)
 		}
 		defer func() {
