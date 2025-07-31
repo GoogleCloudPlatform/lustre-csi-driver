@@ -104,7 +104,7 @@ func NewFakeCloud() (*Cloud, error) {
 			IP:                       "192.168.1.1",
 			State:                    activeState,
 			CapacityGib:              minCapGiB,
-			PerUnitStorageThroughput: "1000",
+			PerUnitStorageThroughput: 1000,
 		},
 		"creating-instance": {
 			Project:                  project,
@@ -115,7 +115,7 @@ func NewFakeCloud() (*Cloud, error) {
 			IP:                       "192.168.1.2",
 			State:                    creatingState,
 			CapacityGib:              minCapGiB,
-			PerUnitStorageThroughput: "1000",
+			PerUnitStorageThroughput: 1000,
 		},
 		"unknown-instance": {
 			Project:                  project,
@@ -126,7 +126,7 @@ func NewFakeCloud() (*Cloud, error) {
 			IP:                       "192.168.1.3",
 			State:                    unknownState,
 			CapacityGib:              minCapGiB,
-			PerUnitStorageThroughput: "1000",
+			PerUnitStorageThroughput: 1000,
 		},
 	}
 

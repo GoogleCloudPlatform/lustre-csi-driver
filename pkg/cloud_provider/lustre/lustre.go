@@ -72,7 +72,7 @@ type ServiceInstance struct {
 	Labels                   map[string]string
 	CapacityGib              int64
 	GkeSupportEnabled        bool
-	PerUnitStorageThroughput string
+	PerUnitStorageThroughput int64
 }
 
 type ListFilter struct {
@@ -127,12 +127,13 @@ func (sm *lustreServiceManager) CreateInstance(ctx context.Context, instance *Se
 		Parent:     fmt.Sprintf("projects/%s/locations/%s", instance.Project, instance.Location),
 		InstanceId: instance.Name,
 		Instance: &lustrepb.Instance{
-			Network:           instance.Network,
-			Description:       instance.Description,
-			Labels:            instance.Labels,
-			CapacityGib:       instance.CapacityGib,
-			Filesystem:        instance.Filesystem,
-			GkeSupportEnabled: instance.GkeSupportEnabled,
+			Network:                  instance.Network,
+			Description:              instance.Description,
+			Labels:                   instance.Labels,
+			CapacityGib:              instance.CapacityGib,
+			Filesystem:               instance.Filesystem,
+			GkeSupportEnabled:        instance.GkeSupportEnabled,
+			PerUnitStorageThroughput: instance.PerUnitStorageThroughput,
 		},
 	}
 	klog.V(4).Infof("Creating Lustre instance %+v", instance)

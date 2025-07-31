@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"cloud.google.com/go/lustre/apiv1/lustrepb"
@@ -394,7 +395,11 @@ func (s *controllerServer) prepareNewInstance(name string, capBytes int64, param
 	if !(v == "1000" || v == "500" || v == "250" || v == "125") {
 		return nil, fmt.Errorf("invalid perUnitStorageThroughput %s, must be 1000, 500, 250 or 125", v)
 	}
-	instance.PerUnitStorageThroughput = v
+	perUnitStorageThroughput, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse perUnitStorageThroughput %s: %w", v, err)
+	}
+	instance.PerUnitStorageThroughput = perUnitStorageThroughput
 
 	return instance, nil
 }
