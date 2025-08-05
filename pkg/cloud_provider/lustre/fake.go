@@ -61,6 +61,18 @@ func (sm *fakeServiceManager) CreateInstance(_ context.Context, obj *ServiceInst
 	return instance, nil
 }
 
+func (sm *fakeServiceManager) ResizeInstance(_ context.Context, obj *ServiceInstance) (*ServiceInstance, error) {
+	instance, ok := sm.createdInstances[obj.Name]
+	if !ok {
+		return nil, &googleapi.Error{Code: 404}
+	}
+
+	instance.CapacityGib = obj.CapacityGib
+	sm.createdInstances[obj.Name] = instance
+
+	return instance, nil
+}
+
 func (sm *fakeServiceManager) DeleteInstance(_ context.Context, _ *ServiceInstance) error {
 	return nil
 }
@@ -91,6 +103,14 @@ func (sm *fakeServiceManager) GetCreateInstanceOp(_ context.Context, _ *ServiceI
 
 func (sm *fakeServiceManager) ListLocations(_ context.Context, _ *ListFilter) ([]string, error) {
 	return nil, nil
+}
+
+func (sm *fakeServiceManager) IsOperationInProgress(_ context.Context, instance *ServiceInstance, verb string) (bool, error) {
+	if instance.Name == "updating-instance" && verb == "update" {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func NewFakeCloud() (*Cloud, error) {
@@ -125,6 +145,17 @@ func NewFakeCloud() (*Cloud, error) {
 			Network:                  network,
 			IP:                       "192.168.1.3",
 			State:                    unknownState,
+			CapacityGib:              minCapGiB,
+			PerUnitStorageThroughput: 1000,
+		},
+		"updating-instance": {
+			Project:                  project,
+			Location:                 zone,
+			Name:                     "updating-instance",
+			Filesystem:               "updating",
+			Network:                  network,
+			IP:                       "192.168.1.4",
+			State:                    activeState,
 			CapacityGib:              minCapGiB,
 			PerUnitStorageThroughput: 1000,
 		},

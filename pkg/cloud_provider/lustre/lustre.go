@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"k8s.io/klog/v2"
 )
 
@@ -83,10 +84,12 @@ type ListFilter struct {
 type Service interface {
 	CreateInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
 	DeleteInstance(ctx context.Context, instance *ServiceInstance) error
+	ResizeInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
 	GetInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
 	ListInstance(ctx context.Context, instance *ListFilter) ([]*ServiceInstance, error)
 	GetCreateInstanceOp(ctx context.Context, instance *ServiceInstance) (*longrunningpb.Operation, error)
 	ListLocations(ctx context.Context, instance *ListFilter) ([]string, error)
+	IsOperationInProgress(ctx context.Context, instance *ServiceInstance, verb string) (bool, error)
 }
 
 type lustreServiceManager struct {
@@ -273,6 +276,76 @@ func (sm *lustreServiceManager) GetCreateInstanceOp(ctx context.Context, instanc
 	}
 }
 
+func (sm *lustreServiceManager) IsOperationInProgress(ctx context.Context, instance *ServiceInstance, verb string) (bool, error) {
+	req := &longrunningpb.ListOperationsRequest{
+		Name: fmt.Sprintf("projects/%s/locations/%s", instance.Project, instance.Location),
+		// Filter to include only v1 API operations.
+		// Including other versions (e.g., v1alpha) may cause the HTTP client to error when parsing the response.
+		Filter: "metadata.apiVersion=\"v1\"",
+	}
+	it := sm.lustreClient.ListOperations(ctx, req)
+	for {
+		resp, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("ListOperations failed for request %v: %w", req, err)
+		}
+
+		var metaData lustrepb.OperationMetadata
+		err = anypb.UnmarshalTo(resp.GetMetadata(), &metaData, proto.UnmarshalOptions{})
+		if err != nil {
+			// This error is expected for other operation types (e.g., `ImportDataMetadata`, `ExportDataMetadata`) that cannot
+			// be unmarshalled, so we log and skip them.
+			klog.V(4).Infof("Skipping operation %+v: %v", resp, err)
+
+			continue
+		}
+
+		if metaData.GetTarget() == instanceFullName(instance) && strings.EqualFold(metaData.GetVerb(), verb) && !resp.GetDone() {
+			klog.V(4).Infof("Existing %q operation found for instance %q: %+v ", verb, instanceFullName(instance), resp)
+
+			return true, nil
+		}
+	}
+}
+
+func (sm *lustreServiceManager) ResizeInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error) {
+	instanceFullName := instanceFullName(instance)
+	req := &lustrepb.UpdateInstanceRequest{
+		UpdateMask: &fieldmaskpb.FieldMask{
+			Paths: []string{
+				"capacity_gib",
+			},
+		},
+		Instance: &lustrepb.Instance{
+			Name:        instanceFullName,
+			CapacityGib: instance.CapacityGib,
+		},
+	}
+
+	klog.V(4).Infof("Updating Lustre instance %q, location %q, filesystem %q with new capacity %v GiB",
+		instance.Name,
+		instance.Location,
+		instance.Filesystem,
+		req.GetInstance().GetCapacityGib(),
+	)
+	op, err := sm.lustreClient.UpdateInstance(ctx, req)
+	if err != nil {
+		klog.V(4).Infof("Failed to update instance %q: %v", instanceFullName, err)
+
+		return nil, err
+	}
+	klog.V(4).Infof("Waiting for the completion of update op %q for instance %q. Note that expansion can take up to 90 minutes for larger capacity increases.", op.Name(), instance.Name)
+	resp, err := op.Wait(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return cloudInstanceToServiceInstance(resp)
+}
+
 func instanceFullName(instance *ServiceInstance) string {
 	return fmt.Sprintf("projects/%s/locations/%s/instances/%s", instance.Project, instance.Location, instance.Name)
 }
@@ -302,16 +375,17 @@ func cloudInstanceToServiceInstance(instance *lustrepb.Instance) (*ServiceInstan
 	}
 
 	return &ServiceInstance{
-		Name:        name,
-		Location:    location,
-		Project:     project,
-		Network:     instance.GetNetwork(),
-		Description: instance.GetDescription(),
-		State:       instance.GetState().String(),
-		Labels:      instance.GetLabels(),
-		CapacityGib: instance.GetCapacityGib(),
-		Filesystem:  instance.GetFilesystem(),
-		IP:          ip,
+		Name:                     name,
+		Location:                 location,
+		Project:                  project,
+		Network:                  instance.GetNetwork(),
+		Description:              instance.GetDescription(),
+		State:                    instance.GetState().String(),
+		Labels:                   instance.GetLabels(),
+		CapacityGib:              instance.GetCapacityGib(),
+		Filesystem:               instance.GetFilesystem(),
+		IP:                       ip,
+		PerUnitStorageThroughput: instance.GetPerUnitStorageThroughput(),
 	}, nil
 }
 
