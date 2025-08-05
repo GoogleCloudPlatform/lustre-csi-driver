@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"k8s.io/klog/v2"
 )
 
@@ -83,6 +84,7 @@ type ListFilter struct {
 type Service interface {
 	CreateInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
 	DeleteInstance(ctx context.Context, instance *ServiceInstance) error
+	UpdateInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
 	GetInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
 	ListInstance(ctx context.Context, instance *ListFilter) ([]*ServiceInstance, error)
 	GetCreateInstanceOp(ctx context.Context, instance *ServiceInstance) (*longrunningpb.Operation, error)
@@ -273,6 +275,40 @@ func (sm *lustreServiceManager) GetCreateInstanceOp(ctx context.Context, instanc
 	}
 }
 
+func (sm *lustreServiceManager) UpdateInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error) {
+	instanceFullName := instanceFullName(instance)
+	req := &lustrepb.UpdateInstanceRequest{
+		UpdateMask: &fieldmaskpb.FieldMask{
+			Paths: []string{
+				"capacity_gib",
+			},
+		},
+		Instance: &lustrepb.Instance{
+			Name:        instanceFullName,
+			CapacityGib: instance.CapacityGib,
+		},
+	}
+
+	klog.V(4).Infof("Updating Lustre instance %q, location %q, filesystem %q with new capacity %v GiB",
+		instance.Name,
+		instance.Location,
+		instance.Filesystem,
+		req.Instance.CapacityGib,
+	)
+	op, err := sm.lustreClient.UpdateInstance(ctx, req)
+	if err != nil {
+		klog.V(4).Infof("Failed to update instance %q: %v", instanceFullName, err)
+		return nil, err
+	}
+	klog.V(4).Infof("Waiting for the completion of update op %q for instance %q", op.Name(), instance.Name)
+	resp, err := op.Wait(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return cloudInstanceToServiceInstance(resp)
+}
+
 func instanceFullName(instance *ServiceInstance) string {
 	return fmt.Sprintf("projects/%s/locations/%s/instances/%s", instance.Project, instance.Location, instance.Name)
 }
@@ -302,16 +338,17 @@ func cloudInstanceToServiceInstance(instance *lustrepb.Instance) (*ServiceInstan
 	}
 
 	return &ServiceInstance{
-		Name:        name,
-		Location:    location,
-		Project:     project,
-		Network:     instance.GetNetwork(),
-		Description: instance.GetDescription(),
-		State:       instance.GetState().String(),
-		Labels:      instance.GetLabels(),
-		CapacityGib: instance.GetCapacityGib(),
-		Filesystem:  instance.GetFilesystem(),
-		IP:          ip,
+		Name:                     name,
+		Location:                 location,
+		Project:                  project,
+		Network:                  instance.GetNetwork(),
+		Description:              instance.GetDescription(),
+		State:                    instance.GetState().String(),
+		Labels:                   instance.GetLabels(),
+		CapacityGib:              instance.GetCapacityGib(),
+		Filesystem:               instance.GetFilesystem(),
+		IP:                       ip,
+		PerUnitStorageThroughput: instance.GetPerUnitStorageThroughput(),
 	}, nil
 }
 
@@ -526,4 +563,18 @@ func isGoogleAPIError(err error) *codes.Code {
 
 func errCodePtr(code codes.Code) *codes.Code {
 	return &code
+}
+
+// IsUpdateInProgressErr checks if the given error indicates that a capacity update
+// operation is already in progress for the Lustre instance.
+// TODO(rishitagolla): b/444049951 - Remove this workaround once the Lustre API provides a way to check for ongoing expansion operations.
+func IsUpdateInProgressErr(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+
+	// Since there is no specific API in Lustre to check for ongoing expansion
+	// operations, we rely on the hardcoded error message that the API returns in this scenario.
+	return st.Code() == codes.InvalidArgument && strings.Contains(st.Message(), "capacity update is already in progress")
 }
