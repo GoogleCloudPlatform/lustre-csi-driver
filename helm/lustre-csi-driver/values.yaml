@@ -20,18 +20,18 @@
 image:
   lustre:
     repository: "us.gcr.io/gke-release/lustre-csi-driver"
-    tag: v0.2.1-gke.0
+    tag: v0.2.2-gke.1
     pullPolicy: Always
   kmod:
     repository: "us.gcr.io/gke-release/lustre-kmod-installer"
-    tag: v0.2.1-gke.0
+    tag: v0.2.2-gke.1
     pullPolicy: Always
 
 sidecars:
   image:
     nodeDriverRegistrar:
       repository: registry.k8s.io/sig-storage/csi-node-driver-registrar
-      tag: v2.9.0
+      tag: v2.9.4
       pullPolicy: IfNotPresent
     livenessProbe:
       repository: registry.k8s.io/sig-storage/livenessprobe
@@ -39,5 +39,5 @@ sidecars:
       pullPolicy: IfNotPresent
     provisioner:
       repository: registry.k8s.io/sig-storage/csi-provisioner
-      tag: v4.0.1
+      tag: v5.2.0
       pullPolicy: IfNotPresent
