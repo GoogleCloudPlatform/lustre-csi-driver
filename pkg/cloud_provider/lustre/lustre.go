@@ -255,7 +255,12 @@ func (sm *lustreServiceManager) GetCreateInstanceOp(ctx context.Context, instanc
 		var metaData lustrepb.OperationMetadata
 		err = anypb.UnmarshalTo(resp.GetMetadata(), &metaData, proto.UnmarshalOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshal %+v: %w", resp, err)
+			// The ListOperations API returns various operation types (e.g., `ImportDataMetadata`, `ExportDataMetadata`).
+			// We are only interested in instance creation operations, which correspond to `OperationMetadata`.
+			// This error is expected for other types that cannot be unmarshalled, so we log and skip them.
+			klog.V(4).Infof("Skipping operation %+v: %v", resp, err)
+
+			continue
 		}
 
 		// Return the response since a single instance creation call generates only one operation.
