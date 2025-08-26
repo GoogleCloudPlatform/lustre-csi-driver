@@ -34,7 +34,7 @@ cloud.google.com/go/longrunning/autogen/longrunningpb
 cloud.google.com/go/lustre/apiv1
 cloud.google.com/go/lustre/apiv1/lustrepb
 cloud.google.com/go/lustre/internal
-# github.com/Masterminds/semver/v3 v3.3.1
+# github.com/Masterminds/semver/v3 v3.4.0
 ## explicit; go 1.21
 github.com/Masterminds/semver/v3
 # github.com/beorn7/perks v1.0.1
