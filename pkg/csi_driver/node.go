@@ -179,6 +179,20 @@ func (s *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVo
 	}
 	defer s.volumeLocks.Release(target)
 
+	// Check if the target path is mounted before unmounting.
+	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(target); notMnt {
+		klog.V(5).InfoS("NodeUnstageVolume: staging target path not mounted, skipping unmount", "staging target", target)
+
+		return &csi.NodeUnstageVolumeResponse{}, nil
+	}
+	// Always unmount the target path regardless of the detected mount state.
+	// In cases where Lustre was force-unmounted, CleanupMountPoint may fail
+	// to detect the state and error out with "cannot send after transport endpoint shutdown".
+	klog.V(5).InfoS("NodeUnstageVolume attempting to unmount", "staging target", target)
+	if err := s.mounter.Unmount(target); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to unmount staging target %q: %v", target, err)
+	}
+
 	if err := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -286,7 +300,7 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 }
 
 func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
-	// Validate arguments
+	// Validate arguments.
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "NodeUnpublishVolume target path must be provided")
@@ -297,6 +311,20 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
+
+	// Check if the target path is mounted before unmounting.
+	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(targetPath); notMnt {
+		klog.V(5).InfoS("NodeUnpublishVolume: target path not mounted, skipping unmount", "target", targetPath)
+
+		return &csi.NodeUnpublishVolumeResponse{}, nil
+	}
+	// Always unmount the target path regardless of the detected mount state.
+	// In cases where Lustre was force-unmounted, CleanupMountPoint may fail
+	// to detect the state and error out with "cannot send after transport endpoint shutdown".
+	klog.V(5).InfoS("NodeUnpublishVolume attempting to unmount", "target", targetPath)
+	if err := s.mounter.Unmount(targetPath); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to unmount target %q: %v", targetPath, err)
+	}
 
 	if err := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
