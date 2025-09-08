@@ -98,7 +98,7 @@ func TestSanity(t *testing.T) {
 		Address:        endpoint,
 		DialOptions:    []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
 		IDGen:          &sanity.DefaultIDGenerator{},
-		TestVolumeSize: int64(18000 * GiB),
+		TestVolumeSize: int64(9000 * GiB),
 		TestVolumeParameters: map[string]string{
 			paramPerUnitStorageThroughput: "1000",
 		},

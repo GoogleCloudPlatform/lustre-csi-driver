@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
-	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/grpc/codes"
@@ -75,7 +74,7 @@ func TestCreateVolume(t *testing.T) {
 			},
 			resp: &csi.CreateVolumeResponse{
 				Volume: &csi.Volume{
-					CapacityBytes: 18000 * util.Gib,
+					CapacityBytes: MinVolumeSizeBytes,
 					VolumeId:      testVolumeID,
 					VolumeContext: map[string]string{
 						keyFilesystem: testFSName,
@@ -176,7 +175,7 @@ func TestCreateVolume(t *testing.T) {
 			},
 			resp: &csi.CreateVolumeResponse{
 				Volume: &csi.Volume{
-					CapacityBytes: 18000 * util.Gib,
+					CapacityBytes: MinVolumeSizeBytes,
 					VolumeId:      "test-project/us-central1-a/existing-instance",
 					VolumeContext: map[string]string{
 						keyFilesystem: "existing",

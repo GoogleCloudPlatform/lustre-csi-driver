@@ -33,7 +33,7 @@ const (
 	project   = "test-project"
 	zone      = "us-central1-a"
 	network   = "projects/test-project/global/networks/default"
-	minCapGiB = 18000
+	minCapGiB = 9000
 )
 
 type fakeServiceManager struct {
