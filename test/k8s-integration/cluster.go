@@ -167,8 +167,7 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 		"--workload-pool", project + ".svc.id.goog",
 	}
 
-	// TODO(tyuchn): Remove `!useManagedDriver` check once loadPin fix is rolled out to prod.
-	if isVariableSet(gkeClusterVersion) && !useManagedDriver {
+	if isVariableSet(gkeClusterVersion) {
 		cmdParams = append(cmdParams, "--cluster-version", *gkeClusterVersion)
 		cmdParams = append(cmdParams, "--release-channel", "rapid")
 	}
@@ -185,8 +184,6 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 		if enableLegacyLustrePort {
 			cmdParams = append(cmdParams, "--enable-legacy-lustre-port")
 		}
-		// TODO(tyuchn): Remove hard coded version once 1.33.2-gke.4780000 becomes default for rapid channel.
-		cmdParams = append(cmdParams, "--cluster-version", "1.33.2-gke.4780000")
 	}
 
 	cmd = exec.Command("gcloud")
