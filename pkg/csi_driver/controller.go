@@ -60,7 +60,7 @@ const (
 	tagKeyCreatedForVolumeName     = "kubernetes_io_created-for_pv_name"
 	tagKeyCreatedBy                = "storage_gke_io_created-by"
 
-	MinVolumeSizeBytes     int64 = 18000 * util.Gib
+	MinVolumeSizeBytes     int64 = 9000 * util.Gib
 	MaxVolumeSizeBytes     int64 = 954000 * util.Gib
 	thinInstanceSizeBytyes int64 = 1 * util.Tib
 
