@@ -164,3 +164,7 @@ func GetRegionFromZone(location string) (string, error) {
 
 	return strings.Join(tokens[0:2], "-"), nil
 }
+
+func BytesToGib(bytes int64) int64 {
+	return bytes / Gib
+}

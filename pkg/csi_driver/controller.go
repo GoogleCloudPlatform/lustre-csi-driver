@@ -60,9 +60,8 @@ const (
 	tagKeyCreatedForVolumeName     = "kubernetes_io_created-for_pv_name"
 	tagKeyCreatedBy                = "storage_gke_io_created-by"
 
-	MinVolumeSizeBytes     int64 = 9000 * util.Gib
-	MaxVolumeSizeBytes     int64 = 954000 * util.Gib
-	thinInstanceSizeBytyes int64 = 1 * util.Tib
+	MinVolumeSizeBytes    int64 = 9000 * util.Gib
+	thinInstanceSizeBytes int64 = 1 * util.Tib
 
 	// Keys for Topology.
 	TopologyKeyZone = "topology.gke.io/zone"
@@ -338,17 +337,14 @@ func getRequestCapacity(capRange *csi.CapacityRange) (int64, error) {
 
 	// Lustre supports a 1 TiB thin instance for testing purposes.
 	// A thin instance will be created only when the capacity is set exactly to 1 TiB.
-	if capBytes == thinInstanceSizeBytyes {
+	if capBytes == thinInstanceSizeBytes {
 		return capBytes, nil
 	}
 
-	// Too large or too small.
-	if capBytes < MinVolumeSizeBytes {
-		capBytes = MinVolumeSizeBytes
-	}
-	if capBytes > MaxVolumeSizeBytes {
-		capBytes = MaxVolumeSizeBytes
-	}
+	// Default size to minimum size if the request is too small.
+	// if capBytes < MinVolumeSizeBytes {
+	// 	capBytes = MinVolumeSizeBytes
+	// }
 
 	return capBytes, nil
 }
@@ -588,4 +584,65 @@ func generateRandomID() (string, error) {
 	}
 
 	return fsnamePrefix + string(id), nil
+}
+
+func (s *controllerServer) ControllerExpandVolume(ctx context.Context, req *csi.ControllerExpandVolumeRequest) (*csi.ControllerExpandVolumeResponse, error) {
+	volumeID := req.GetVolumeId()
+	if len(volumeID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "ControllerExpandVolume volumeID must be provided")
+	}
+
+	if acquired := s.volumeLocks.TryAcquire(volumeID); !acquired {
+		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, volumeID)
+	}
+	defer s.volumeLocks.Release(volumeID)
+
+	instance, err := volumeIDToInstance(volumeID)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	instance, err = s.cloudProvider.LustreService.GetInstance(ctx, instance)
+	if err != nil {
+		return nil, lustre.StatusError(err)
+	}
+
+	if instance.State != "ACTIVE" {
+		// change
+		return nil, fmt.Errorf("instance %s is in %s state, not ACTIVE", instance.Name, instance.State)
+	}
+
+	capBytes, err := getRequestCapacity(req.GetCapacityRange())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	if instance.CapacityGib*util.Gib >= capBytes {
+		klog.V(4).Infof("Lustre instance %q already has capacity %d, which is greater than or equal to requested capacity %d", instance.Name, instance.CapacityGib*util.Gib, capBytes)
+		return &csi.ControllerExpandVolumeResponse{
+			CapacityBytes:         instance.CapacityGib * util.Gib,
+			NodeExpansionRequired: false,
+		}, nil
+	}
+
+	instance.CapacityGib = util.BytesToGib(capBytes)
+	updatedInstance, err := s.cloudProvider.LustreService.UpdateInstance(ctx, instance)
+	if err != nil {
+		if lustre.IsUpdateInProgressErr(err) {
+			msg := fmt.Sprintf("Expansion operation ongoing for volume %v", volumeID)
+			klog.V(4).Info(msg)
+
+			// Return DeadlineExceeded to retry the expansion request, as there is an ongoing operation.
+			return nil, status.Error(codes.DeadlineExceeded, msg)
+		}
+		klog.V(4).Info("Error outside UpdateInstance", err)
+		klog.V(4).Infof("Capacity tracking %d", instance.CapacityGib)
+		return nil, lustre.StatusError(err)
+	}
+
+	klog.Infof("Controller expand volume succeeded for volume %v, new size in bytes: %v", volumeID, updatedInstance.CapacityGib*util.Gib)
+	return &csi.ControllerExpandVolumeResponse{
+		CapacityBytes:         updatedInstance.CapacityGib * util.Gib,
+		NodeExpansionRequired: false,
+	}, nil
 }
