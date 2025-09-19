@@ -89,6 +89,37 @@ spec:
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
+        - name: csi-external-resizer
+          image: registry.k8s.io/sig-storage/csi-resizer
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--v=5"
+            - "--csi-address=/csi/csi.sock"
+            - "--timeout=250s"
+            - "--http-endpoint=:22022"
+            - "--leader-election"
+            - "--leader-election-namespace=$(LUSTRE_NAMESPACE)"
+            - "--handle-volume-inuse-error=false"
+          env:
+            - name: LUSTRE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - containerPort: 22022
+              name: http-endpoint
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 1
+            httpGet:
+              path: /healthz/leader-election
+              port: http-endpoint
+            initialDelaySeconds: 10
+            timeoutSeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
         - name: lustre-csi-driver
           image: gke.gcr.io/lustre-csi-driver
           imagePullPolicy: IfNotPresent

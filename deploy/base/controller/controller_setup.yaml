@@ -63,6 +63,37 @@ roleRef:
   name: lustre-csi-provisioner-role
   apiGroup: rbac.authorization.k8s.io
 ---
+# xref: https://github.com/kubernetes-csi/external-resizer/blob/master/deploy/kubernetes/rbac.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: lustre-csi-resizer-role
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims/status"]
+    verbs: ["patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: lustre-csi-resizer-binding
+subjects:
+  - kind: ServiceAccount
+    name: lustre-csi-controller-sa
+roleRef:
+  kind: ClusterRole
+  name: lustre-csi-resizer-role
+  apiGroup: rbac.authorization.k8s.io
+---
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:

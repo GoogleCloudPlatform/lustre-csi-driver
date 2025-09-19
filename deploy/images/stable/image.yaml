@@ -31,6 +31,14 @@ imageTag:
 apiVersion: builtin
 kind: ImageTagTransformer
 metadata:
+  name: imagetag-csi-resizer
+imageTag:
+  name: registry.k8s.io/sig-storage/csi-resizer
+  newTag: "v1.14.0"
+---
+apiVersion: builtin
+kind: ImageTagTransformer
+metadata:
   name: imagetag-csi-node-registrar
 imageTag:
   name: registry.k8s.io/sig-storage/csi-node-driver-registrar

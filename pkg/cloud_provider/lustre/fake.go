@@ -21,6 +21,8 @@ import (
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 )
 
@@ -56,6 +58,23 @@ func (sm *fakeServiceManager) CreateInstance(_ context.Context, obj *ServiceInst
 		CapacityGib:              obj.CapacityGib,
 		PerUnitStorageThroughput: obj.PerUnitStorageThroughput,
 	}
+	sm.createdInstances[obj.Name] = instance
+
+	return instance, nil
+}
+
+func (sm *fakeServiceManager) UpdateInstance(_ context.Context, obj *ServiceInstance) (*ServiceInstance, error) {
+	// To unit test ongoing volume expansion.
+	if obj.Name == "updating-instance" {
+		return nil, status.Error(codes.InvalidArgument, "capacity update is already in progress")
+	}
+
+	instance, ok := sm.createdInstances[obj.Name]
+	if !ok {
+		return nil, &googleapi.Error{Code: 404}
+	}
+
+	instance.CapacityGib = obj.CapacityGib
 	sm.createdInstances[obj.Name] = instance
 
 	return instance, nil
@@ -125,6 +144,17 @@ func NewFakeCloud() (*Cloud, error) {
 			Network:                  network,
 			IP:                       "192.168.1.3",
 			State:                    unknownState,
+			CapacityGib:              minCapGiB,
+			PerUnitStorageThroughput: 1000,
+		},
+		"updating-instance": {
+			Project:                  project,
+			Location:                 zone,
+			Name:                     "updating-instance",
+			Filesystem:               "updating",
+			Network:                  network,
+			IP:                       "192.168.1.4",
+			State:                    activeState,
 			CapacityGib:              minCapGiB,
 			PerUnitStorageThroughput: 1000,
 		},
