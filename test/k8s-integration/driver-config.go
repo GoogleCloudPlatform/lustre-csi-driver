@@ -90,6 +90,7 @@ func generateDriverConfigFile(testParams *testParameters, storageClassFile strin
 
 	minVolumeSize := "1Ti"
 	if testParams.gkeManagedDriver {
+		// TODO(rishitagolla): Update Prow tests to provision 9000 GiB instances once the underlying driver change is rolled out.
 		minVolumeSize = "18000Gi"
 	}
 
