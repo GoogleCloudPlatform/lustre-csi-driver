@@ -938,7 +938,7 @@ sigs.k8s.io/prow/pkg/config/secret
 sigs.k8s.io/prow/pkg/logrusutil
 sigs.k8s.io/prow/pkg/secretutil
 sigs.k8s.io/prow/pkg/version
-# sigs.k8s.io/structured-merge-diff/v4 v4.4.2
+# sigs.k8s.io/structured-merge-diff/v4 v4.7.0
 ## explicit; go 1.13
 sigs.k8s.io/structured-merge-diff/v4/fieldpath
 sigs.k8s.io/structured-merge-diff/v4/merge
