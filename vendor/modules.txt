@@ -343,7 +343,7 @@ github.com/x448/float16
 ## explicit; go 1.24.0
 go.opentelemetry.io/auto/sdk
 go.opentelemetry.io/auto/sdk/internal/telemetry
-# go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.62.0
+# go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0
 ## explicit; go 1.23.0
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/internal
@@ -362,10 +362,9 @@ go.opentelemetry.io/otel/codes
 go.opentelemetry.io/otel/internal/baggage
 go.opentelemetry.io/otel/internal/global
 go.opentelemetry.io/otel/propagation
-go.opentelemetry.io/otel/semconv/v1.34.0
-go.opentelemetry.io/otel/semconv/v1.34.0/rpcconv
 go.opentelemetry.io/otel/semconv/v1.37.0
 go.opentelemetry.io/otel/semconv/v1.37.0/httpconv
+go.opentelemetry.io/otel/semconv/v1.37.0/rpcconv
 # go.opentelemetry.io/otel/metric v1.38.0
 ## explicit; go 1.23.0
 go.opentelemetry.io/otel/metric
@@ -492,7 +491,7 @@ google.golang.org/genproto/googleapis/cloud/location
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations
-# google.golang.org/genproto/googleapis/rpc v0.0.0-20250818200422-3122310a409c
+# google.golang.org/genproto/googleapis/rpc v0.0.0-20250825161204-c5933d9347a5
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/rpc/code
 google.golang.org/genproto/googleapis/rpc/errdetails
