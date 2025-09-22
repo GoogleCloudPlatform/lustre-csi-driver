@@ -95,6 +95,7 @@ func NewLustreDriver(config *LustreDriverConfig) (*LustreDriver, error) {
 	if config.RunController {
 		csc := []csi.ControllerServiceCapability_RPC_Type{
 			csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
+			csi.ControllerServiceCapability_RPC_EXPAND_VOLUME,
 		}
 		driver.addControllerServiceCapabilities(csc)
 

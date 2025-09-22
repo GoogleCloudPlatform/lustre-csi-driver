@@ -31,10 +31,6 @@ func (s *controllerServer) ControllerUnpublishVolume(_ context.Context, _ *csi.C
 	return nil, status.Error(codes.Unimplemented, "ControllerUnpublishVolume unsupported")
 }
 
-func (s *controllerServer) ControllerExpandVolume(_ context.Context, _ *csi.ControllerExpandVolumeRequest) (*csi.ControllerExpandVolumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "ControllerExpandVolume unsupported")
-}
-
 func (s *controllerServer) CreateSnapshot(_ context.Context, _ *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "CreateSnapshot unsupported")
 }

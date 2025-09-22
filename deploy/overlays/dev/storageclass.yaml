@@ -19,6 +19,7 @@ metadata:
 provisioner: lustre.csi.storage.gke.io
 volumeBindingMode: Immediate
 reclaimPolicy: Delete
+allowVolumeExpansion: true
 allowedTopologies:
   - matchLabelExpressions:
     - key: topology.gke.io/zone
