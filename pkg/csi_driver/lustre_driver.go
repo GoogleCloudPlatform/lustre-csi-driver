@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/auth"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
@@ -39,6 +40,8 @@ type LustreDriverConfig struct {
 	MetadataService        metadata.Service
 	Cloud                  *lustre.Cloud
 	EnableLegacyLustrePort bool
+	TokenManager           auth.TokenManager
+	LustreServiceManager   lustre.ServiceManager
 }
 
 type LustreDriver struct {

@@ -13,10 +13,18 @@
 # limitations under the License.
 
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lustre-pod-sa
+
+---
+
+apiVersion: v1
 kind: Pod
 metadata:
   name: lustre-pod
 spec:
+  serviceAccountName: lustre-pod-sa
   containers:
    - name: nginx
      image: nginx

@@ -31,3 +31,11 @@ func (manager *fakeServiceManager) GetZone() string {
 func (manager *fakeServiceManager) GetProject() string {
 	return "test-project"
 }
+
+func (manager *fakeServiceManager) GetIdentityPool() string {
+	return ""
+}
+
+func (manager *fakeServiceManager) GetIdentityProvider() string {
+	return ""
+}

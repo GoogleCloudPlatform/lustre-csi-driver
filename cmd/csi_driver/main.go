@@ -20,6 +20,8 @@ import (
 	"context"
 	"flag"
 
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/auth"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	driver "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/csi_driver"
@@ -39,7 +41,10 @@ var (
 	cloudConfigFilePath    = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
 	// These are set at compile time.
-	version = "unknown"
+	version          = "unknown"
+	kubeconfigPath   = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	identityPool     = flag.String("identity-pool", "", "The Identity Pool to authenticate with Lustre API.")
+	identityProvider = flag.String("identity-provider", "", "The Identity Provider to authenticate with Lustre API.")
 )
 
 func main() {
@@ -63,12 +68,26 @@ func main() {
 		}
 		config.NodeID = *nodeID
 
-		meta, err := metadata.NewMetadataService(ctx)
+		clientset, err := clientset.New(*kubeconfigPath)
+		if err != nil {
+			klog.Fatal("Failed to configure k8s client")
+		}
+
+		meta, err := metadata.NewMetadataService(ctx, *identityPool, *identityProvider, clientset)
 		if err != nil {
 			klog.Fatalf("Failed to set up metadata service: %v", err)
 		}
 		klog.Infof("Metadata service setup: %+v", meta)
 		config.MetadataService = meta
+
+		tm := auth.NewTokenManager(meta, clientset)
+		config.TokenManager = tm
+
+		sm, err := lustre.NewLustreServiceManager()
+		if err != nil {
+			klog.Fatalf("Failed to set up lustre service manager: %v", err)
+		}
+		config.LustreServiceManager = sm
 
 		config.Mounter = mount.New("")
 	}

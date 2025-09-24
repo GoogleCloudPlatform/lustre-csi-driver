@@ -93,6 +93,9 @@ func (sm *fakeServiceManager) ListLocations(_ context.Context, _ *ListFilter) ([
 	return nil, nil
 }
 
+func (sm *fakeServiceManager) Close() {
+}
+
 func NewFakeCloud() (*Cloud, error) {
 	existingInstances := map[string]*ServiceInstance{
 		"existing-instance": {

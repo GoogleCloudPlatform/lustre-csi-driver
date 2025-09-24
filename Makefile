@@ -43,9 +43,9 @@ LUSTRE_CLIENT_PATH_ARM64 ?= $(shell cat cmd/csi_driver/lustre_client_utils_arm64
 
 all: driver
 
-build-all-image-and-push-multi-arch: init-buildx download-lustre-client-utils build-image-linux-amd64 build-image-linux-arm64
-	docker manifest create --amend $(DRIVER_IMAGE):$(STAGINGVERSION) $(DRIVER_IMAGE):$(STAGINGVERSION)_linux_amd64 $(DRIVER_IMAGE):$(STAGINGVERSION)_linux_arm64
-	docker manifest create --amend $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION) $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)_linux_amd64 $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)_linux_arm64
+build-all-image-and-push-multi-arch: init-buildx download-lustre-client-utils build-image-linux-amd64
+	docker manifest create --amend $(DRIVER_IMAGE):$(STAGINGVERSION) $(DRIVER_IMAGE):$(STAGINGVERSION)_linux_amd64
+	docker manifest create --amend $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION) $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)_linux_amd64
 	docker manifest push -p $(DRIVER_IMAGE):$(STAGINGVERSION)
 	docker manifest push -p $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)
 

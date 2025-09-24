@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"golang.org/x/net/context"
@@ -36,22 +37,30 @@ const (
 	rwMask   = os.FileMode(0o660)
 	roMask   = os.FileMode(0o440)
 	execMask = os.FileMode(0o110)
+
+	VolumeContextKeyServiceAccountName = "csi.storage.k8s.io/serviceAccount.name"
+	//nolint:gosec
+	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
+	VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
+	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
 )
 
 type nodeServer struct {
 	// Embed UnimplementedIdentityServer to ensure the driver returns Unimplemented for any
 	// new RPC methods that might be introduced in future versions of the spec.
 	csi.UnimplementedNodeServer
-	driver      *LustreDriver
-	mounter     mount.Interface
-	volumeLocks *util.VolumeLocks
+	driver               *LustreDriver
+	mounter              mount.Interface
+	volumeLocks          *util.VolumeLocks
+	lustreServiceManager lustre.ServiceManager
 }
 
 func newNodeServer(driver *LustreDriver, mounter mount.Interface) csi.NodeServer {
 	return &nodeServer{
-		driver:      driver,
-		mounter:     mounter,
-		volumeLocks: util.NewVolumeLocks(),
+		driver:               driver,
+		mounter:              mounter,
+		volumeLocks:          util.NewVolumeLocks(),
+		lustreServiceManager: driver.config.LustreServiceManager,
 	}
 }
 
@@ -70,7 +79,7 @@ func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 	}, nil
 }
 
-func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
@@ -111,6 +120,20 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, target)
 	}
 	defer s.volumeLocks.Release(target)
+
+	// lustreService, err := s.prepareLustreService(ctx, req.GetVolumeContext())
+	// if err != nil {
+	// 	return nil, status.Errorf(codes.Unauthenticated, "failed to prepare lustre service: %v", err)
+	// }
+	// defer lustreService.Close()
+	// instance, err := volumeIDToInstance(volumeID)
+	// if err != nil {
+	// 	return nil, status.Error(codes.NotFound, err.Error())
+	// }
+
+	// if _, err := lustreService.GetInstance(ctx, instance); err != nil {
+	// 	return nil, status.Error(codes.Internal, err.Error())
+	// }
 
 	mountOptions := []string{}
 
@@ -202,7 +225,7 @@ func (s *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVo
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
@@ -231,6 +254,20 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
+
+	lustreService, err := s.prepareLustreService(ctx, req.GetVolumeContext())
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "failed to prepare lustre service: %v", err)
+	}
+	defer lustreService.Close()
+	instance, err := volumeIDToInstance(volumeID)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+
+	if _, err := lustreService.GetInstance(ctx, instance); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 
 	mountOptions := []string{"bind"}
 	ro := req.GetReadonly()
@@ -562,4 +599,15 @@ func setVolumeOwnershipTopLevel(volumeID, dir, fsGroup string, readOnly bool) er
 	klog.InfoS("NodePublishVolume successfully changed ownership and permissions of top-level directory", "volume", volumeID, "path", dir, "fsGroup", fsGroup)
 
 	return nil
+}
+
+// prepareLustreService prepares the Lustre Service using the Kubernetes Service Account from VolumeContext.
+func (s *nodeServer) prepareLustreService(ctx context.Context, vc map[string]string) (lustre.Service, error) {
+	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
+	lustreService, err := s.lustreServiceManager.SetupService(ctx, ts)
+	if err != nil {
+		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)
+	}
+
+	return lustreService, nil
 }

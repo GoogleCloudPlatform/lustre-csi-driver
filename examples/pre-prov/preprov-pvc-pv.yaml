@@ -29,10 +29,10 @@ spec:
     name: preprov-pvc
   csi:
     driver: lustre.csi.storage.gke.io
-    volumeHandle: <project-id>/<instance-location>/<instance-name> # Modify this to use the project, zone, and mananged lustre instance name.
+    volumeHandle: tyuchn-joonix/us-central1-a/lustre-172 # Modify this to use the project, zone, and mananged lustre instance name.
     volumeAttributes:
-      ip: ${EXISTING_LUSTRE_IP_ADDRESS} # The IP address of the existing Lustre instance.
-      filesystem: ${EXISTING_LUSTRE_FSNAME} # The filesystem name of the existing Lustre instance.
+      ip: 172.17.0.2 # The IP address of the existing Lustre instance.
+      filesystem: testlfs # The filesystem name of the existing Lustre instance.
 ---
 kind: PersistentVolumeClaim
 apiVersion: v1

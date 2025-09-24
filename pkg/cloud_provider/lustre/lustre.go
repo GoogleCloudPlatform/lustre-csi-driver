@@ -24,12 +24,14 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	lustre "cloud.google.com/go/lustre/apiv1"
 	"cloud.google.com/go/lustre/apiv1/lustrepb"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/common"
 	"github.com/googleapis/gax-go/v2/apierror"
+	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -38,6 +40,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
 
@@ -87,10 +90,48 @@ type Service interface {
 	ListInstance(ctx context.Context, instance *ListFilter) ([]*ServiceInstance, error)
 	GetCreateInstanceOp(ctx context.Context, instance *ServiceInstance) (*longrunningpb.Operation, error)
 	ListLocations(ctx context.Context, instance *ListFilter) ([]string, error)
+	Close()
 }
 
 type lustreServiceManager struct {
 	lustreClient *lustre.Client
+}
+
+func NewLustreServiceManager() (ServiceManager, error) {
+	return &lustreServiceManager{}, nil
+}
+
+type ServiceManager interface {
+	SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error)
+}
+
+func (manager *lustreServiceManager) SetupService(ctx context.Context, ts oauth2.TokenSource) (Service, error) {
+	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
+		if _, err := ts.Token(); err != nil {
+			klog.Errorf("Failed to fetch initial token: %v", err)
+
+			return false, nil
+		}
+
+		return true, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	client := oauth2.NewClient(ctx, ts)
+
+	opts := []option.ClientOption{
+		option.WithHTTPClient(client),
+		option.WithEndpoint("staging-lustre.sandbox.googleapis.com"),
+	}
+	lustreClient, err := lustre.NewRESTClient(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lustreServiceManager{
+		lustreClient: lustreClient,
+	}, nil
 }
 
 var _ Service = &lustreServiceManager{}
@@ -120,6 +161,10 @@ func NewLustreService(ctx context.Context, client *http.Client, version, endpoin
 	return &lustreServiceManager{
 		lustreClient: lustreClient,
 	}, nil
+}
+
+func (sm *lustreServiceManager) Close() {
+	sm.lustreClient.Close()
 }
 
 func (sm *lustreServiceManager) CreateInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error) {
