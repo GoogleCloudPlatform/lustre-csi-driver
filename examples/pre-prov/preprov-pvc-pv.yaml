@@ -15,7 +15,7 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: preprov-pv
+  name: preprov-pv-1
 spec:
   storageClassName: ""
   capacity:
@@ -26,23 +26,23 @@ spec:
   volumeMode: Filesystem
   claimRef:
     namespace: default
-    name: preprov-pvc
+    name: preprov-pvc-1
   csi:
     driver: lustre.csi.storage.gke.io
-    volumeHandle: <project-id>/<instance-location>/<instance-name> # Modify this to use the project, zone, and mananged lustre instance name.
+    volumeHandle: "staging-instance" # Modify this to use the project, zone, and mananged lustre instance name.
     volumeAttributes:
-      ip: ${EXISTING_LUSTRE_IP_ADDRESS} # The IP address of the existing Lustre instance.
-      filesystem: ${EXISTING_LUSTRE_FSNAME} # The filesystem name of the existing Lustre instance.
+      ip: 10.170.225.4 # The IP address of the existing Lustre instance.
+      filesystem: lfs # The filesystem name of the existing Lustre instance.
 ---
 kind: PersistentVolumeClaim
 apiVersion: v1
 metadata:
-  name: preprov-pvc
+  name: preprov-pvc-1
 spec:
   accessModes:
     - ReadWriteMany
   storageClassName: ""
-  volumeName: preprov-pv
+  volumeName: preprov-pv-1
   resources:
     requests:
       storage: 9000Gi
