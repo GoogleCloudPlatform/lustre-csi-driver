@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.5-gke.11
+FROM gke.gcr.io/debian-base:bookworm-v1.0.5-gke.12
 
 # Set non-interactive mode for apt to prevent prompts
 ENV DEBIAN_FRONTEND=noninteractive
