@@ -60,8 +60,7 @@ const (
 	tagKeyCreatedForVolumeName     = "kubernetes_io_created-for_pv_name"
 	tagKeyCreatedBy                = "storage_gke_io_created-by"
 
-	MinVolumeSizeBytes    int64 = 9000 * util.Gib
-	thinInstanceSizeBytes int64 = 1 * util.Tib
+	MinVolumeSizeBytes int64 = 9000 * util.Gib
 
 	// Keys for Topology.
 	TopologyKeyZone = "topology.gke.io/zone"
@@ -310,12 +309,9 @@ func (s *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 }
 
 func getRequestCapacity(capRange *csi.CapacityRange) (int64, error) {
-	var capBytes int64
 	// Default case where nothing is set
 	if capRange == nil {
-		capBytes = MinVolumeSizeBytes
-
-		return capBytes, nil
+		return MinVolumeSizeBytes, nil
 	}
 
 	rBytes := capRange.GetRequiredBytes()
@@ -331,16 +327,13 @@ func getRequestCapacity(capRange *csi.CapacityRange) (int64, error) {
 	}
 
 	// If Required set just set capacity to that which is Required
+	// We let Lustre backend handles cases where the requested capacity is less than the minimum or outside the required range.
 	if rSet {
-		capBytes = rBytes
+		return rBytes, nil
 	}
 
-	// Default size to minimum size if the request is too small.
-	if capBytes < MinVolumeSizeBytes {
-		capBytes = MinVolumeSizeBytes
-	}
-
-	return capBytes, nil
+	// If RequiredBytes is not set, we default to MinVolumeSizeBytes.
+	return MinVolumeSizeBytes, nil
 }
 
 func (s *controllerServer) prepareNewInstance(name string, capBytes int64, params map[string]string, top *csi.TopologyRequirement) (*lustre.ServiceInstance, error) {
