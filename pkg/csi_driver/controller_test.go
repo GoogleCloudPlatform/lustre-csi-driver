@@ -441,7 +441,7 @@ func TestGetRequestCapacity(t *testing.T) {
 			capRange: &csi.CapacityRange{
 				RequiredBytes: MinVolumeSizeBytes - 1,
 			},
-			expectCap: MinVolumeSizeBytes,
+			expectCap: MinVolumeSizeBytes - 1,
 		},
 		{
 			name: "required bytes greater than minimum",
@@ -449,6 +449,13 @@ func TestGetRequestCapacity(t *testing.T) {
 				RequiredBytes: MinVolumeSizeBytes + 1,
 			},
 			expectCap: MinVolumeSizeBytes + 1,
+		},
+		{
+			name: "required bytes is not set",
+			capRange: &csi.CapacityRange{
+				LimitBytes: MinVolumeSizeBytes + 1,
+			},
+			expectCap: MinVolumeSizeBytes,
 		},
 	}
 
