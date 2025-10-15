@@ -239,5 +239,15 @@ func getCurrProject() (string, error) {
 		return "", fmt.Errorf("failed to get gcloud project: %s, err: %w", project, err)
 	}
 
-	return strings.TrimSpace(string(project)), nil
+	// The `gcloud config get-value project` command may print extra
+	// informational lines before the project ID. We must parse the
+	// output to get only the last line, which is the project ID.
+	//
+	// Example output from the command:
+	// $ gcloud config get-value project
+	// Your active configuration is: [yangspirit-joonix]
+	// yangspirit-joonix
+	trimmedOutput := strings.TrimSpace(string(project))
+	lines := strings.Split(trimmedOutput, "\n")
+	return lines[len(lines)-1], nil
 }
