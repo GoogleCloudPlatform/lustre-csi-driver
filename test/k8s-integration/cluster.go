@@ -249,5 +249,9 @@ func getCurrProject() (string, error) {
 	// yangspirit-joonix
 	trimmedOutput := strings.TrimSpace(string(project))
 	lines := strings.Split(trimmedOutput, "\n")
-	return lines[len(lines)-1], nil
+	projectID := strings.TrimSpace(lines[len(lines)-1])
+	if projectID == "" {
+		return "", fmt.Errorf("parsed empty project ID from gcloud output: %q", string(project))
+	}
+	return projectID, nil
 }
