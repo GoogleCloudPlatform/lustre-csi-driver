@@ -253,5 +253,6 @@ func getCurrProject() (string, error) {
 	if projectID == "" {
 		return "", fmt.Errorf("parsed empty project ID from gcloud output: %q", string(project))
 	}
+
 	return projectID, nil
 }
