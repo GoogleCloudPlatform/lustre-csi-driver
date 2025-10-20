@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0
 	cloud.google.com/go/longrunning v0.6.7
 	cloud.google.com/go/lustre v0.2.0
-	github.com/container-storage-interface/spec v1.11.0
+	github.com/container-storage-interface/spec v1.12.0
 	github.com/google/go-cmp v0.7.0
 	github.com/googleapis/gax-go/v2 v2.15.0
 	github.com/kubernetes-csi/csi-lib-utils v0.19.0
