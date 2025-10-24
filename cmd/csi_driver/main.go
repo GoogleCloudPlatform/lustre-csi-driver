@@ -19,13 +19,26 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	driver "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/csi_driver"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/metrics"
+	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
+)
+
+const (
+	multiRailLabel = "lustre.csi.storage.gke.io/multi-rail"
+	lnetPortFile   = "/sys/module/lnet/parameters/accept_port"
 )
 
 var (
@@ -42,12 +55,202 @@ var (
 	version = "unknown"
 )
 
+func getGvnicNames() ([]string, error) {
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list network interfaces: %w", err)
+	}
+
+	var ethNics []string
+	for _, link := range links {
+		if strings.HasPrefix(link.Attrs().Name, "eth") {
+			ethNics = append(ethNics, link.Attrs().Name)
+		}
+	}
+
+	return ethNics, nil
+}
+
+func configureRoutesForNic(nicName string, ipAddr net.IP, tableID int) error {
+	// Get the network interface handle
+	link, err := netlink.LinkByName(nicName)
+	if err != nil {
+		return fmt.Errorf("failed to get interface %s: %w", nicName, err)
+	}
+
+	// Find the gateway for this interface
+	routes, err := netlink.RouteList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return fmt.Errorf("failed to list routes for %s: %w", nicName, err)
+	}
+
+	var gateway net.IP
+	for _, r := range routes {
+		if r.Gw != nil {
+			gateway = r.Gw
+
+			break
+		}
+	}
+
+	if gateway == nil {
+		return fmt.Errorf("could not find gateway for %s", nicName)
+	}
+	klog.Infof("Found gateway %s for %s", gateway.String(), nicName)
+
+	// Define and add the route
+	_, dst, _ := net.ParseCIDR("10.170.0.0/16") // MGS IP
+	route := &netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Dst:       dst,
+		Gw:        gateway,
+		Table:     tableID,
+	}
+	if err := netlink.RouteReplace(route); err != nil {
+		return fmt.Errorf("failed to replace/add route for %s: %w", nicName, err)
+	}
+	klog.Infof("Successfully added (or replace) route for %s", nicName)
+
+	// Define and add the rule
+	rule := netlink.NewRule()
+	rule.Table = tableID
+	rule.Src = &net.IPNet{IP: ipAddr, Mask: net.CIDRMask(32, 32)} // /32 mask for a single IP
+	if err := netlink.RuleAdd(rule); err != nil {
+		return fmt.Errorf("failed to add rule for %s: %w", nicName, err)
+	}
+	klog.Infof("Successfully added rule for %s", nicName)
+
+	return nil
+}
+
+func isMultiRailEnabled() (bool, error) {
+	// TODO(halimsam): Add Multi Rail Logic here.
+	return false, nil
+}
+
+func getLnetPort() int {
+	legacyPortEnabled := os.Getenv("ENABLE_LEGACY_LUSTRE_PORT")
+	if legacyPortEnabled == "true" {
+		return 6988
+	}
+
+	return 988
+}
+
+func checkLnetPort(expectedPort int) error {
+	file, err := os.ReadFile(lnetPortFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			klog.V(4).Infof("LNET port file %v not found. Skipping check", lnetPortFile)
+
+			return nil
+		}
+
+		return fmt.Errorf("error reading file %s: %w", lnetPortFile, err)
+	}
+	currPort := strings.TrimSpace(string(file))
+	expectedPortStr := strconv.Itoa(expectedPort)
+	if currPort != expectedPortStr {
+		klog.V(3).Infof("Your node already has Lustre kernel modules installed with an outdated configuration. Please upgrade your node pool to apply the correct settings.")
+
+		return fmt.Errorf("lnet port mismatched, expected %s, but found: %s", expectedPortStr, currPort)
+	}
+
+	log.Println("LNET_PORT matches configuration. Check passed.")
+
+	return nil
+}
+
+func configureRoute(nicName string, tableID int) error {
+	link, err := netlink.LinkByName(nicName)
+	if err != nil {
+		return fmt.Errorf("could not get link for %s: %w", nicName, err)
+	}
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil || len(addrs) == 0 {
+		return fmt.Errorf("could not get address for %s: %w", nicName, err)
+	}
+	klog.Infof("IP address are: %+v", addrs)
+	ipAddr := addrs[0].IP
+	if err := configureRoutesForNic(nicName, ipAddr, tableID); err != nil {
+		return fmt.Errorf("failed to configure routes for %s: %w", nicName, err)
+	}
+
+	return nil
+}
+
+func kmodInstaller() error {
+	if err := checkLnetPort(getLnetPort()); err != nil {
+		return err
+	}
+	nics, err := getGvnicNames()
+	if err != nil {
+		return fmt.Errorf("error getting nic names: %w", err)
+	}
+	if len(nics) == 0 {
+		return fmt.Errorf("no nics with eth prefix found")
+	}
+	isMultiNic, err := isMultiRailEnabled()
+	if err != nil {
+		return err
+	}
+	klog.V(4).Infof("Is using LustreCSI Multi-Rail feature: %v", isMultiNic)
+
+	lnetArg := fmt.Sprintf(`lnet.networks="tcp0(%s)"`, nics[0])
+	if isMultiNic {
+		lnetArg = fmt.Sprintf(`lnet.networks="tcp0(%s)"`, strings.Join(nics, ","))
+	}
+
+	cmd := exec.Command("/usr/bin/cos-dkms", "install", "lustre-client-drivers",
+		"--gcs-bucket=cos-default",
+		"--latest",
+		"-w", "0",
+		"--kernelmodulestree=/host_modules",
+		"--module-arg="+lnetArg,
+		"--module-arg=lnet.accept_port="+strconv.Itoa(getLnetPort()),
+		"--lsb-release-path=/host_etc/lsb-release",
+		"--insert-on-install",
+		"--logtostderr")
+
+	klog.Infof("Executing command: %s", cmd.String())
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("command execution failed: %w\noutput:\n%s", err, string(output))
+	}
+
+	klog.Infof("Command output:\n%s\n", string(output))
+	// 100 is a placeholder table id.
+	tableID := 100
+	if isMultiNic {
+		// Configure route for all NICS
+		for _, nicName := range nics {
+			err = configureRoute(nicName, tableID)
+			if err != nil {
+				return err
+			}
+			tableID++
+		}
+	} else {
+		// Configure route for one NIC.
+		err = configureRoute(nics[0], tableID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	if err := kmodInstaller(); err != nil {
+		klog.Fatalf("kmod install failure: %v", err)
+	}
 
 	config := &driver.LustreDriverConfig{
 		Name:                   driver.DefaultName,

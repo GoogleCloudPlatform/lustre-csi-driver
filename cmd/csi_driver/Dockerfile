@@ -28,8 +28,9 @@ ARG TARGETPLATFORM
 # Install necessary dependencies and tools.
 RUN clean-install bash
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     apt \
+    kmod \
     dpkg \
     libyaml-0-2 \
     libnl-3-200 \
@@ -45,6 +46,8 @@ RUN apt-get update && apt-get install -y \
     libjson-c5 \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
+
+COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.5 /usr/bin/cos-dkms /usr/bin/cos-dkms
 
 COPY /bin/lustre/$TARGETPLATFORM/lustre-client.deb /lustre/lustre-client.deb
 
