@@ -43,11 +43,9 @@ LUSTRE_CLIENT_PATH_ARM64 ?= $(shell cat cmd/csi_driver/lustre_client_utils_arm64
 
 all: driver
 
-build-all-image-and-push-multi-arch: init-buildx download-lustre-client-utils build-image-linux-amd64 build-image-linux-arm64
-	docker manifest create --amend $(DRIVER_IMAGE):$(STAGINGVERSION) $(DRIVER_IMAGE):$(STAGINGVERSION)_linux_amd64 $(DRIVER_IMAGE):$(STAGINGVERSION)_linux_arm64
-	docker manifest create --amend $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION) $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)_linux_amd64 $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)_linux_arm64
+build-all-image-and-push-multi-arch: init-buildx download-lustre-client-utils build-image-linux-amd64
+	docker manifest create --amend $(DRIVER_IMAGE):$(STAGINGVERSION) $(DRIVER_IMAGE):$(STAGINGVERSION)_linux_amd64
 	docker manifest push -p $(DRIVER_IMAGE):$(STAGINGVERSION)
-	docker manifest push -p $(KMOD_INSTALLER_IMAGE):$(STAGINGVERSION)
 
 build-image-linux-amd64:
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
@@ -55,21 +53,11 @@ build-image-linux-amd64:
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_amd64 \
 		--platform linux/amd64 \
 		--build-arg TARGETPLATFORM=linux/amd64 .
-	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/kmod_installer/Dockerfile \
-		--tag ${KMOD_INSTALLER_IMAGE}:${STAGINGVERSION}_linux_amd64 \
-		--platform linux/amd64 \
-		--build-arg TARGETPLATFORM=linux/amd64 .
 
 build-image-linux-arm64:
 	docker buildx build ${DOCKER_BUILDX_ARGS} \
 		--file ./cmd/csi_driver/Dockerfile \
 		--tag ${DRIVER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
-		--platform linux/arm64 \
-		--build-arg TARGETPLATFORM=linux/arm64 .
-	docker buildx build ${DOCKER_BUILDX_ARGS} \
-		--file ./cmd/kmod_installer/Dockerfile \
-		--tag ${KMOD_INSTALLER_IMAGE}:${STAGINGVERSION}_linux_arm64 \
 		--platform linux/arm64 \
 		--build-arg TARGETPLATFORM=linux/arm64 .
 
@@ -108,7 +96,6 @@ generate-spec-yaml:
 	./deploy/install-kustomize.sh
 	if [ "${OVERLAY}" != "gke-release" ]; then \
 		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit set image gke.gcr.io/lustre-csi-driver=${DRIVER_IMAGE}:${STAGINGVERSION}; \
-		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit set image gke.gcr.io/lustre-kmod-installer=${KMOD_INSTALLER_IMAGE}:${STAGINGVERSION}; \
 		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit add configmap lustre-config --behavior=merge --disableNameSuffixHash --from-literal=endpoint=${LUSTRE_ENDPOINT}; \
 	fi
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/lustre-csi-driver-specs-generated.yaml > /dev/null
