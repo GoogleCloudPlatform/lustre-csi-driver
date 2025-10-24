@@ -42,23 +42,6 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
         cloud.google.com/gke-os-distribution: cos
-      initContainers:
-      - name: lustre-kmod-installer
-        image: gke.gcr.io/lustre-kmod-installer
-        securityContext:
-         privileged: true
-        env:
-        - name: ENABLE_LEGACY_LUSTRE_PORT
-          value: "true"
-        - name: CHECK_LOADPIN
-          value: "true"
-        volumeMounts:
-        - name: dev # TODO(tyuchn): Remove this volume once LoadPin excludes kernel modules.
-          mountPath: /dev
-        - name: host-etc
-          mountPath: /host_etc/lsb-release
-        - name: host-modules
-          mountPath: /host_modules
       containers:
         - name: lustre-csi-driver
           securityContext:
@@ -89,6 +72,17 @@ spec:
               mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
+            - name: host-etc
+              mountPath: /host_etc/lsb-release
+            - name: host-modules
+              mountPath: /host_modules
+              readOnly: false
+            - name: dkms-build-src
+              mountPath: /usr/src
+            - name: dkms-build-lib
+              mountPath: /var/lib/dkms
+            - name: dkms-build-lib-modules
+              mountPath: /lib/modules
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -140,6 +134,12 @@ spec:
         - name: dev
           hostPath:
             path: /dev
+        - name: dkms-build-src
+          emptyDir: {}
+        - name: dkms-build-lib
+          emptyDir: {}
+        - name: dkms-build-lib-modules
+          emptyDir: {}
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should
       # be scheduled on all nodes.

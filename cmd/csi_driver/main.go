@@ -19,10 +19,12 @@ package main
 import (
 	"context"
 	"flag"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	driver "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/csi_driver"
+	kmod "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/kmod_installer"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/metrics"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
@@ -38,16 +40,39 @@ var (
 	lustreAPIEndpoint      = flag.String("lustre-endpoint", "", "Lustre API service endpoint, supported values are autopush, staging and prod.")
 	cloudConfigFilePath    = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
+	disableKmodInstall     = flag.Bool("disable-kmod-install", false, "If set to true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
+
+	// dkmsArgsOverride contains custom arguments for cos-dkms installation provided by user.
+	dkmsArgsOverride stringSlice
+
 	// These are set at compile time.
 	version = "unknown"
 )
 
+type stringSlice []string
+
+func (s *stringSlice) String() string {
+	return strings.Join(*s, ", ")
+}
+
+func (s *stringSlice) Set(value string) error {
+	*s = append(*s, value)
+
+	return nil
+}
+
 func main() {
 	klog.InitFlags(nil)
+	flag.Var(&dkmsArgsOverride, "cos-dkms-args-override", "Custom override cos-dkms install arguments. (Can be specified multiple times).")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if !*disableKmodInstall {
+		if err := kmod.InstallLustreKmod(ctx, *nodeID, *enableLegacyLustrePort, dkmsArgsOverride); err != nil {
+			klog.Fatalf("Kmod install failure: %v", err)
+		}
+	}
 
 	config := &driver.LustreDriverConfig{
 		Name:                   driver.DefaultName,
