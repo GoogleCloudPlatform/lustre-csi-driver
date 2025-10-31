@@ -24,3 +24,7 @@ updates:
         - "sigs.k8s.io*"
         - "github.com/kubernetes-csi*"
   open-pull-requests-limit: 10
+- package-ecosystem: "helm"
+  directory: "/helm/lustre-csi-driver"
+  schedule:
+    interval: "weekly"
