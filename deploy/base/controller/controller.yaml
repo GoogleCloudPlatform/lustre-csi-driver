@@ -100,6 +100,13 @@ spec:
             - "--leader-election"
             - "--leader-election-namespace=$(LUSTRE_NAMESPACE)"
             - "--handle-volume-inuse-error=false"
+          resources:
+            limits:
+              cpu: 100m
+              memory: 200Mi
+            requests:
+              cpu: 10m
+              memory: 20Mi
           env:
             - name: LUSTRE_NAMESPACE
               valueFrom:
