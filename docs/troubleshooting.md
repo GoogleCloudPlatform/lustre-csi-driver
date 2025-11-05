@@ -121,3 +121,117 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 - Solutions:
 
   Warnings not listed above that include an RPC error code `Internal` indicate unexpected issues in the CSI driver. Create a new [issue](https://github.com/GoogleCloudPlatform/lustre-csi-driver/issues) on the GitHub project page, including your GKE cluster version, detailed workload information, and the Pod event warning message in the issue.
+
+## Volume Expansion Issues
+This guide provides solutions for common issues you might encounter with Lustre volume expansion
+
+### Expansion Does Not Start / PVC Stuck in ExternalExpanding
+**Observation:** You update the PVC's requested storage, but the PVC status doesn't change to `Resizing`, no new events related to resizing appear, or the PVC events only show `ExternalExpanding`.
+```bash
+kubectl describe pvc <pvc-name>
+```
+
+```
+Events:
+  Type    Reason             Age                From           Message
+  ----    ------             ----               ----           -------
+  Normal  ExternalExpanding  21m (x2 over 58m)  volume_expand  waiting for an external controller to expand this PVC
+```
+
+**Diagnosis:** This behavior usually indicates a problem with the `csi-external-resizer` sidecar that runs within the `lustre-csi-controller` pod. This controller runs on the GKE control plane and is responsible for managing the resizing operation.
+
+**Mitigation:**
+1.  Ensure that the `StorageClass` used to provision the Lustre volume has the field `allowVolumeExpansion` set to `true`.
+```bash
+kubectl get storageclass <storageclass-name> -o yaml
+```
+
+2.  Access the hosted master project and examine Lustre CSI controller logs for errors.
+**Logging query example**
+```
+(resource.type="gce_instance" OR resource.type="container")
+(
+labels."compute.googleapis.com/resource_name":"<your-gke-control-plane-vm-name>"
+)
+logName="projects/<project-Id>/logs/lustre-csi-driver"
+```
+
+### Expansion Fails: Invalid Argument
+**Observation:** The PVC enters a `Resizing` state, but eventually fails. A `VolumeResizeFailed` event appears on the PVC.
+
+**Diagnosis:** Check the events on the PVC
+```bash
+kubectl describe pvc <pvc-name>
+```
+
+Look for an event message similar to `VolumeResizeFailed: rpc error: code = InvalidArgument desc = ...` followed by details from the Lustre backend. This typically means the requested size is not valid due to
+*   Not being a multiple of the required step size for the tier.
+*   Being below the minimum or above the maximum capacity for the tier.
+
+**Mitigation**
+*   Check the [Google Cloud Managed Lustre documentation](https://cloud.google.com/managed-lustre/docs/create-instance#performance-tiers) to find the valid step sizes and minimum/maximum sizes for your volume's performance tier.
+*   Edit the PVC to request a valid storage size.
+*   Monitor the PVC events again to confirm the resize process restarts.
+
+### Expansion Fails: Internal Error
+**Observation:** The PVC resize fails, and events show an `INTERNAL` error from the backend.
+
+**Diagnosis:** Check PVC events
+```bash
+kubectl describe pvc <pvc-name>
+```
+```
+Events:
+  Type      Reason              Age          From             Message
+  ----      ------              ----         ----             -------
+  Warning   VolumeResizeFailed  64s          external-resizer lustre.csi.storage.gke.io  resize volume "pvc-66164549-a645-4a79-9d7b-4fed54da8556" by resizer "lustre.csi.storage.gke.io" failed: rpc error: code = Internal desc = rpc error: code = Internal desc = an internal error has occurred
+```
+
+Look for `VolumeResizeFailed` with `code = Internal`. The event message may contain more details from the Lustre backend. Access Lustre CSI Controller logs for Internal errors.
+```
+(resource.type="gce_instance" OR resource.type="container")
+(
+labels."compute.googleapis.com/resource_name":"<your-gke-control-plane-vm-name>"
+)
+logName="projects/<project-id>/logs/lustre-csi-driver"
+
+`"ControllerExpandVolume"`
+`"Internal"`
+```
+
+**Mitigation:**
+*   Retry the expansion by applying the PVC again with the same desired size. This can sometimes resolve transient backend issues.
+*   If retrying fails, contact Google Cloud Support. Please provide the error messages, as manual intervention may be necessary.
+
+### Expansion In-progress or stuck: Deadline Exceeded
+**Observation:** You might see PVC event `VolumeResizeFailed` with `DEADLINE_EXCEEDED`.
+
+**Diagnosis:**
+```bash
+kubectl describe pvc <pvc-name>
+```
+
+Events might show the `external-resizer` timing out, but the underlying Lustre operation is generally still in progress. The error message "Expansion for volume {Id} to new capacity {cap} GiB is already in progress" will appear on retries.
+
+**Mitigation:**
+*   The `external-resizer` will automatically retry. Continue monitoring the PVC events.
+*   Check logs in the hosted master project to monitor the expansion process.
+```
+(resource.type="gce_instance" OR resource.type="container")
+(
+labels."compute.googleapis.com/resource_name":"<your-gke-control-plane-vm-name>"
+)
+logName="projects/<project-id>/logs/lustre-csi-driver"
+
+`"ControllerExpandVolume" OR "<pvc-name>"`
+```
+
+If the operation succeeds on a retry, a `VolumeResizeSuccessful` event will appear.
+If it remains stuck for more than 30 mins for smaller expansions or more than 90 mins for large capacity increases, contact Google Cloud Support.
+
+### Expansion Fails: Lustre System Quota Exceeded
+**Observation:** Expansion failed indicating a quota issue on the Lustre backend.
+
+**Mitigation:**
+*   Request a smaller capacity increase for the PVC.
+*   Contact Support to discuss options for increasing overall Lustre service quotas or capacity.
