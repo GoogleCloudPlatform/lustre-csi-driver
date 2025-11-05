@@ -151,7 +151,7 @@ kubectl get storageclass <storageclass-name> -o yaml
 ```
 (resource.type="gce_instance" OR resource.type="container")
 (
-labels."compute.googleapis.com/resource_name":"<your-gke-control-plane-vm-name>"
+labels."compute.googleapis.com/resource_name":"<control-plane-vm-name>"
 )
 logName="projects/<project-Id>/logs/lustre-csi-driver"
 ```
@@ -191,12 +191,12 @@ Look for `VolumeResizeFailed` with `code = Internal`. The event message may cont
 ```
 (resource.type="gce_instance" OR resource.type="container")
 (
-labels."compute.googleapis.com/resource_name":"<your-gke-control-plane-vm-name>"
+labels."compute.googleapis.com/resource_name":"<control-plane-vm-name>"
 )
 logName="projects/<project-id>/logs/lustre-csi-driver"
 
-`"ControllerExpandVolume"`
-`"Internal"`
+"ControllerExpandVolume"
+"Internal"
 ```
 
 **Mitigation:**
@@ -219,11 +219,11 @@ Events might show the `external-resizer` timing out, but the underlying Lustre o
 ```
 (resource.type="gce_instance" OR resource.type="container")
 (
-labels."compute.googleapis.com/resource_name":"<your-gke-control-plane-vm-name>"
+labels."compute.googleapis.com/resource_name":"<control-plane-vm-name>"
 )
 logName="projects/<project-id>/logs/lustre-csi-driver"
 
-`"ControllerExpandVolume" OR "<pvc-name>"`
+"ControllerExpandVolume" OR "<pvc-name>"
 ```
 
 If the operation succeeds on a retry, a `VolumeResizeSuccessful` event will appear.
