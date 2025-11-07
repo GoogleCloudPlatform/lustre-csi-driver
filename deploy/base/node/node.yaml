@@ -53,6 +53,7 @@ spec:
             - --v=5
             - --endpoint=unix:/csi/csi.sock
             - --nodeid=$(KUBE_NODE_NAME)
+            - --disable-kmod-install=false
             - --node=true
           resources:
             limits:

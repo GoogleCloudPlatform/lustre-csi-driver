@@ -40,7 +40,7 @@ var (
 	lustreAPIEndpoint      = flag.String("lustre-endpoint", "", "Lustre API service endpoint, supported values are autopush, staging and prod.")
 	cloudConfigFilePath    = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
-	disableKmodInstall     = flag.Bool("disable-kmod-install", false, "If set to true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
+	disableKmodInstall     = flag.Bool("disable-kmod-install", true, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
 
 	// dkmsArgsOverride contains custom arguments for cos-dkms installation provided by user.
 	dkmsArgsOverride stringSlice
