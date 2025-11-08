@@ -33,6 +33,8 @@ import (
 const (
 	lnetAcceptPortFile       = "/sys/module/lnet/parameters/accept_port"
 	lnetNetworkParameterFile = "/sys/module/lnet/parameters/networks"
+	efiPartition             = "/dev/disk/by-label/EFI-SYSTEM"
+	grubCfgSuffix            = "/efi/boot/grub.cfg"
 	legacyLNetPort           = 6988
 	defaultLNetPort          = 988
 	cmdTimeout               = 15 * time.Minute
@@ -165,5 +167,73 @@ func InstallLustreKmod(ctx context.Context, nodeID string, enableLegacyPort bool
 
 	klog.Infof("Cos-dkms output:\n%s\n", string(output))
 
+	return nil
+}
+
+func DisableLoadPin(ctx context.Context) error {
+	// initial validation.
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return fmt.Errorf("failed to read /proc/cmdline: %w", err)
+	}
+	if strings.Contains(string(cmdline), "loadpin") {
+		klog.V(4).Info("LoadPin is already disabled. Moving to Kmod installation.")
+		return nil
+	}
+	klog.V(4).Info("LoadPin is not disabled. Sleeping 60s until the node is ready...")
+	time.Sleep(60 * time.Second)
+	klog.Info("Disabling LoadPin now.")
+
+	// mount disk
+	mountPoint := "/mnt/disks"
+	if err := os.MkdirAll(mountPoint, 0755); err != nil {
+		return fmt.Errorf("failed to mkdir %s: %w", mountPoint, err)
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
+	defer cancel()
+
+	mountCmd := exec.CommandContext(cmdCtx, "mount", efiPartition, mountPoint)
+	output, err := mountCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to mount EFI partition: %w, output: %s", err, string(output))
+	}
+
+	// Parse through grub cfg file and replace/add disable loadpin line.
+	grubPath := mountPoint + grubCfgSuffix
+	grubBytes, err := os.ReadFile(grubPath)
+	if err != nil {
+		return fmt.Errorf("failed to read grub.cfg: %w", err)
+	}
+	grubContent := string(grubBytes)
+	klog.V(4).Infof("samhalim this is before grub change: %v", grubContent)
+	if !strings.Contains(grubContent, "loadpin.enforce=0") {
+		disableLoadpinCfg := strings.ReplaceAll(grubContent, "module.sig_enforce=0", "module.sig_enforce=0 loadpin.enforce=0")
+
+		if err := os.WriteFile(grubPath, []byte(disableLoadpinCfg), 0644); err != nil {
+			return fmt.Errorf("failed to write disable loadpin content to %v: %w", grubPath, err)
+		}
+		klog.V(4).Info("Successfully disabled LoadPin.")
+	}
+
+	// unmount disk
+	unmountCmd := exec.CommandContext(cmdCtx, "unmount", mountPoint)
+	output, err = unmountCmd.CombinedOutput()
+	if err != nil {
+		klog.Warningf("failed explicit unmount on %v. output: %v, error: %v", mountPoint, string(output), err)
+	}
+
+	// bash: echo 1 > /proc/sys/kernel/sysrq
+	if err := os.WriteFile("/proc/sys/kernel/sysrq", []byte("1\n"), 0644); err != nil {
+		return fmt.Errorf("failed to enable sysrq: %w", err)
+	}
+
+	// bash: echo b > /proc/sysrq-trigger
+	// This should trigger node reboot
+	if err := os.WriteFile("/proc/sysrq-trigger", []byte("b\n"), 0200); err != nil {
+		return fmt.Errorf("failed to trigger reboot: %w", err)
+	}
+
+	// Sleep for 10 seconds to account for any delay on node reboot.
+	time.Sleep(10 * time.Second)
 	return nil
 }
