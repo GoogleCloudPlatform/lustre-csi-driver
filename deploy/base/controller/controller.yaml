@@ -136,7 +136,6 @@ spec:
             - "--nodeid=$(KUBE_NODE_NAME)"
             - "--controller=true"
             - "--lustre-endpoint=$(ENDPOINT)"
-            - "--enable-legacy-lustre-port=true"
           ports:
             - containerPort: 29633
               name: healthz

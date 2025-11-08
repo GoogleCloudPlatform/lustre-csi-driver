@@ -26,7 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"k8s.io/klog/v2"
 )
 
@@ -35,6 +34,7 @@ const (
 	lnetNetworkParameterFile = "/sys/module/lnet/parameters/networks"
 	legacyLNetPort           = 6988
 	defaultLNetPort          = 988
+	initialRouteTableID      = 100
 	cmdTimeout               = 15 * time.Minute
 )
 
@@ -93,26 +93,16 @@ func checkLnetNetwork(expectedNics string) error {
 	return nil
 }
 
-func InstallLustreKmod(ctx context.Context, nodeID string, enableLegacyPort bool, customDkmsArgs []string) error {
+// InstallLustreKmod installs kmod (cos-dkms) on the node.
+func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customDkmsArgs []string, nics []string, isMultiNic bool) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	if err := checkLnetPort(lnetPort); err != nil {
-		return err
-	}
-	nics, err := network.GetGvnicNames()
-	if err != nil {
-		return fmt.Errorf("error getting nic names: %w", err)
-	}
-	if len(nics) == 0 {
-		return errors.New("no nics with eth prefix found")
-	}
-	isMultiNic, err := network.IsMultiRailEnabled(nodeID)
-	if err != nil {
 		return err
 	}
 
 	moduleArg := fmt.Sprintf(`lnet.networks="tcp0(%s)"`, nics[0])
 	if isMultiNic {
-		if err = checkLnetNetwork(fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))); err != nil {
+		if err := checkLnetNetwork(fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))); err != nil {
 			return err
 		}
 		moduleArg = fmt.Sprintf(`lnet.networks="tcp0(%s)"`, strings.Join(nics, ","))
