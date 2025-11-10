@@ -184,6 +184,10 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 		}
 	}
 
+	if !useManagedDriver {
+		cmdParams = append(cmdParams, "--enable-kernel-module-signature-enforcement")
+	}
+
 	cmd = exec.Command("gcloud")
 	cmd.Args = append(cmd.Args, cmdParams...)
 	err = runCommand("Starting E2E Cluster on GKE", cmd)
