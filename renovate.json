@@ -10,6 +10,10 @@
       "enabled": false,
       "matchPackageNames": [
         "*"
+      ],
+      "excludeManagers": [
+        "helm-values",
+        "kustomize"
       ]
     }
   ],
