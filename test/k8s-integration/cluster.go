@@ -151,12 +151,10 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 		}
 	}
 
-	if useManagedDriver {
-		// Update gcloud to the latest version to support the managed csi driver.
-		cmd := exec.Command("gcloud", "components", "update")
-		if err := runCommand("Updating gcloud to the latest version", cmd); err != nil {
-			return fmt.Errorf("failed to update gcloud to latest version: %w", err)
-		}
+	// Update gcloud to the latest version to support the managed csi driver
+	// and node feature kernel-module-signature-enforcement.
+	if err := runCommand("Updating gcloud to the latest version", exec.Command("gcloud", "components", "update")); err != nil {
+		return fmt.Errorf("failed to update gcloud to latest version: %w", err)
 	}
 
 	var cmd *exec.Cmd
