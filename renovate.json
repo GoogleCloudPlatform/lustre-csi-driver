@@ -3,20 +3,12 @@
   "extends": [
     "config:recommended"
   ],
+  "enabledManagers": [
+    "helm-values",
+    "kustomize"
+  ],
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
-  "packageRules": [
-    {
-      "enabled": false,
-      "matchPackageNames": [
-        "*"
-      ],
-      "excludeManagers": [
-        "helm-values",
-        "kustomize"
-      ]
-    }
-  ],
   "vulnerabilityAlerts": {
     "enabled": true
   },
