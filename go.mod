@@ -11,7 +11,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.15.0
 	github.com/kubernetes-csi/csi-lib-utils v0.19.0
 	github.com/kubernetes-csi/csi-test/v5 v5.2.0
-	github.com/vishvananda/netlink v1.3.0
+	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/net v0.46.0
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/sys v0.38.0
