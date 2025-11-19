@@ -69,6 +69,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if !*disableKmodInstall {
+		if err := kmod.DisableLoadPin(ctx); err != nil {
+			klog.Fatalf("Disable LoadPin failure: %v", err)
+		}
 		if err := kmod.InstallLustreKmod(ctx, *nodeID, *enableLegacyLustrePort, dkmsArgsOverride); err != nil {
 			klog.Fatalf("Kmod install failure: %v", err)
 		}
