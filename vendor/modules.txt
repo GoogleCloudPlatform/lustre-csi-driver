@@ -32,8 +32,8 @@ cloud.google.com/go/compute/metadata
 cloud.google.com/go/longrunning
 cloud.google.com/go/longrunning/autogen
 cloud.google.com/go/longrunning/autogen/longrunningpb
-# cloud.google.com/go/lustre v0.2.0
-## explicit; go 1.23.0
+# cloud.google.com/go/lustre v0.2.1
+## explicit; go 1.24.0
 cloud.google.com/go/lustre/apiv1
 cloud.google.com/go/lustre/apiv1/lustrepb
 cloud.google.com/go/lustre/internal
