@@ -25,6 +25,7 @@ import (
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	driver "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/csi_driver"
 	kmod "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/kmod_installer"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/labelcontroller"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/metrics"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"k8s.io/klog/v2"
@@ -42,6 +43,7 @@ var (
 	cloudConfigFilePath    = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
 	disableKmodInstall     = flag.Bool("disable-kmod-install", true, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
+	enableLabelController  = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
 
 	// dkmsArgsOverride contains custom arguments for cos-dkms installation provided by user.
 	dkmsArgsOverride stringSlice
@@ -124,12 +126,13 @@ func main() {
 	}
 
 	if *runController {
+		mm := metrics.NewMetricsManager()
 		if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
-			mm := metrics.NewMetricsManager()
 			mm.InitializeHTTPHandler(*httpEndpoint, *metricsPath)
 			if err := mm.EmitGKEComponentVersion(); err != nil {
 				klog.Fatalf("Failed to emit GKE component version: %v", err)
 			}
+			mm.RegisterSuccessfullyLabeledVolumeMetric()
 		}
 
 		if *lustreAPIEndpoint == "" {
@@ -140,6 +143,9 @@ func main() {
 			klog.Fatalf("Failed to initialize cloud provider: %v", err)
 		}
 		config.Cloud = cloudProvider
+		if *enableLabelController {
+			go labelcontroller.Start(ctx, cloudProvider, &mm)
+		}
 	}
 
 	lustreDriver, err := driver.NewLustreDriver(config)
