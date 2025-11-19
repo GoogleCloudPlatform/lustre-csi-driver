@@ -202,9 +202,7 @@ func handle() error {
 	defer removeDir(k8sParentDir)
 
 	if *doNetworkSetup {
-		err := setupNetwork(project)
-		defer cleanupNetwork(project)
-		if err != nil {
+		if err := setupNetwork(project); err != nil {
 			return fmt.Errorf("failed to setup VPC network: %w", err)
 		}
 	}

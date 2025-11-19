@@ -29,30 +29,33 @@ const (
 )
 
 func setupNetwork(project string) error {
-	// Enable required services.
-	// TODO(b/391936057): switch to prod API endpoint once it's available.
-	// cmd := exec.Command("gcloud", "services", "enable", "autopush-lustre.sandbox.googleapis.com", "--project="+project)
-	// if err := runCommand("Enabling Lustre API", cmd); err != nil {
-	// 	return fmt.Errorf("failed to enable Lustre API: %w", err)
-	// }
 	cmd := exec.Command("gcloud", "services", "enable", "servicenetworking.googleapis.com", "--project="+project)
 	if err := runCommand("Enabling service networkiing API", cmd); err != nil {
 		return fmt.Errorf("failed to enable service networking API: %w", err)
 	}
 
-	// Create network.
-	cmd = exec.Command("gcloud", "compute", "networks", "create", *clusterNewtwork, "--subnet-mode=auto", "--mtu=8896", "--project="+project)
-	if err := runCommand("Creating VPC network", cmd); err != nil {
-		return fmt.Errorf("failed to create VPC network: %w", err)
+	// Create network if it doesn't exist.
+	cmd = exec.Command("gcloud", "compute", "networks", "describe", *clusterNewtwork, "--project="+project)
+	if err := runCommand("Checking if VPC network exists", cmd); err != nil {
+		klog.Infof("VPC network %q not found, creating it.", *clusterNewtwork)
+		cmd = exec.Command("gcloud", "compute", "networks", "create", *clusterNewtwork, "--subnet-mode=auto", "--mtu=8896", "--project="+project)
+		if err := runCommand("Creating VPC network", cmd); err != nil {
+			return fmt.Errorf("failed to create VPC network: %w", err)
+		}
 	}
 
-	// Create IP range.
-	cmd = exec.Command("gcloud", "compute", "addresses", "create", ipRangeName, "--global", "--purpose=VPC_PEERING", "--prefix-length=16", "--description=Lustre VPC Peering", "--network="+*clusterNewtwork, "--project="+project)
-	if err := runCommand("Creating IP range", cmd); err != nil {
-		return fmt.Errorf("failed to reserve IP range: %w", err)
+	// Create IP range if it doesn't exist.
+	cmd = exec.Command("gcloud", "compute", "addresses", "describe", ipRangeName, "--global", "--project="+project)
+	if err := runCommand("Checking if IP range exists", cmd); err != nil {
+		klog.Infof("IP range %q not found, creating it.", ipRangeName)
+		cmd = exec.Command("gcloud", "compute", "addresses", "create", ipRangeName, "--global", "--purpose=VPC_PEERING", "--prefix-length=16", "--description=Lustre VPC Peering", "--network="+*clusterNewtwork, "--project="+project)
+		if err := runCommand("Creating IP range", cmd); err != nil {
+			return fmt.Errorf("failed to reserve IP range: %w", err)
+		}
 	}
 
 	// Connect VPC peering.
+	// gcloud services vpc-peerings connect is idempotent. It will update the peering if it already exists.
 	cmd = exec.Command("gcloud", "services", "vpc-peerings", "connect",
 		"--network="+*clusterNewtwork,
 		"--project="+project,
@@ -63,24 +66,4 @@ func setupNetwork(project string) error {
 	}
 
 	return nil
-}
-
-func cleanupNetwork(project string) {
-	klog.Info("Cleaning up stale network resources...The following errors can be ignored")
-	// Delete VPC peering.
-	cmd := exec.Command("gcloud", "services", "vpc-peerings", "delete",
-		"--network="+*clusterNewtwork,
-		"--project="+project,
-	)
-	if err := runCommand("Deleting VPC peering", cmd); err != nil {
-		klog.Warningf("Failed to delete VPC peering: %v", err)
-	}
-
-	// Delete IP range.
-	cmd = exec.Command("gcloud", "compute", "addresses", "delete", ipRangeName, "--global", "--project="+project, "--quiet")
-	if err := runCommand("Deleting IP range", cmd); err != nil {
-		klog.Warningf("Failed to delete IP range: %v", err)
-	}
-
-	klog.Infof("Stale network resources has been cleaned up")
 }
