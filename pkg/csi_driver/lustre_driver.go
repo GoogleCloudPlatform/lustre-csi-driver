@@ -39,6 +39,8 @@ type LustreDriverConfig struct {
 	MetadataService        metadata.Service
 	Cloud                  *lustre.Cloud
 	EnableLegacyLustrePort bool
+	IsMultiNic             bool
+	AdditionalNics         []string
 }
 
 type LustreDriver struct {

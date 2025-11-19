@@ -25,3 +25,25 @@ metadata:
 value: 900001000
 globalDefault: false
 description: "This priority class should be used for the Lustre CSI driver node deployment only."
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lustre-csi-node-getter
+rules:
+- apiGroups: [""] # The core API group
+  resources: ["nodes"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lustre-csi-node-sa-node-getter-binding
+subjects:
+- kind: ServiceAccount
+  name: lustre-csi-node-sa
+  namespace: lustre-csi-driver # Assuming the ServiceAccount is in this namespace
+roleRef:
+  kind: ClusterRole
+  name: lustre-csi-node-getter
+  apiGroup: rbac.authorization.k8s.io

@@ -26,6 +26,7 @@ import (
 	driver "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/csi_driver"
 	kmod "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/kmod_installer"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/metrics"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 )
@@ -68,11 +69,33 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	nics, err := network.GetGvnicNames()
+	if err != nil {
+		klog.Fatalf("Error getting nic names: %v", err)
+	}
+	if len(nics) == 0 {
+		klog.Fatal("No nics with eth prefix found")
+	}
+	isMultiNic, err := network.IsMultiRailEnabled(ctx, *nodeID, nics)
+	if err != nil {
+		klog.Fatal(err)
+	}
+
 	if !*disableKmodInstall {
-		if err := kmod.InstallLustreKmod(ctx, *nodeID, *enableLegacyLustrePort, dkmsArgsOverride); err != nil {
+		if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, dkmsArgsOverride, nics, isMultiNic); err != nil {
 			klog.Fatalf("Kmod install failure: %v", err)
 		}
 	}
+	// additional NICs are any additional NICs that are not default (eth0).
+	// These NICs will additional setup for multi nic feature.
+	additionalNics := []string{}
+	for _, nic := range nics {
+		if nic != "eth0" {
+			additionalNics = append(additionalNics, nic)
+		}
+	}
+	klog.V(4).Infof("Additional nic(s) %v on Node %v", additionalNics, nodeID)
 
 	config := &driver.LustreDriverConfig{
 		Name:                   driver.DefaultName,
@@ -80,6 +103,8 @@ func main() {
 		RunController:          *runController,
 		RunNode:                *runNode,
 		EnableLegacyLustrePort: *enableLegacyLustrePort,
+		IsMultiNic:             isMultiNic,
+		AdditionalNics:         additionalNics,
 	}
 
 	if *runNode {

@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"golang.org/x/net/context"
@@ -33,9 +34,10 @@ import (
 )
 
 const (
-	rwMask   = os.FileMode(0o660)
-	roMask   = os.FileMode(0o440)
-	execMask = os.FileMode(0o110)
+	rwMask              = os.FileMode(0o660)
+	roMask              = os.FileMode(0o440)
+	execMask            = os.FileMode(0o110)
+	initialRouteTableID = 100
 )
 
 type nodeServer struct {
@@ -156,6 +158,28 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 		}
 
 		return nil, status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, target, nodeName, err)
+	}
+
+	if s.driver.config.IsMultiNic {
+		klog.V(4).Infof("Multi Nic feature is enabled and will configure route for Lustre instance: %v, IP: %v", volumeID, source)
+		nics := s.driver.config.AdditionalNics
+		for _, nicName := range nics {
+			// Get NIC IP Addr
+			nicIPAddr, err := network.GetNicIPAddr(nicName)
+			if err != nil {
+				return nil, err
+			}
+			// Find Table ID for NIC
+			tableID, err := network.FindNextFreeTableID(initialRouteTableID, nicIPAddr)
+			if err != nil {
+				return nil, err
+			}
+			// Configure route for NIC & Lustre instance.
+			err = network.ConfigureRoute(nicName, ip, tableID)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	klog.V(4).Infof("NodeStageVolume successfully mounted volume %v to path %s on node %s", volumeID, target, nodeName)
