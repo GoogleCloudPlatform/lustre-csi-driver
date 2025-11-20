@@ -38,7 +38,10 @@ limitations under the License.
 
 - Create a standard GKE cluster. Autopilot clusters are not supported for manual installation.
 
-  > Ensure that your cluster's node pool version is at least `1.31.5-gke.1299000` or `1.32.1-gke.1673000` and that the node image is **Container-Optimized OS with containerd** (`cos_containerd`). Additionally, verify that [Secure Boot](https://cloud.google.com/kubernetes-engine/docs/how-to/shielded-gke-nodes#secure_boot) is disabled in your node pool (it is disabled by default in standard GKE clusters).
+  > Ensure that your cluster's node pool version is at least `1.31.5-gke.1299000` or `1.32.1-gke.1673000`.
+  >
+  > - **For GKE version `1.34.1-gke.236400` or later**: You can use the [Container-Optimized OS with Secure Modules](https://cloud.google.com/kubernetes-engine/security/secure-modules-cos) node image. This image supports installing the Lustre kernel module without needing to disable LoadPin or reboot the node.
+  > - **For older versions**: Ensure the node image is **Container-Optimized OS with containerd** (`cos_containerd`). Additionally, verify that [Secure Boot](https://cloud.google.com/kubernetes-engine/docs/how-to/shielded-gke-nodes#secure_boot) is disabled in your node pool (it is disabled by default in standard GKE clusters).
 
 - Run the following command to ensure the kubectl context is set up correctly.
 
