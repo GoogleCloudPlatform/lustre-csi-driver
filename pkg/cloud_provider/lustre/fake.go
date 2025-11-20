@@ -73,6 +73,18 @@ func (sm *fakeServiceManager) ResizeInstance(_ context.Context, obj *ServiceInst
 	return instance, nil
 }
 
+func (sm *fakeServiceManager) UpdateInstance(_ context.Context, obj *ServiceInstance) error {
+	instance, ok := sm.createdInstances[obj.Name]
+	if !ok {
+		return &googleapi.Error{Code: 404}
+	}
+
+	instance.Labels = obj.Labels
+	sm.createdInstances[obj.Name] = instance
+
+	return nil
+}
+
 func (sm *fakeServiceManager) DeleteInstance(_ context.Context, _ *ServiceInstance) error {
 	return nil
 }

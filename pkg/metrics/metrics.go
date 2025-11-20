@@ -31,11 +31,20 @@ const (
 	envGKELustreCSIVersion = "GKE_LUSTRECSI_VERSION"
 )
 
-// This metric is exposed only from the controller driver component when GKE_LUSTRECSI_VERSION env variable is set.
-var gkeComponentVersion = metrics.NewGaugeVec(&metrics.GaugeOpts{
-	Name: "component_version",
-	Help: "Metric to expose the version of the LustreCSI GKE component.",
-}, []string{"component_version"})
+var (
+	// This metric is exposed only from the controller driver component when GKE_LUSTRECSI_VERSION env variable is set.
+	gkeComponentVersion = metrics.NewGaugeVec(&metrics.GaugeOpts{
+		Name: "component_version",
+		Help: "Metric to expose the version of the LustreCSI GKE component.",
+	}, []string{"component_version"})
+
+	successfullyLabeledVolumes = metrics.NewCounter(
+		&metrics.CounterOpts{
+			Name: "labeled_volumes_total",
+			Help: "Total number of volumes that are successfully labeled.",
+		},
+	)
+)
 
 type Manager struct {
 	registry metrics.KubeRegistry
@@ -55,6 +64,14 @@ func (mm *Manager) GetRegistry() metrics.KubeRegistry {
 
 func (mm *Manager) registerComponentVersionMetric() {
 	mm.registry.MustRegister(gkeComponentVersion)
+}
+
+func (mm *Manager) RegisterSuccessfullyLabeledVolumeMetric() {
+	mm.registry.MustRegister(successfullyLabeledVolumes)
+}
+
+func (mm *Manager) RecordSuccessfullyLabeledVolume() {
+	successfullyLabeledVolumes.Inc()
 }
 
 func (mm *Manager) recordComponentVersionMetric() error {
