@@ -23,6 +23,7 @@ import (
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	driver "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/csi_driver"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/labelcontroller"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/metrics"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
@@ -38,6 +39,8 @@ var (
 	lustreAPIEndpoint      = flag.String("lustre-endpoint", "", "Lustre API service endpoint, supported values are autopush, staging and prod.")
 	cloudConfigFilePath    = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
+	enableLabelController  = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
+
 	// These are set at compile time.
 	version = "unknown"
 )
@@ -74,12 +77,13 @@ func main() {
 	}
 
 	if *runController {
+		mm := metrics.NewMetricsManager()
 		if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
-			mm := metrics.NewMetricsManager()
 			mm.InitializeHTTPHandler(*httpEndpoint, *metricsPath)
 			if err := mm.EmitGKEComponentVersion(); err != nil {
 				klog.Fatalf("Failed to emit GKE component version: %v", err)
 			}
+			mm.RegisterSuccessfullyLabeledVolumeMetric()
 		}
 
 		if *lustreAPIEndpoint == "" {
@@ -90,6 +94,9 @@ func main() {
 			klog.Fatalf("Failed to initialize cloud provider: %v", err)
 		}
 		config.Cloud = cloudProvider
+		if *enableLabelController {
+			go labelcontroller.Start(ctx, cloudProvider, &mm)
+		}
 	}
 
 	lustreDriver, err := driver.NewLustreDriver(config)
