@@ -29,6 +29,7 @@ import (
 	lustre "cloud.google.com/go/lustre/apiv1"
 	"cloud.google.com/go/lustre/apiv1/lustrepb"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/common"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
@@ -41,6 +42,19 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"k8s.io/klog/v2"
 )
+
+func VolumeIDToInstance(volumeID string) (*ServiceInstance, error) {
+	projectID, location, instanceName, err := util.ParseVolumeID(volumeID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ServiceInstance{
+		Name:     instanceName,
+		Location: location,
+		Project:  projectID,
+	}, nil
+}
 
 const (
 	// Endpoint URLs.
@@ -85,6 +99,7 @@ type Service interface {
 	CreateInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
 	DeleteInstance(ctx context.Context, instance *ServiceInstance) error
 	ResizeInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
+	UpdateInstance(ctx context.Context, instance *ServiceInstance) error
 	GetInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error)
 	ListInstance(ctx context.Context, instance *ListFilter) ([]*ServiceInstance, error)
 	GetCreateInstanceOp(ctx context.Context, instance *ServiceInstance) (*longrunningpb.Operation, error)
@@ -311,6 +326,34 @@ func (sm *lustreServiceManager) IsOperationInProgress(ctx context.Context, insta
 	}
 }
 
+func (sm *lustreServiceManager) UpdateInstance(ctx context.Context, instance *ServiceInstance) error {
+	instanceFullName := instanceFullName(instance)
+	req := &lustrepb.UpdateInstanceRequest{
+		UpdateMask: &fieldmaskpb.FieldMask{
+			Paths: []string{
+				"labels",
+			},
+		},
+		Instance: &lustrepb.Instance{
+			Name:        instanceFullName,
+			Labels:      instance.Labels,
+			CapacityGib: instance.CapacityGib,
+		},
+	}
+	klog.V(4).Infof("Updating Lustre instance %q", instance.Name)
+
+	op, err := sm.lustreClient.UpdateInstance(ctx, req)
+	if err != nil {
+		klog.V(4).Infof("Failed to update instance %q: %v", instanceFullName, err)
+
+		return err
+	}
+	klog.V(4).Infof("Waiting for the completion of update op %q for instance %q.", op.Name(), instance.Name)
+	_, err = op.Wait(ctx)
+
+	return err
+}
+
 func (sm *lustreServiceManager) ResizeInstance(ctx context.Context, instance *ServiceInstance) (*ServiceInstance, error) {
 	instanceFullName := instanceFullName(instance)
 	req := &lustrepb.UpdateInstanceRequest{
@@ -412,6 +455,15 @@ func IsNotFoundErr(err error) bool {
 	}
 
 	return apiErr.Code == http.StatusNotFound
+}
+
+func IsPermissionDeniedErr(err error) bool {
+	var apiErr *googleapi.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+
+	return apiErr.Code == http.StatusForbidden
 }
 
 func CompareInstances(a, b *ServiceInstance) error {
