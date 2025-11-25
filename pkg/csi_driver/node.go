@@ -145,21 +145,6 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 		return nil, status.Errorf(codes.AlreadyExists, "A mountpoint with the same lustre filesystem name %q already exists on node %s. Please mount different lustre filesystems", fsname, nodeName)
 	}
 
-	klog.V(5).Infof("NodeStageVolume creating dir %s on node %s", target, nodeName)
-	if err := makeDir(target); err != nil {
-		return nil, status.Errorf(codes.Internal, "Could not create dir %s on node %s: %v", target, nodeName, err)
-	}
-
-	klog.V(4).Infof("NodeStageVolume mounting volume %s to path %s on node %s with mountOptions %v", volumeID, target, nodeName, mountOptions)
-	if err := s.mounter.MountSensitiveWithoutSystemd(source, target, "lustre", mountOptions, nil); err != nil {
-		klog.Errorf("Mount %q failed on node %s, cleaning up", target, nodeName)
-		if unmntErr := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr.Error())
-		}
-
-		return nil, status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, target, nodeName, err)
-	}
-
 	if s.driver.config.IsMultiNic {
 		netlinker := network.NewNetlink()
 		networkIntf := network.Manager(netlinker)
@@ -182,6 +167,21 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 				return nil, err
 			}
 		}
+	}
+
+	klog.V(5).Infof("NodeStageVolume creating dir %s on node %s", target, nodeName)
+	if err := makeDir(target); err != nil {
+		return nil, status.Errorf(codes.Internal, "Could not create dir %s on node %s: %v", target, nodeName, err)
+	}
+
+	klog.V(4).Infof("NodeStageVolume mounting volume %s to path %s on node %s with mountOptions %v", volumeID, target, nodeName, mountOptions)
+	if err := s.mounter.MountSensitiveWithoutSystemd(source, target, "lustre", mountOptions, nil); err != nil {
+		klog.Errorf("Mount %q failed on node %s, cleaning up", target, nodeName)
+		if unmntErr := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr.Error())
+		}
+
+		return nil, status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, target, nodeName, err)
 	}
 
 	klog.V(4).Infof("NodeStageVolume successfully mounted volume %v to path %s on node %s", volumeID, target, nodeName)
