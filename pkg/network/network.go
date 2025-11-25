@@ -35,9 +35,59 @@ const (
 	maxTableID = 252
 )
 
+// netlinker is an interface to abstract the netlink package functions used by this package.
+// This enables mocking/faking in tests.
+type netlinker interface {
+	LinkList() ([]netlink.Link, error)
+	LinkByName(name string) (netlink.Link, error)
+	AddrList(link netlink.Link, family int) ([]netlink.Addr, error)
+	RouteList(link netlink.Link, family int) ([]netlink.Route, error)
+	RouteReplace(route *netlink.Route) error
+	RuleAdd(rule *netlink.Rule) error
+	RuleList(family int) ([]netlink.Rule, error)
+	RouteListFiltered(family int, filter *netlink.Route, mask uint64) ([]netlink.Route, error)
+}
+
+// RouteManager provides methods for network configuration using the netlinker interface.
+type RouteManager struct {
+	nl netlinker
+}
+
+// realNetlink is the real implementation of netlinker,
+// which calls the actual vishvananda/netlink functions.
+type realNetlink struct{}
+
+func (r *realNetlink) LinkList() ([]netlink.Link, error)            { return netlink.LinkList() }
+func (r *realNetlink) LinkByName(name string) (netlink.Link, error) { return netlink.LinkByName(name) }
+func (r *realNetlink) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
+	return netlink.AddrList(link, family)
+}
+
+func (r *realNetlink) RouteList(link netlink.Link, family int) ([]netlink.Route, error) {
+	return netlink.RouteList(link, family)
+}
+func (r *realNetlink) RouteReplace(route *netlink.Route) error { return netlink.RouteReplace(route) }
+func (r *realNetlink) RuleAdd(rule *netlink.Rule) error        { return netlink.RuleAdd(rule) }
+func (r *realNetlink) RuleList(family int) ([]netlink.Rule, error) {
+	return netlink.RuleList(family)
+}
+
+func (r *realNetlink) RouteListFiltered(family int, filter *netlink.Route, mask uint64) ([]netlink.Route, error) {
+	return netlink.RouteListFiltered(family, filter, mask)
+}
+
+// NewNetlink creates an instance of netlinker.
+func NewNetlink() netlinker {
+	return &realNetlink{}
+}
+
+func Manager(nl netlinker) *RouteManager {
+	return &RouteManager{nl: nl}
+}
+
 // GetGvnicNames gets all available nics on the node.
-func GetGvnicNames() ([]string, error) {
-	links, err := netlink.LinkList()
+func (rm *RouteManager) GetGvnicNames() ([]string, error) {
+	links, err := rm.nl.LinkList()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list network interfaces: %w", err)
 	}
@@ -54,15 +104,15 @@ func GetGvnicNames() ([]string, error) {
 	return ethNics, nil
 }
 
-func configureRoutesForNic(nicName string, nicIPAddr net.IP, instanceIPAddr string, tableID int) error {
+func (rm *RouteManager) configureRoutesForNic(nicName string, nicIPAddr net.IP, instanceIPAddr string, tableID int) error {
 	// Get the network interface handle
-	link, err := netlink.LinkByName(nicName)
+	link, err := rm.nl.LinkByName(nicName)
 	if err != nil {
 		return fmt.Errorf("failed to get interface %s: %w", nicName, err)
 	}
 
 	// Find the gateway for this interface
-	routes, err := netlink.RouteList(link, netlink.FAMILY_V4)
+	routes, err := rm.nl.RouteList(link, netlink.FAMILY_V4)
 	if err != nil {
 		return fmt.Errorf("failed to list routes for %s: %w", nicName, err)
 	}
@@ -91,7 +141,7 @@ func configureRoutesForNic(nicName string, nicIPAddr net.IP, instanceIPAddr stri
 		Gw:        gateway,
 		Table:     tableID,
 	}
-	if err := netlink.RouteReplace(route); err != nil {
+	if err := rm.nl.RouteReplace(route); err != nil {
 		return fmt.Errorf("failed to replace/add route for %s: %w", nicName, err)
 	}
 	klog.Infof("Successfully added (or replace) route for %s", nicName)
@@ -100,7 +150,7 @@ func configureRoutesForNic(nicName string, nicIPAddr net.IP, instanceIPAddr stri
 	rule := netlink.NewRule()
 	rule.Table = tableID
 	rule.Src = &net.IPNet{IP: nicIPAddr, Mask: net.CIDRMask(32, 32)} // /32 mask for a single IP
-	if err := netlink.RuleAdd(rule); err != nil {
+	if err := rm.nl.RuleAdd(rule); err != nil {
 		if os.IsExist(err) {
 			klog.V(4).Infof("Rule for %s already exists in table %d, skipping.", nicName, tableID)
 		} else {
@@ -113,13 +163,13 @@ func configureRoutesForNic(nicName string, nicIPAddr net.IP, instanceIPAddr stri
 }
 
 // ConfigureRoute configures route between Lustre Instance and NIC on an available Table ID.
-func ConfigureRoute(nicName string, instanceIP string, tableID int) error {
-	nicIPAddr, err := GetNicIPAddr(nicName)
+func (rm *RouteManager) ConfigureRoute(nicName string, instanceIP string, tableID int) error {
+	nicIPAddr, err := rm.GetNicIPAddr(nicName)
 	if err != nil {
 		return err
 	}
 
-	if err := configureRoutesForNic(nicName, nicIPAddr, instanceIP, tableID); err != nil {
+	if err := rm.configureRoutesForNic(nicName, nicIPAddr, instanceIP, tableID); err != nil {
 		return fmt.Errorf("failed to configure routes for %s: %w", nicName, err)
 	}
 
@@ -127,12 +177,12 @@ func ConfigureRoute(nicName string, instanceIP string, tableID int) error {
 }
 
 // GetNicIPAddr gets primary IP Address of NIC.
-func GetNicIPAddr(nicName string) (net.IP, error) {
-	link, err := netlink.LinkByName(nicName)
+func (rm *RouteManager) GetNicIPAddr(nicName string) (net.IP, error) {
+	link, err := rm.nl.LinkByName(nicName)
 	if err != nil {
 		return nil, fmt.Errorf("could not get link for %s: %w", nicName, err)
 	}
-	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	addrs, err := rm.nl.AddrList(link, netlink.FAMILY_V4)
 	if err != nil || len(addrs) == 0 {
 		return nil, fmt.Errorf("could not get address for %s: %w", nicName, err)
 	}
@@ -168,9 +218,9 @@ func IsMultiRailEnabled(ctx context.Context, nodeID string, nics []string) (bool
 	return false, nil
 }
 
-func isTableFree(tableID int, targetIP net.IP) (bool, error) {
+func (rm *RouteManager) isTableFree(tableID int, targetIP net.IP) (bool, error) {
 	// Check if any active Policy Rules point to this table
-	rules, err := netlink.RuleList(netlink.FAMILY_V4)
+	rules, err := rm.nl.RuleList(netlink.FAMILY_V4)
 	if err != nil {
 		return false, fmt.Errorf("failed to list rules: %w", err)
 	}
@@ -191,7 +241,7 @@ func isTableFree(tableID int, targetIP net.IP) (bool, error) {
 	// Check if any Routes exist in this table
 	filter := &netlink.Route{Table: tableID}
 	mask := netlink.RT_FILTER_TABLE
-	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, filter, mask)
+	routes, err := rm.nl.RouteListFiltered(netlink.FAMILY_V4, filter, mask)
 	if err != nil {
 		return false, fmt.Errorf("failed to list routes for table %d: %w", tableID, err)
 	}
@@ -206,9 +256,9 @@ func isTableFree(tableID int, targetIP net.IP) (bool, error) {
 }
 
 // FindNextFreeTableID finds available Table ID for NIC confiugration.
-func FindNextFreeTableID(startID int, nicIPAddr net.IP) (int, error) {
+func (rm *RouteManager) FindNextFreeTableID(startID int, nicIPAddr net.IP) (int, error) {
 	for id := startID; id <= maxTableID; id++ {
-		usable, err := isTableFree(id, nicIPAddr)
+		usable, err := rm.isTableFree(id, nicIPAddr)
 		if err != nil {
 			return 0, err
 		}

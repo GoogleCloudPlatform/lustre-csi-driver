@@ -71,8 +71,9 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	nics, err := network.GetGvnicNames()
+	netlinker := network.NewNetlink()
+	networkIntf := network.Manager(netlinker)
+	nics, err := networkIntf.GetGvnicNames()
 	if err != nil {
 		klog.Fatalf("Error getting nic names: %v", err)
 	}
