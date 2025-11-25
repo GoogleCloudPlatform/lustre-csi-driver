@@ -94,14 +94,14 @@ func checkLnetNetwork(expectedNics string) error {
 }
 
 // InstallLustreKmod installs kmod (cos-dkms) on the node.
-func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customDkmsArgs []string, nics []string, isMultiNic bool) error {
+func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customDkmsArgs []string, nics []string, disableMultiNIC bool) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	if err := checkLnetPort(lnetPort); err != nil {
 		return err
 	}
 
 	moduleArg := fmt.Sprintf(`lnet.networks="tcp0(%s)"`, nics[0])
-	if isMultiNic {
+	if !disableMultiNIC {
 		if err := checkLnetNetwork(fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))); err != nil {
 			return err
 		}
