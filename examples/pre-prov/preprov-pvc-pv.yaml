@@ -33,6 +33,9 @@ spec:
     volumeAttributes:
       ip: ${EXISTING_LUSTRE_IP_ADDRESS} # The IP address of the existing Lustre instance.
       filesystem: ${EXISTING_LUSTRE_FSNAME} # The filesystem name of the existing Lustre instance.
+      # Alternatively, you can use mountpoint:
+      # mountpoint: ${EXISTING_LUSTRE_IP_ADDRESS}@tcp:/${EXISTING_LUSTRE_FSNAME}
+      # If `mountpoint` is provided, it will override `ip` and `filesystem`.
 ---
 kind: PersistentVolumeClaim
 apiVersion: v1

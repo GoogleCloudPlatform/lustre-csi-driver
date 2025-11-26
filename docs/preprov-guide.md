@@ -33,6 +33,7 @@ Before applying the Persistent Volume (PV) and Persistent Volume Claim (PVC) man
 - **`volumeAttributes`**:
   - `ip` must point to the Lustre instance IP.
   - `filesystem` must be the Lustre instance's filesystem name.
+  - Alternatively, you can use `mountpoint` which combines both (e.g., `10.108.80.4@tcp:/fs`). If `mountpoint` is provided, it will override `ip` and `filesystem`.
 
 ### 1. Create a Persistent Volume (PV) and Persistent Volume Claim (PVC)
 

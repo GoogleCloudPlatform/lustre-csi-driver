@@ -55,6 +55,7 @@ func (sm *fakeServiceManager) CreateInstance(_ context.Context, obj *ServiceInst
 		Labels:                   obj.Labels,
 		CapacityGib:              obj.CapacityGib,
 		PerUnitStorageThroughput: obj.PerUnitStorageThroughput,
+		MountPoint:               obj.MountPoint,
 	}
 	sm.createdInstances[obj.Name] = instance
 
@@ -137,6 +138,7 @@ func NewFakeCloud() (*Cloud, error) {
 			State:                    activeState,
 			CapacityGib:              minCapGiB,
 			PerUnitStorageThroughput: 1000,
+			MountPoint:               "192.168.1.1@tcp:/existing",
 		},
 		"creating-instance": {
 			Project:                  project,
@@ -148,6 +150,7 @@ func NewFakeCloud() (*Cloud, error) {
 			State:                    creatingState,
 			CapacityGib:              minCapGiB,
 			PerUnitStorageThroughput: 1000,
+			MountPoint:               "192.168.1.2@tcp:/creating",
 		},
 		"unknown-instance": {
 			Project:                  project,
@@ -159,6 +162,7 @@ func NewFakeCloud() (*Cloud, error) {
 			State:                    unknownState,
 			CapacityGib:              minCapGiB,
 			PerUnitStorageThroughput: 1000,
+			MountPoint:               "192.168.1.3@tcp:/unknown",
 		},
 		"updating-instance": {
 			Project:                  project,
@@ -170,6 +174,7 @@ func NewFakeCloud() (*Cloud, error) {
 			State:                    activeState,
 			CapacityGib:              minCapGiB,
 			PerUnitStorageThroughput: 1000,
+			MountPoint:               "192.168.1.4@tcp:/updating",
 		},
 	}
 

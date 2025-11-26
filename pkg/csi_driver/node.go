@@ -40,6 +40,8 @@ const (
 	initialRouteTableID = 100
 )
 
+var mountPointRegex = regexp.MustCompile(`^(.+)@tcp:/([^/]+)$`)
+
 type nodeServer struct {
 	// Embed UnimplementedIdentityServer to ensure the driver returns Unimplemented for any
 	// new RPC methods that might be introduced in future versions of the spec.
@@ -84,6 +86,15 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 	}
 	ip := vc[keyInstanceIP]
 	fsname := vc[keyFilesystem]
+	mountPoint := vc[normalize(keyMountPoint)]
+
+	if len(mountPoint) != 0 {
+		var err error
+		ip, fsname, err = parseMountPoint(mountPoint)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
 
 	if len(ip) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Lustre instance IP is not provided")
@@ -476,6 +487,15 @@ func extractFSName(source string) string {
 	}
 
 	return ""
+}
+
+func parseMountPoint(mountPoint string) (string, string, error) {
+	match := mountPointRegex.FindStringSubmatch(mountPoint)
+	if match == nil {
+		return "", "", fmt.Errorf("invalid mountPoint format: %s, expected format: <ip>@tcp:/<fsname>", mountPoint)
+	}
+
+	return match[1], match[2], nil
 }
 
 func getFSStat(path string) (available, capacity, used, inodesFree, inodes, inodesUsed int64, err error) {
