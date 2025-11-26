@@ -88,6 +88,7 @@ type ServiceInstance struct {
 	CapacityGib              int64
 	GkeSupportEnabled        bool
 	PerUnitStorageThroughput int64
+	MountPoint               string
 }
 
 type ListFilter struct {
@@ -429,6 +430,7 @@ func cloudInstanceToServiceInstance(instance *lustrepb.Instance) (*ServiceInstan
 		Filesystem:               instance.GetFilesystem(),
 		IP:                       ip,
 		PerUnitStorageThroughput: instance.GetPerUnitStorageThroughput(),
+		MountPoint:               instance.GetMountPoint(),
 	}, nil
 }
 

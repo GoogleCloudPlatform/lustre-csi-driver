@@ -212,6 +212,31 @@ func TestNodeStageVolme(t *testing.T) {
 			},
 			expectErr: true,
 		},
+		{
+			name: "valid request with mountpoint",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingTargetPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					keyMountPoint: testDevice,
+				},
+			},
+			actions:       []mount.FakeAction{{Action: mount.FakeActionMount}},
+			expectedMount: &mount.MountPoint{Device: testDevice, Path: stagingTargetPath, Type: "lustre", Opts: []string{}},
+		},
+		{
+			name: "invalid mountpoint format",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingTargetPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					keyMountPoint: "invalid-format",
+				},
+			},
+			expectErr: true,
+		},
 	}
 	for _, test := range cases {
 		testEnv := initTestNodeServer(t)
