@@ -26,6 +26,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/k8sclient"
 	"github.com/vishvananda/netlink"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -48,14 +49,25 @@ type netlinker interface {
 	RouteListFiltered(family int, filter *netlink.Route, mask uint64) ([]netlink.Route, error)
 }
 
+type nodeClient interface {
+	GetNodeWithRetry(ctx context.Context, nodeName string) (*v1.Node, error)
+}
+
 // RouteManager provides methods for network configuration using the netlinker interface.
 type RouteManager struct {
 	nl netlinker
+	nc nodeClient
 }
 
 // realNetlink is the real implementation of netlinker,
 // which calls the actual vishvananda/netlink functions.
 type realNetlink struct{}
+
+type k8sNodeClient struct{}
+
+func (client *k8sNodeClient) GetNodeWithRetry(ctx context.Context, nodeName string) (*v1.Node, error) {
+	return k8sclient.GetNodeWithRetry(ctx, nodeName)
+}
 
 func (r *realNetlink) LinkList() ([]netlink.Link, error)            { return netlink.LinkList() }
 func (r *realNetlink) LinkByName(name string) (netlink.Link, error) { return netlink.LinkByName(name) }
@@ -81,8 +93,12 @@ func NewNetlink() netlinker {
 	return &realNetlink{}
 }
 
-func Manager(nl netlinker) *RouteManager {
-	return &RouteManager{nl: nl}
+func NewK8sClient() nodeClient {
+	return &k8sNodeClient{}
+}
+
+func Manager(nl netlinker, nc nodeClient) *RouteManager {
+	return &RouteManager{nl: nl, nc: nc}
 }
 
 // GetGvnicNames gets all available nics on the node.
@@ -192,15 +208,17 @@ func (rm *RouteManager) GetNicIPAddr(nicName string) (net.IP, error) {
 	return addrs[0].IP, nil
 }
 
-// IsMultiRailEnabled checks for Multi Nic feature via node label.
-func IsMultiRailEnabled(ctx context.Context, nodeID string, nics []string) (bool, error) {
+// CheckDisableMultiNic checks for Multi Nic feature via node label and cluster configuration.
+// return true if disabled. return false if multi nic is enabled.
+// if node label is specified, then it overrides cluster configuration for multi nic setup.
+func (rm *RouteManager) CheckDisableMultiNic(ctx context.Context, nodeID string, nics []string, disableMultiNic bool) (bool, error) {
 	klog.V(4).Infof("Checking if node label %s exists in %s", multiRailLabel, nodeID)
 	if len(nics) <= 1 {
 		klog.V(4).Infof("Node only has 1 nic or less available. Not suitable for Multi-Nic feature. current nics: %v", nics)
 
-		return false, nil
+		return true, nil
 	}
-	node, err := k8sclient.GetNodeWithRetry(ctx, nodeID)
+	node, err := rm.nc.GetNodeWithRetry(ctx, nodeID)
 	if err != nil {
 		return false, err
 	}
@@ -210,12 +228,15 @@ func IsMultiRailEnabled(ctx context.Context, nodeID string, nics []string) (bool
 		if err != nil {
 			return false, err
 		}
-		klog.Infof("Node: %v, MultiNic Enabled: %v", nodeID, isMultiNicEnabled)
+		klog.Infof("Node: %v, Disable MultiNic: %v", nodeID, isMultiNicEnabled)
 
-		return isMultiNicEnabled, nil
+		// we look for inverse since node label specifies if Multi nic is enabled or not.
+		// Ex: If Multi-Nic is enabled, then we return false since we don't want to disable it.
+		return !isMultiNicEnabled, nil
 	}
 
-	return false, nil
+	// if label not found, then default will be whatever is passed from cluster configuration.
+	return disableMultiNic, nil
 }
 
 func (rm *RouteManager) isTableFree(tableID int, targetIP net.IP) (bool, error) {

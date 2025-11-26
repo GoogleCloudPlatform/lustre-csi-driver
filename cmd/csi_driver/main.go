@@ -42,6 +42,7 @@ var (
 	lustreAPIEndpoint      = flag.String("lustre-endpoint", "", "Lustre API service endpoint, supported values are autopush, staging and prod.")
 	cloudConfigFilePath    = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
+	disableMultiNIC        = flag.Bool("disable-multi-nic", false, "If set to true, multi-NIC support is disabled and the driver will only use the default NIC (eth0).")
 	disableKmodInstall     = flag.Bool("disable-kmod-install", true, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
 	enableLabelController  = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
 
@@ -72,7 +73,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	netlinker := network.NewNetlink()
-	networkIntf := network.Manager(netlinker)
+	nodeClient := network.NewK8sClient()
+	networkIntf := network.Manager(netlinker, nodeClient)
 	nics, err := networkIntf.GetGvnicNames()
 	if err != nil {
 		klog.Fatalf("Error getting nic names: %v", err)
@@ -80,13 +82,13 @@ func main() {
 	if len(nics) == 0 {
 		klog.Fatal("No nics with eth prefix found")
 	}
-	isMultiNic, err := network.IsMultiRailEnabled(ctx, *nodeID, nics)
+
+	disableMultiNIC, err := networkIntf.CheckDisableMultiNic(ctx, *nodeID, nics, *disableMultiNIC)
 	if err != nil {
 		klog.Fatal(err)
 	}
-
 	if !*disableKmodInstall {
-		if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, dkmsArgsOverride, nics, isMultiNic); err != nil {
+		if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, dkmsArgsOverride, nics, disableMultiNIC); err != nil {
 			klog.Fatalf("Kmod install failure: %v", err)
 		}
 	}
@@ -106,7 +108,7 @@ func main() {
 		RunController:          *runController,
 		RunNode:                *runNode,
 		EnableLegacyLustrePort: *enableLegacyLustrePort,
-		IsMultiNic:             isMultiNic,
+		DisableMultiNIC:        disableMultiNIC,
 		AdditionalNics:         additionalNics,
 	}
 

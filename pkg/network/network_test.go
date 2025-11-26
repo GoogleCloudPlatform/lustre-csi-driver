@@ -17,6 +17,7 @@ limitations under the License.
 package network
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -27,6 +28,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // fakeLink is a mock implementation of netlink.Link for testing purposes.
@@ -36,6 +39,17 @@ type fakeLink struct {
 
 func (f fakeLink) Attrs() *netlink.LinkAttrs { return f.attrs }
 func (f fakeLink) Type() string              { return "fakeLink" }
+
+// fakeNodeClient is a fake implementation of the nodeClient interface.
+type fakeNodeClient struct {
+	// GetNodeWithRetry()
+	getNodeResp *v1.Node
+	getNodeErr  error
+}
+
+func (f *fakeNodeClient) GetNodeWithRetry(_ context.Context, _ string) (*v1.Node, error) {
+	return f.getNodeResp, f.getNodeErr
+}
 
 // fakeNetlink is a fake implementation of the netlinker interface.
 type fakeNetlink struct {
@@ -162,7 +176,7 @@ func TestGetGvnicNames(t *testing.T) {
 				linkListErr:      test.fakeErr,
 			}
 
-			networkManager := Manager(fakeNL)
+			networkManager := Manager(fakeNL, nil)
 			gotNics, err := networkManager.GetGvnicNames()
 			if (err != nil) != test.wantErr {
 				t.Errorf("GetGvnicNames() error = %v, wantErr: %v", err, test.wantErr)
@@ -228,7 +242,7 @@ func TestGetNicIPAddr(t *testing.T) {
 				addrListErr:        test.fakeAddrListErr,
 			}
 
-			networkManager := Manager(fakeNL)
+			networkManager := Manager(fakeNL, nil)
 			gotIP, err := networkManager.GetNicIPAddr(nicName)
 			if (err != nil) != test.wantErr {
 				t.Errorf("GetNicIPAddr(%s) error = %v, wantErr %v", nicName, err, test.wantErr)
@@ -371,7 +385,7 @@ func TestConfigureRoute(t *testing.T) {
 				ruleAddErr:         test.fakeRuleAddErr,
 			}
 
-			networkManager := Manager(fakeNL)
+			networkManager := Manager(fakeNL, nil)
 			err := networkManager.ConfigureRoute(nic, lustreInstanceIP, tableID)
 			if (err != nil) != test.wantErr {
 				t.Errorf("ConfigureRoute(%s, %s, %d) error = %v, wantErr %v", nic, lustreInstanceIP, tableID, err, test.wantErr)
@@ -474,7 +488,7 @@ func TestFindNextFreeTableID(t *testing.T) {
 				routeListFilteredErr:      test.fakeRouteListFilteredErr,
 			}
 
-			networkManager := Manager(fakeNL)
+			networkManager := Manager(fakeNL, nil)
 			gotID, err := networkManager.FindNextFreeTableID(test.startID, nicIP)
 			switch {
 			case (err != nil) != test.wantErr:
@@ -486,6 +500,116 @@ func TestFindNextFreeTableID(t *testing.T) {
 			case err != nil && test.expectedErrSubstr != "":
 				if !strings.Contains(err.Error(), test.expectedErrSubstr) {
 					t.Errorf("FindNextFreeTableID(%d, %v) error = %v, should contain %q", test.startID, nicIP, err, test.expectedErrSubstr)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckDisableMultiNic(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	nodeID := "test-node-1"
+
+	tests := []struct {
+		name              string
+		nics              []string
+		disableMultiNic   bool // This represents cluster level configuration.
+		fakeNode          *v1.Node
+		fakeNodeErr       error
+		wantDisable       bool
+		wantErr           bool
+		expectedErrSubstr string
+	}{
+		{
+			name:            "Single NIC - MultiNic disabled",
+			nics:            []string{"eth0"},
+			disableMultiNic: false, // Should be ignored
+			wantDisable:     true,
+			wantErr:         false,
+		},
+		{
+			name:            "No NICs - MultiNic disabled",
+			nics:            []string{},
+			disableMultiNic: true, // Should be ignored
+			wantDisable:     true,
+			wantErr:         false,
+		},
+		{
+			name:              "GetNodeWithRetry error",
+			nics:              []string{"eth0", "eth1"},
+			disableMultiNic:   false,
+			fakeNodeErr:       errors.New("node not found"),
+			wantDisable:       false,
+			wantErr:           true,
+			expectedErrSubstr: "node not found",
+		},
+		{
+			name:            "Label not found - disableMultiNic is true",
+			nics:            []string{"eth0", "eth1"},
+			disableMultiNic: true,
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"other-label": "value"}}},
+			wantDisable:     true,
+			wantErr:         false,
+		},
+		{
+			name:            "Label not found - disableMultiNic is false",
+			nics:            []string{"eth0", "eth1"},
+			disableMultiNic: false,
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"other-label": "value"}}},
+			wantDisable:     false,
+			wantErr:         false,
+		},
+		{
+			name:            "Label found - multiRailLabel: true",
+			nics:            []string{"eth0", "eth1"},
+			disableMultiNic: true, // Should be overridden
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiRailLabel: "true"}}},
+			wantDisable:     false, // !true
+			wantErr:         false,
+		},
+		{
+			name:            "Label found - multiRailLabel: false",
+			nics:            []string{"eth0", "eth1"},
+			disableMultiNic: false, // Should be overridden
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiRailLabel: "false"}}},
+			wantDisable:     true,
+			wantErr:         false,
+		},
+		{
+			name:              "Label found - invalid bool value",
+			nics:              []string{"eth0", "eth1"},
+			disableMultiNic:   false,
+			fakeNode:          &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiRailLabel: "invalid"}}},
+			wantDisable:       false,
+			wantErr:           true,
+			expectedErrSubstr: `strconv.ParseBool: parsing "invalid": invalid syntax`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakeNC := &fakeNodeClient{
+				getNodeResp: test.fakeNode,
+				getNodeErr:  test.fakeNodeErr,
+			}
+			rm := Manager(nil, fakeNC)
+
+			gotDisable, err := rm.CheckDisableMultiNic(ctx, nodeID, test.nics, test.disableMultiNic)
+
+			switch {
+			case (err != nil) != test.wantErr:
+				t.Errorf("CheckDisableMultiNic(%v, %v, %v) got error = %v, wantErr %v", nodeID, test.nics, test.disableMultiNic, err, test.wantErr)
+			case err == nil && test.wantErr == false:
+				if gotDisable != test.wantDisable {
+					t.Errorf("CheckDisableMultiNic(%v, %v, %v) = %v, want %v", nodeID, test.nics, test.disableMultiNic, gotDisable, test.wantDisable)
+				}
+			case err != nil && test.expectedErrSubstr != "":
+				if !strings.Contains(err.Error(), test.expectedErrSubstr) {
+					t.Errorf("CheckDisableMultiNic(%v, %v, %v) error = %v, should contain %q", nodeID, test.nics, test.disableMultiNic, err, test.expectedErrSubstr)
 				}
 			}
 		})
