@@ -67,6 +67,7 @@ const (
 
 	// PV Volume attributes.
 	keyInstanceIP = "ip"
+	keyMountPoint = "mountpoint"
 
 	defaultNetwork = "default"
 
@@ -87,6 +88,7 @@ var (
 	volumeAttributes = []string{
 		keyInstanceIP,
 		keyFilesystem,
+		keyMountPoint,
 	}
 )
 
@@ -264,6 +266,7 @@ func instanceToCSIVolume(instance *lustre.ServiceInstance) *csi.Volume {
 		VolumeContext: map[string]string{
 			keyInstanceIP: instance.IP,
 			keyFilesystem: instance.Filesystem,
+			keyMountPoint: fmt.Sprintf("%s@tcp:/%s", instance.IP, instance.Filesystem),
 		},
 	}
 }
