@@ -130,7 +130,7 @@ func clusterDownGKE(gceZone, gceRegion string) error {
 	return nil
 }
 
-func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, useManagedDriver, enableLegacyLustrePort bool) error {
+func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multiNicNumNodes int, useManagedDriver, enableLegacyLustrePort, multiNICSetup bool) error {
 	locationArg, locationVal, err := gkeLocationArgs(gceZone, gceRegion)
 	if err != nil {
 		return err
@@ -191,6 +191,25 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes int, u
 	err = runCommand("Starting E2E Cluster on GKE", cmd)
 	if err != nil {
 		return fmt.Errorf("failed to bring up kubernetes e2e cluster on gke: %w", err)
+	}
+
+	// if specify multi nic, create separate pool with additional multi nic subnet.
+	if multiNICSetup {
+		nodePoolCmd := []string{
+			"container", "node-pools", "create", multiNICNodePoolName,
+			"--cluster=" + *gkeTestClusterName, locationArg, locationVal,
+			"--num-nodes=" + strconv.Itoa(multiNicNumNodes), "--additional-node-network",
+			"network=" + *clusterNewtwork + ",subnetwork=" + multinicSubnetName,
+		}
+		if !useManagedDriver {
+			nodePoolCmd = append(nodePoolCmd, "--enable-kernel-module-signature-enforcement")
+		}
+		cmd = exec.Command("gcloud")
+		cmd.Args = append(cmd.Args, nodePoolCmd...)
+		err = runCommand("Creating Multi-Nic Nodepool", cmd)
+		if err != nil {
+			return fmt.Errorf("failed to bring up node-pool %v on cluster %v: %w", multiNICNodePoolName, *gkeTestClusterName, err)
+		}
 	}
 
 	return nil

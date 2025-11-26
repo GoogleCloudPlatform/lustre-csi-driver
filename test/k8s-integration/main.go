@@ -34,11 +34,13 @@ var (
 	pkgDir = flag.String("pkg-dir", "", "the package directory")
 
 	// Cluster configs.
-	doNetworkSetup = flag.Bool("do-network-setup", true, "whether to setup and then cleanup a VPC network during the test")
-	bringupCluster = flag.Bool("bringup-cluster", true, "bringup a GKE cluster before the e2e test")
-	testVersion    = flag.String("test-version", "", "version of k8s binary to download and use for the e2e test")
-	numNodes       = flag.Int("num-nodes", -1, "the number of nodes in the test cluster")
-	imageType      = flag.String("image-type", "cos_containerd", "the node image type to use for the cluster")
+	doNetworkSetup   = flag.Bool("do-network-setup", true, "whether to setup and then cleanup a VPC network during the test")
+	doMultiNICSetup  = flag.Bool("multi-nic-setup", true, "whether to setup multi nic on cluster or not")
+	bringupCluster   = flag.Bool("bringup-cluster", true, "bringup a GKE cluster before the e2e test")
+	testVersion      = flag.String("test-version", "", "version of k8s binary to download and use for the e2e test")
+	numNodes         = flag.Int("num-nodes", -1, "the number of nodes in the test cluster")
+	multiNicNumNodes = flag.Int("multi-nic-num-nodes", 1, "the number of node on the multi nic nodepool")
+	imageType        = flag.String("image-type", "cos_containerd", "the node image type to use for the cluster")
 
 	// Test infrastructure flags.
 	boskosResourceType = flag.String("boskos-resource-type", "gke-internal-project", "name of the boskos resource type to reserve")
@@ -69,6 +71,7 @@ var (
 const (
 	externalDriverNamespace = "lustre-csi-driver"
 	gkeTestClusterPrefix    = "lustre-csi"
+	multiNICNodePoolName    = "multi-nic-pool"
 )
 
 type testParameters struct {
@@ -205,10 +208,20 @@ func handle() error {
 		if err := setupNetwork(project); err != nil {
 			return fmt.Errorf("failed to setup VPC network: %w", err)
 		}
+		if *doMultiNICSetup {
+			if err := multiNICSubnetSetup(project, *gceZone, *gceRegion); err != nil {
+				return fmt.Errorf("failed to setup Multi-NIC subnet: %w", err)
+			}
+			defer func() {
+				if err := multiNICSubnetDelete(project, *gceZone, *gceRegion); err != nil {
+					klog.Errorf("Failed to remove subnet %v: %v", multinicSubnetName, err)
+				}
+			}()
+		}
 	}
 
 	if *bringupCluster {
-		if err := clusterUpGKE(project, *gceZone, *gceRegion, testParams.imageType, *numNodes, *useManagedDriver, *enableLegacyLustrePort); err != nil {
+		if err := clusterUpGKE(project, *gceZone, *gceRegion, testParams.imageType, *numNodes, *multiNicNumNodes, *useManagedDriver, *enableLegacyLustrePort, *doMultiNICSetup); err != nil {
 			return fmt.Errorf("failed to cluster up: %w", err)
 		}
 		defer func() {
