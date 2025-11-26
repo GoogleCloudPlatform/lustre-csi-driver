@@ -19,13 +19,16 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"k8s.io/klog/v2"
 )
 
 const (
 	// Networking constants.
-	ipRangeName = "lustre-range"
+	ipRangeName         = "lustre-range"
+	multinicSubnetName  = "multinic-subnet"
+	multinicSubnetRange = "172.16.0.0/28"
 )
 
 func setupNetwork(project string) error {
@@ -66,4 +69,77 @@ func setupNetwork(project string) error {
 	}
 
 	return nil
+}
+
+func multiNICSubnetSetup(project string, gceZone, gceRegion string) error {
+	/*
+	                           networks create .... (already there)
+
+	                           Addresses create (Already there)
+
+	                           gcloud compute networks subnets list --network=samhalim-network --project=samhalim-joonix (to check for subnets and make sure its not overlapping?)
+
+	                           Add subnet w/ non overlapping IP:
+	                    gcloud compute networks subnets create multinic-subnet \
+	                     --network=samhalim-network \
+	                     --range=172.16.0.0/28 \
+	                     --region=us-central1 \
+	                     --project=samhalim-joonix \
+	                     --description="Small subnet in samhalim-network outside 10.128.0.0/9"
+
+	                     setup firewall (is this even needed anymore?):
+	   gcloud compute firewall-rules create $FIREWALL_RULE_NAME \
+	     --allow=tcp:988,tcp:6988 \
+	     --network=$NETWORK_NAME \
+	     --source-ranges=$CIDR_RANGE
+
+	     vpc peering (already there)
+
+
+	*/
+	region, err := getRegion(gceZone, gceRegion)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("gcloud", "compute", "networks", "subnets", "create", multinicSubnetName,
+		"--network="+*clusterNewtwork,
+		"--range="+multinicSubnetRange,
+		"--region="+region,
+		"--project="+project,
+		"--description=Small subnet for Multi NIC")
+	if err := runCommand("Creating Multi-Nic Subnet", cmd); err != nil {
+		return fmt.Errorf("failed to create multi nic subnet: %w", err)
+	}
+	// setup firewall?
+
+	return nil
+}
+
+func multiNICSubnetDelete(project, gceZone, gceRegion string) error {
+	region, err := getRegion(gceZone, gceRegion)
+	if err != nil {
+		return err
+	}
+	out, err := exec.Command("gcloud", "compute", "networks", "subnets", "delete", multinicSubnetName,
+		"--region="+region, "--project="+project, "--quiet").CombinedOutput()
+	if err != nil && !isNotFoundError(string(out)) {
+		return fmt.Errorf("failed to delete subnet %v: %w", multinicSubnetName, err)
+	}
+	return nil
+}
+
+func getRegion(gceZone, gceRegion string) (string, error) {
+	locationArg, locationVal, err := gkeLocationArgs(gceZone, gceRegion)
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(locationArg, "zone") {
+		parts := strings.Split(locationVal, "-")
+		if len(parts) < 2 {
+			return "", fmt.Errorf("invalid zone format %v", locationVal)
+		}
+		return strings.Join(parts[:len(parts)-1], "-"), nil
+	} else {
+		return locationVal, nil
+	}
 }
