@@ -18,6 +18,7 @@ package driver
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -81,6 +82,7 @@ func TestCreateVolume(t *testing.T) {
 					VolumeContext: map[string]string{
 						keyFilesystem: testFSName,
 						keyInstanceIP: testIP,
+						keyMountPoint: fmt.Sprintf("%s@tcp:/%s", testIP, testFSName),
 					},
 				},
 			},
@@ -182,6 +184,7 @@ func TestCreateVolume(t *testing.T) {
 					VolumeContext: map[string]string{
 						keyFilesystem: "existing",
 						keyInstanceIP: "192.168.1.1",
+						keyMountPoint: "192.168.1.1@tcp:/existing",
 					},
 				},
 			},
