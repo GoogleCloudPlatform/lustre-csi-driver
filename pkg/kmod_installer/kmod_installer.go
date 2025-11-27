@@ -34,7 +34,6 @@ const (
 	lnetNetworkParameterFile = "/sys/module/lnet/parameters/networks"
 	legacyLNetPort           = 6988
 	defaultLNetPort          = 988
-	initialRouteTableID      = 100
 	cmdTimeout               = 15 * time.Minute
 )
 
@@ -94,18 +93,19 @@ func checkLnetNetwork(expectedNics string) error {
 }
 
 // InstallLustreKmod installs kmod (cos-dkms) on the node.
-func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customDkmsArgs []string, nics []string, disableMultiNIC bool) error {
+func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	if err := checkLnetPort(lnetPort); err != nil {
 		return err
 	}
 
-	moduleArg := fmt.Sprintf(`lnet.networks="tcp0(%s)"`, nics[0])
+	expectedNetwork := fmt.Sprintf("tcp0(%s)", nics[0])
 	if !disableMultiNIC {
-		if err := checkLnetNetwork(fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))); err != nil {
-			return err
-		}
-		moduleArg = fmt.Sprintf(`lnet.networks="tcp0(%s)"`, strings.Join(nics, ","))
+		expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
+	}
+
+	if err := checkLnetNetwork(expectedNetwork); err != nil {
+		return err
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
@@ -124,21 +124,23 @@ func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customDkmsArg
 	//                                     and servers. The default value is 988.
 	// -w Set the number of parallel downloads (`0` downloads all files in parallel).
 	args := []string{"install", "lustre-client-drivers"}
-	if len(customDkmsArgs) > 0 {
-		args = append(args, customDkmsArgs...)
-	} else {
-		defaultArgs := []string{
-			"--gcs-bucket=cos-default",
-			"--latest",
-			"-w", "0",
-			"--kernelmodulestree=/host_modules",
-			"--module-arg=" + moduleArg,
-			"--module-arg=lnet.accept_port=" + strconv.Itoa(lnetPort),
-			"--lsb-release-path=/host_etc/lsb-release",
-			"--insert-on-install",
-			"--logtostderr",
-		}
-		args = append(args, defaultArgs...)
+	args = append(args,
+		"--gcs-bucket=cos-default",
+		"--latest",
+		"-w", "0",
+		"--kernelmodulestree=/host_modules",
+		"--lsb-release-path=/host_etc/lsb-release",
+		"--insert-on-install",
+		"--logtostderr",
+		"--module-arg=lnet.accept_port="+strconv.Itoa(lnetPort),
+	)
+
+	if !disableMultiNIC {
+		args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
+	}
+
+	for _, arg := range customModuleArgs {
+		args = append(args, "--module-arg="+arg)
 	}
 	cmd := exec.CommandContext(cmdCtx, "/usr/bin/cos-dkms", args...)
 	// TODO(samhalim): Add latency/success rate metrics for kmod cos-dkms install.
