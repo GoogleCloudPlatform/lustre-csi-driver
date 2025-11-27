@@ -80,6 +80,10 @@ type fakeNetlink struct {
 	// RouteListFiltered() Mock
 	routeListFilteredResponse map[int][]netlink.Route
 	routeListFilteredErr      error
+
+	// GetGvnicNames() Mock
+	getGvnicNamesResponse []string
+	getGvnicNamesErr      error
 }
 
 func (f *fakeNetlink) LinkList() ([]netlink.Link, error) {
@@ -123,57 +127,62 @@ func (f *fakeNetlink) RouteListFiltered(_ int, filter *netlink.Route, mask uint6
 	return []netlink.Route{}, nil
 }
 
+func (f *fakeNetlink) GetGvnicNames() ([]string, error) {
+	return f.getGvnicNamesResponse, f.getGvnicNamesErr
+}
+
 func TestGetGvnicNames(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		fakeLinks []netlink.Link
-		fakeErr   error
-		wantNics  []string
-		wantErr   bool
+		name           string
+		fakeGvnicNames []string
+		fakeErr        error
+		wantNics       []string
+		wantErr        bool
 	}{
 		{
-			name: "Successfully get eth devices",
-			fakeLinks: []netlink.Link{
-				fakeLink{attrs: &netlink.LinkAttrs{Name: "eth0"}},
-				fakeLink{attrs: &netlink.LinkAttrs{Name: "eth1"}},
-			},
-			fakeErr:  nil,
-			wantNics: []string{"eth0", "eth1"},
-			wantErr:  false,
+			name:           "Successfully get eth devices with correct drivers",
+			fakeGvnicNames: []string{"eth0", "eth1"},
+			fakeErr:        nil,
+			wantNics:       []string{"eth0", "eth1"},
+			wantErr:        false,
 		},
 		{
-			name: "No eth devices",
-			fakeLinks: []netlink.Link{
-				fakeLink{attrs: &netlink.LinkAttrs{Name: "lo"}},
-				fakeLink{attrs: &netlink.LinkAttrs{Name: "wlan0"}},
-			},
-			fakeErr:  nil,
-			wantNics: nil,
-			wantErr:  false,
+			name:           "Filter out devices with wrong drivers",
+			fakeGvnicNames: []string{"eth0"},
+			fakeErr:        nil,
+			wantNics:       []string{"eth0"},
+			wantErr:        false,
 		},
 		{
-			name:      "Netlink error",
-			fakeLinks: nil,
-			fakeErr:   errors.New("failed to list links"),
-			wantNics:  nil,
-			wantErr:   true,
+			name:           "No eth devices",
+			fakeGvnicNames: nil,
+			fakeErr:        nil,
+			wantNics:       nil,
+			wantErr:        false,
 		},
 		{
-			name:      "Empty link list",
-			fakeLinks: []netlink.Link{},
-			fakeErr:   nil,
-			wantNics:  nil,
-			wantErr:   false,
+			name:           "Netlink error",
+			fakeGvnicNames: nil,
+			fakeErr:        errors.New("failed to list links"),
+			wantNics:       nil,
+			wantErr:        true,
+		},
+		{
+			name:           "Empty link list",
+			fakeGvnicNames: nil,
+			fakeErr:        nil,
+			wantNics:       nil,
+			wantErr:        false,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			fakeNL := &fakeNetlink{
-				linkListResponse: test.fakeLinks,
-				linkListErr:      test.fakeErr,
+				getGvnicNamesResponse: test.fakeGvnicNames,
+				getGvnicNamesErr:      test.fakeErr,
 			}
 
 			networkManager := Manager(fakeNL, nil)

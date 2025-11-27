@@ -46,8 +46,8 @@ var (
 	disableKmodInstall     = flag.Bool("disable-kmod-install", true, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
 	enableLabelController  = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
 
-	// dkmsArgsOverride contains custom arguments for cos-dkms installation provided by user.
-	dkmsArgsOverride stringSlice
+	// customModuleArgs contains custom module-args arguments for cos-dkms installation provided by user.
+	customModuleArgs stringSlice
 
 	// These are set at compile time.
 	version = "unknown"
@@ -67,7 +67,7 @@ func (s *stringSlice) Set(value string) error {
 
 func main() {
 	klog.InitFlags(nil)
-	flag.Var(&dkmsArgsOverride, "cos-dkms-args-override", "Custom override cos-dkms install arguments. (Can be specified multiple times).")
+	flag.Var(&customModuleArgs, "custom-module-args", "Custom module-args for cos-dkms install command. (Can be specified multiple times).")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -88,7 +88,7 @@ func main() {
 		klog.Fatal(err)
 	}
 	if !*disableKmodInstall {
-		if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, dkmsArgsOverride, nics, disableMultiNIC); err != nil {
+		if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, customModuleArgs, nics, disableMultiNIC); err != nil {
 			klog.Fatalf("Kmod install failure: %v", err)
 		}
 	}
@@ -100,7 +100,7 @@ func main() {
 			additionalNics = append(additionalNics, nic)
 		}
 	}
-	klog.V(4).Infof("Additional nic(s) %v on Node %v", additionalNics, nodeID)
+	klog.V(4).Infof("Additional nic(s) %v on Node %v", additionalNics, *nodeID)
 
 	config := &driver.LustreDriverConfig{
 		Name:                   driver.DefaultName,
