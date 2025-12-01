@@ -22,9 +22,9 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/k8sclient"
+	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
@@ -47,6 +47,7 @@ type netlinker interface {
 	RuleAdd(rule *netlink.Rule) error
 	RuleList(family int) ([]netlink.Rule, error)
 	RouteListFiltered(family int, filter *netlink.Route, mask uint64) ([]netlink.Route, error)
+	GetGvnicNames() ([]string, error)
 }
 
 type nodeClient interface {
@@ -88,6 +89,44 @@ func (r *realNetlink) RouteListFiltered(family int, filter *netlink.Route, mask 
 	return netlink.RouteListFiltered(family, filter, mask)
 }
 
+func (r *realNetlink) GetGvnicNames() ([]string, error) {
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list network interfaces: %w", err)
+	}
+
+	eth, err := ethtool.NewEthtool()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ethtool: %w", err)
+	}
+	defer eth.Close()
+
+	var ethNics []string
+	for _, link := range links {
+		name := link.Attrs().Name
+		driver, err := eth.DriverName(name)
+		if err != nil {
+			klog.Warningf("Failed to get driver for interface %s: %v", name, err)
+
+			continue
+		}
+
+		if driver == "gve" || driver == "virtio_net" {
+			klog.V(4).Infof("Found valid NIC %s with driver %s", name, driver)
+			ethNics = append(ethNics, name)
+		} else {
+			// We only care about standard NICs (gVNIC or VirtIO-Net) for Lustre traffic.
+			// RDMA NICs (like irdma, mlx5_core) should be excluded as they are handled separately
+			// and might have names like ethN or gpu0rdma0.
+			klog.Infof("Skipping interface %s with driver %s", name, driver)
+		}
+	}
+
+	klog.V(4).Infof("Found %d valid standard NICs: %v", len(ethNics), ethNics)
+
+	return ethNics, nil
+}
+
 // NewNetlink creates an instance of netlinker.
 func NewNetlink() netlinker {
 	return &realNetlink{}
@@ -103,21 +142,7 @@ func Manager(nl netlinker, nc nodeClient) *RouteManager {
 
 // GetGvnicNames gets all available nics on the node.
 func (rm *RouteManager) GetGvnicNames() ([]string, error) {
-	links, err := rm.nl.LinkList()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list network interfaces: %w", err)
-	}
-
-	var ethNics []string
-	for _, link := range links {
-		if strings.HasPrefix(link.Attrs().Name, "eth") {
-			ethNics = append(ethNics, link.Attrs().Name)
-		}
-	}
-
-	klog.V(4).Infof("Got nics: %v", ethNics)
-
-	return ethNics, nil
+	return rm.nl.GetGvnicNames()
 }
 
 func (rm *RouteManager) configureRoutesForNic(nicName string, nicIPAddr net.IP, instanceIPAddr string, tableID int) error {
