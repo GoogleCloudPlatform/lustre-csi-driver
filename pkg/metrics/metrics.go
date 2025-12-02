@@ -32,6 +32,12 @@ const (
 )
 
 var (
+	// This metric is exposed on the Node and will emit metrics if Node has multi nic enabled.
+	usingMultiNic = metrics.NewGaugeVec(&metrics.GaugeOpts{
+		Name: "multi_nic",
+		Help: "Metric to expose if multi nic feature is being used on Node.",
+	}, []string{"component_version"})
+
 	// This metric is exposed only from the controller driver component when GKE_LUSTRECSI_VERSION env variable is set.
 	gkeComponentVersion = metrics.NewGaugeVec(&metrics.GaugeOpts{
 		Name: "component_version",
@@ -66,6 +72,10 @@ func (mm *Manager) registerComponentVersionMetric() {
 	mm.registry.MustRegister(gkeComponentVersion)
 }
 
+func (mm *Manager) registerUsingMultiNicMetric() {
+	mm.registry.MustRegister(usingMultiNic)
+}
+
 func (mm *Manager) RegisterSuccessfullyLabeledVolumeMetric() {
 	mm.registry.MustRegister(successfullyLabeledVolumes)
 }
@@ -91,6 +101,29 @@ func (mm *Manager) recordComponentVersionMetric() error {
 func (mm *Manager) EmitGKEComponentVersion() error {
 	mm.registerComponentVersionMetric()
 	if err := mm.recordComponentVersionMetric(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (mm *Manager) recordUsingMultiNicMetric() error {
+	v := getEnvVar(envGKELustreCSIVersion)
+	if v == "" {
+		klog.V(2).Info("Skip emitting multi nic metric as GKE component version is not available")
+
+		return fmt.Errorf("failed to record multi nic metric, env variable %v not defined", envGKELustreCSIVersion)
+	}
+
+	usingMultiNic.WithLabelValues(v).Set(1.0)
+	klog.Infof("Recorded multi nic metric for GKE component version: %v", v)
+
+	return nil
+}
+
+func (mm *Manager) EmitUsingMultiNic() error {
+	mm.registerUsingMultiNicMetric()
+	if err := mm.recordUsingMultiNicMetric(); err != nil {
 		return err
 	}
 
