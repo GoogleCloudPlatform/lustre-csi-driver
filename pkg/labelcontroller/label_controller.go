@@ -108,16 +108,21 @@ func (r *PvReconciler) Reconcile(ctx context.Context, request reconcile.Request)
 	return reconcile.Result{}, nil
 }
 
-func Start(ctx context.Context, cloud *lustre.Cloud, mm *metrics.Manager) {
+func Start(ctx context.Context, cloud *lustre.Cloud, mm *metrics.Manager) error {
 	log.SetLogger(zap.New())
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		return fmt.Errorf("unable to load kubernetes config: %w", err)
+	}
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Logger:           log.Log.WithName("label-controller"),
 		LeaderElection:   true,
 		LeaderElectionID: leaderElectionID,
 	})
 	if err != nil {
-		klog.Fatalf("Unable to start manager: %v", err)
+		return fmt.Errorf("unable to start manager: %w", err)
 	}
 
 	reconciler := &PvReconciler{
@@ -132,11 +137,13 @@ func Start(ctx context.Context, cloud *lustre.Cloud, mm *metrics.Manager) {
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.PersistentVolume{}).
 		Complete(reconciler); err != nil {
-		klog.Fatalf("Unable to create controller: %v", err)
+		return fmt.Errorf("unable to create controller: %w", err)
 	}
 
 	klog.Info("Starting GKE Lustre Labeling Controller")
 	if err := mgr.Start(ctx); err != nil {
-		klog.Fatalf("Problem running manager: %v", err)
+		return fmt.Errorf("problem running manager: %w", err)
 	}
+
+	return nil
 }
