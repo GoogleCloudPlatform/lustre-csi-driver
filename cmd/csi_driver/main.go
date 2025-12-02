@@ -95,7 +95,12 @@ func main() {
 		}
 		config.Cloud = cloudProvider
 		if *enableLabelController {
-			go labelcontroller.Start(ctx, cloudProvider, &mm)
+			go func() {
+				// Pass empty string for kubeconfig to let controller-runtime handle the flag
+				if err := labelcontroller.Start(ctx, cloudProvider, &mm); err != nil {
+					klog.Errorf("Label controller failed: %v", err)
+				}
+			}()
 		}
 	}
 
