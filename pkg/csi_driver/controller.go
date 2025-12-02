@@ -67,6 +67,7 @@ const (
 
 	// PV Volume attributes.
 	keyInstanceIP = "ip"
+	keyMountPoint = "mountpoint"
 
 	defaultNetwork = "default"
 
@@ -87,6 +88,7 @@ var (
 	volumeAttributes = []string{
 		keyInstanceIP,
 		keyFilesystem,
+		keyMountPoint,
 	}
 )
 
