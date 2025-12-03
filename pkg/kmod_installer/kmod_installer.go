@@ -81,8 +81,13 @@ func checkLnetNetwork(expectedNics string) error {
 		return fmt.Errorf("error reading file %s: %w", lnetAcceptPortFile, err)
 	}
 	currNetworkNics := strings.TrimSpace(string(file))
+	if currNetworkNics == "" {
+		klog.V(4).Infof("LNET network parameter file %v is empty. Skipping check", lnetNetworkParameterFile)
+
+		return nil
+	}
 	if currNetworkNics != expectedNics {
-		klog.V(3).Infof("LNET network parameter mismatched, Got: %s, Expected: %s", currNetworkNics, expectedNics)
+		klog.Errorf("LNET network parameter mismatched, Got: %s, Expected: %s", currNetworkNics, expectedNics)
 
 		return errors.New("node already has lustre kernel modules installed with an outdated lnet.networks configuration. please upgrade your node pool to apply the correct settings")
 	}
