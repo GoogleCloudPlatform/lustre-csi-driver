@@ -47,7 +47,7 @@ echo "make successful"
 base_cmd="${PKGDIR}/bin/k8s-integration-test \
             --run-in-prow=true --service-account-file=${E2E_GOOGLE_APPLICATION_CREDENTIALS} \
             --do-driver-build=${do_driver_build} --boskos-resource-type=${boskos_resource_type} \
-            --test-version=${test_version} --num-nodes=3 --pkg-dir=${PKGDIR} \
+            --test-version=${test_version} --num-nodes=1 --multi-nic-num-nodes=3 --pkg-dir=${PKGDIR} \
             --use-gke-driver=${use_gke_driver} --gke-cluster-version=${gke_cluster_version} \
             --enable-legacy-lustre-port=${enable_legacy_lustre_port} \
             --cluster-network=${cluster_network}"
