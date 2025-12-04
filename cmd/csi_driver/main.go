@@ -33,18 +33,19 @@ import (
 )
 
 var (
-	endpoint               = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
-	nodeID                 = flag.String("nodeid", "", "node id")
-	runController          = flag.Bool("controller", false, "run controller service")
-	runNode                = flag.Bool("node", false, "run node service")
-	httpEndpoint           = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
-	metricsPath            = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
-	lustreAPIEndpoint      = flag.String("lustre-endpoint", "", "Lustre API service endpoint, supported values are autopush, staging and prod.")
-	cloudConfigFilePath    = flag.String("cloud-config", "", "Path to GCE cloud provider config")
-	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
-	disableMultiNIC        = flag.Bool("disable-multi-nic", false, "If set to true, multi-NIC support is disabled and the driver will only use the default NIC (eth0).")
-	disableKmodInstall     = flag.Bool("disable-kmod-install", true, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
-	enableLabelController  = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
+	endpoint                = flag.String("endpoint", "unix:/tmp/csi.sock", "CSI endpoint")
+	nodeID                  = flag.String("nodeid", "", "node id")
+	runController           = flag.Bool("controller", false, "run controller service")
+	runNode                 = flag.Bool("node", false, "run node service")
+	httpEndpoint            = flag.String("http-endpoint", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
+	metricsPath             = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
+	lustreAPIEndpoint       = flag.String("lustre-endpoint", "", "Lustre API service endpoint, supported values are autopush, staging and prod.")
+	cloudConfigFilePath     = flag.String("cloud-config", "", "Path to GCE cloud provider config")
+	enableLegacyLustrePort  = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
+	disableMultiNIC         = flag.Bool("disable-multi-nic", false, "If set to true, multi-NIC support is disabled and the driver will only use the default NIC (eth0).")
+	disableKmodInstall      = flag.Bool("disable-kmod-install", true, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
+	enableLabelController   = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
+	leaderElectionNamespace = flag.String("leader-election-namespace", "", "Namespace where the leader election resource will be created. Required for out-of-cluster deployments.")
 
 	// customModuleArgs contains custom module-args arguments for cos-dkms installation provided by user.
 	customModuleArgs stringSlice
@@ -149,7 +150,7 @@ func main() {
 		if *enableLabelController {
 			go func() {
 				// Pass empty string for kubeconfig to let controller-runtime handle the flag
-				if err := labelcontroller.Start(ctx, cloudProvider, &mm); err != nil {
+				if err := labelcontroller.Start(ctx, cloudProvider, &mm, *leaderElectionNamespace); err != nil {
 					klog.Errorf("Label controller failed: %v", err)
 				}
 			}()
