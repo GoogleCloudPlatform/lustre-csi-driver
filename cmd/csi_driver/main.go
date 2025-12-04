@@ -75,32 +75,6 @@ func main() {
 	netlinker := network.NewNetlink()
 	nodeClient := network.NewK8sClient()
 	networkIntf := network.Manager(netlinker, nodeClient)
-	nics, err := networkIntf.GetGvnicNames()
-	if err != nil {
-		klog.Fatalf("Error getting nic names: %v", err)
-	}
-	if len(nics) == 0 {
-		klog.Fatal("No nics with eth prefix found")
-	}
-
-	disableMultiNIC, err := networkIntf.CheckDisableMultiNic(ctx, *nodeID, nics, *disableMultiNIC)
-	if err != nil {
-		klog.Fatal(err)
-	}
-	if !*disableKmodInstall {
-		if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, customModuleArgs, nics, disableMultiNIC); err != nil {
-			klog.Fatalf("Kmod install failure: %v", err)
-		}
-	}
-	// additional NICs are any additional NICs that are not default (eth0).
-	// These NICs will additional setup for multi nic feature.
-	additionalNics := []string{}
-	for _, nic := range nics {
-		if nic != "eth0" {
-			additionalNics = append(additionalNics, nic)
-		}
-	}
-	klog.V(4).Infof("Additional nic(s) %v on Node %v", additionalNics, *nodeID)
 
 	config := &driver.LustreDriverConfig{
 		Name:                   driver.DefaultName,
@@ -108,8 +82,6 @@ func main() {
 		RunController:          *runController,
 		RunNode:                *runNode,
 		EnableLegacyLustrePort: *enableLegacyLustrePort,
-		DisableMultiNIC:        disableMultiNIC,
-		AdditionalNics:         additionalNics,
 	}
 
 	if *runNode {
@@ -126,6 +98,34 @@ func main() {
 		config.MetadataService = meta
 
 		config.Mounter = mount.New("")
+		nics, err := networkIntf.GetGvnicNames()
+		if err != nil {
+			klog.Fatalf("Error getting nic names: %v", err)
+		}
+		if len(nics) == 0 {
+			klog.Fatal("No nics with eth prefix found")
+		}
+
+		disableMultiNIC, err := networkIntf.CheckDisableMultiNic(ctx, *nodeID, nics, *disableMultiNIC)
+		if err != nil {
+			klog.Fatal(err)
+		}
+		if !*disableKmodInstall {
+			if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, customModuleArgs, nics, disableMultiNIC); err != nil {
+				klog.Fatalf("Kmod install failure: %v", err)
+			}
+		}
+		// additional NICs are any additional NICs that are not default (eth0).
+		// These NICs will additional setup for multi nic feature.
+		additionalNics := []string{}
+		for _, nic := range nics {
+			if nic != "eth0" {
+				additionalNics = append(additionalNics, nic)
+			}
+		}
+		klog.V(4).Infof("Additional nic(s) %v on Node %v", additionalNics, *nodeID)
+		config.AdditionalNics = additionalNics
+		config.DisableMultiNIC = disableMultiNIC
 	}
 
 	if *runController {
