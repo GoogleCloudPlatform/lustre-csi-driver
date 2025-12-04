@@ -108,7 +108,7 @@ func (r *PvReconciler) Reconcile(ctx context.Context, request reconcile.Request)
 	return reconcile.Result{}, nil
 }
 
-func Start(ctx context.Context, cloud *lustre.Cloud, mm *metrics.Manager) error {
+func Start(ctx context.Context, cloud *lustre.Cloud, mm *metrics.Manager, leaderElectionNamespace string) error {
 	log.SetLogger(zap.New())
 
 	cfg, err := ctrl.GetConfig()
@@ -117,9 +117,10 @@ func Start(ctx context.Context, cloud *lustre.Cloud, mm *metrics.Manager) error 
 	}
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		Logger:           log.Log.WithName("label-controller"),
-		LeaderElection:   true,
-		LeaderElectionID: leaderElectionID,
+		Logger:                  log.Log.WithName("label-controller"),
+		LeaderElection:          true,
+		LeaderElectionID:        leaderElectionID,
+		LeaderElectionNamespace: leaderElectionNamespace,
 	})
 	if err != nil {
 		return fmt.Errorf("unable to start manager: %w", err)
