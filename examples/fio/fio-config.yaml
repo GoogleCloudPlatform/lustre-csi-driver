@@ -1,0 +1,40 @@
+# Copyright 2025 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fio-config
+data:
+  # Throughput-focused job file
+  lustre-throughput.fio: |
+    [global]
+    ioengine=libaio
+    direct=1             # Bypass OS cache to test raw network/disk
+    gtod_reduce=1        # Reduce CPU overhead for time logging
+    time_based
+    runtime=60           # Run for 60 seconds
+    ramp_time=5          # Warm up for 5 seconds
+    group_reporting      # Aggregate results from all jobs
+    
+    # Target file settings
+    directory=/data      # Mount point of Lustre
+    size=10G             # File size per job
+    filename_format=fio_$jobnum
+
+    [bandwidth-test]
+    rw=read              # 'read' usually easiest to saturate ingress. Use 'write' for egress.
+    bs=4M                # Large block size is key for bandwidth
+    iodepth=64           # Deep queue to keep the pipe full
+    numjobs=16            # Parallel threads to saturate vCPUs/NIC
