@@ -71,7 +71,7 @@ func main() {
 	flag.Var(&customModuleArgs, "custom-module-args", "Custom module-args for cos-dkms install command. (Can be specified multiple times).")
 	flag.Parse()
 	mm := metrics.NewMetricsManager()
-	if *httpEndpoint != "" && metrics.IsGKEComponentVersionAvailable() {
+	if *httpEndpoint != "" {
 		mm.InitializeHTTPHandler(*httpEndpoint, *metricsPath)
 	}
 
@@ -115,7 +115,7 @@ func main() {
 		if err != nil {
 			klog.Fatal(err)
 		}
-		if !disableMultiNIC {
+		if !disableMultiNIC && metrics.IsGKEComponentVersionAvailable() {
 			if err := mm.EmitUsingMultiNic(); err != nil {
 				klog.Fatalf("Failed to emit GKE component version: %v", err)
 			}
@@ -139,10 +139,12 @@ func main() {
 	}
 
 	if *runController {
-		if err := mm.EmitGKEComponentVersion(); err != nil {
-			klog.Fatalf("Failed to emit GKE component version: %v", err)
+		if metrics.IsGKEComponentVersionAvailable() {
+			if err := mm.EmitGKEComponentVersion(); err != nil {
+				klog.Fatalf("Failed to emit GKE component version: %v", err)
+			}
+			mm.RegisterSuccessfullyLabeledVolumeMetric()
 		}
-		mm.RegisterSuccessfullyLabeledVolumeMetric()
 
 		if *lustreAPIEndpoint == "" {
 			*lustreAPIEndpoint = "prod"
