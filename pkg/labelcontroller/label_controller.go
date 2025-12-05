@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -121,6 +122,11 @@ func Start(ctx context.Context, cloud *lustre.Cloud, mm *metrics.Manager, leader
 		LeaderElection:          true,
 		LeaderElectionID:        leaderElectionID,
 		LeaderElectionNamespace: leaderElectionNamespace,
+		Metrics: server.Options{
+			// Disable the controller-runtime's default metrics server to avoid port conflicts.
+			// The main driver process manages its own metrics endpoint.
+			BindAddress: "0",
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("unable to start manager: %w", err)
