@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	multiRailLabel = "lustre.csi.storage.gke.io/multi-rail"
+	multiNicLabel = "lustre.csi.storage.gke.io/multi-nic"
 	// max user specified table ID is 252. 253, 254, and 255 are reserved (default, main, local).
 	maxTableID = 252
 )
@@ -261,7 +261,7 @@ func (rm *RouteManager) GetNicIPAddr(nicName string) (net.IP, error) {
 // return true if disabled. return false if multi nic is enabled.
 // if node label is specified, then it overrides cluster configuration for multi nic setup.
 func (rm *RouteManager) CheckDisableMultiNic(ctx context.Context, nodeID string, nics []string, disableMultiNic bool) (bool, error) {
-	klog.V(4).Infof("Checking if node label %s exists in %s", multiRailLabel, nodeID)
+	klog.V(4).Infof("Checking if node label %s exists in %s", multiNicLabel, nodeID)
 	if len(nics) <= 1 {
 		klog.V(4).Infof("Node only has 1 nic or less available. Not suitable for Multi-Nic feature. current nics: %v", nics)
 
@@ -272,7 +272,7 @@ func (rm *RouteManager) CheckDisableMultiNic(ctx context.Context, nodeID string,
 		return false, err
 	}
 
-	if val, found := node.GetLabels()[multiRailLabel]; found {
+	if val, found := node.GetLabels()[multiNicLabel]; found {
 		isMultiNicEnabled, err := strconv.ParseBool(val)
 		if err != nil {
 			return false, err

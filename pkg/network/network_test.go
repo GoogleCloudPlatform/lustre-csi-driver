@@ -574,7 +574,7 @@ func TestCheckDisableMultiNic(t *testing.T) {
 			name:            "Label found - multiRailLabel: true",
 			nics:            []string{"eth0", "eth1"},
 			disableMultiNic: true, // Should be overridden
-			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiRailLabel: "true"}}},
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNicLabel: "true"}}},
 			wantDisable:     false, // !true
 			wantErr:         false,
 		},
@@ -582,7 +582,7 @@ func TestCheckDisableMultiNic(t *testing.T) {
 			name:            "Label found - multiRailLabel: false",
 			nics:            []string{"eth0", "eth1"},
 			disableMultiNic: false, // Should be overridden
-			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiRailLabel: "false"}}},
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNicLabel: "false"}}},
 			wantDisable:     true,
 			wantErr:         false,
 		},
@@ -590,7 +590,7 @@ func TestCheckDisableMultiNic(t *testing.T) {
 			name:              "Label found - invalid bool value",
 			nics:              []string{"eth0", "eth1"},
 			disableMultiNic:   false,
-			fakeNode:          &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiRailLabel: "invalid"}}},
+			fakeNode:          &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNicLabel: "invalid"}}},
 			wantDisable:       false,
 			wantErr:           true,
 			expectedErrSubstr: `strconv.ParseBool: parsing "invalid": invalid syntax`,
