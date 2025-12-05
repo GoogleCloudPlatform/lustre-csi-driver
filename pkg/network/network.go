@@ -173,9 +173,16 @@ func (rm *RouteManager) configureRoutesForNic(nicName string, nicIPAddr net.IP, 
 	klog.Infof("Found gateway %s for %s", gateway.String(), nicName)
 
 	// Define and add the route
+	mask := net.CIDRMask(16, 32) // /16 subnet, 32 bits (IPv4)
 	// This is the IP of the Lustre instance which is passed in through volumeContext.
-	instanceIPAddr += "/32"
-	_, dst, _ := net.ParseCIDR(instanceIPAddr)
+	ip := net.ParseIP(instanceIPAddr)
+	if ip == nil {
+		return fmt.Errorf("invalid ip address format: %v", instanceIPAddr)
+	}
+	network := ip.Mask(mask)
+	networkInstanceIP := network.String() + "/16"
+	klog.Infof("Adding route for IP: %v", networkInstanceIP)
+	_, dst, _ := net.ParseCIDR(networkInstanceIP)
 	route := &netlink.Route{
 		LinkIndex: link.Attrs().Index,
 		Dst:       dst, // lustre ip
@@ -187,10 +194,27 @@ func (rm *RouteManager) configureRoutesForNic(nicName string, nicIPAddr net.IP, 
 	}
 	klog.Infof("Successfully added (or replace) route for %s", nicName)
 
-	// Define and add the rule
+	// Define rule
 	rule := netlink.NewRule()
 	rule.Table = tableID
 	rule.Src = &net.IPNet{IP: nicIPAddr, Mask: net.CIDRMask(32, 32)} // /32 mask for a single IP
+
+	// Check if rule already exist
+	existingRules, err := rm.nl.RuleList(netlink.FAMILY_V4)
+	if err != nil {
+		return fmt.Errorf("failed to list rules: %w", err)
+	}
+	for _, r := range existingRules {
+		// Check for an exact match on the source IP and destination table id.
+		if r.Table == rule.Table && r.Src != nil && r.Src.String() == rule.Src.String() {
+			klog.V(4).Infof("Rule matching Src %s and Table %d already exists, skipping addition.",
+				r.Src.String(), r.Table)
+
+			return nil
+		}
+	}
+
+	// Define and add the rule if rule doesn't exist.
 	if err := rm.nl.RuleAdd(rule); err != nil {
 		if os.IsExist(err) {
 			klog.V(4).Infof("Rule for %s already exists in table %d, skipping.", nicName, tableID)
