@@ -159,12 +159,12 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 	if !s.driver.config.DisableMultiNIC {
 		netlinker := network.NewNetlink()
 		nodeClient := network.NewK8sClient()
-		networkIntf := network.Manager(netlinker, nodeClient)
+		networkIntf := network.Manager(netlinker, nodeClient, s.driver.config.MetadataService)
 		klog.V(4).Infof("Multi Nic feature is enabled and will configure route for Lustre instance: %v, IP: %v", volumeID, source)
 		nics := s.driver.config.AdditionalNics
 		for _, nicName := range nics {
 			// Get NIC IP Addr
-			nicIPAddr, err := networkIntf.GetNicIPAddr(nicName)
+			nicIPAddr, err := networkIntf.GetNICIPAddr(nicName)
 			if err != nil {
 				return nil, err
 			}

@@ -77,9 +77,6 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	netlinker := network.NewNetlink()
-	nodeClient := network.NewK8sClient()
-	networkIntf := network.Manager(netlinker, nodeClient)
 
 	config := &driver.LustreDriverConfig{
 		Name:                   driver.DefaultName,
@@ -102,16 +99,20 @@ func main() {
 		klog.Infof("Metadata service setup: %+v", meta)
 		config.MetadataService = meta
 
+		netlinker := network.NewNetlink()
+		nodeClient := network.NewK8sClient()
+		networkIntf := network.Manager(netlinker, nodeClient, meta)
+
 		config.Mounter = mount.New("")
-		nics, err := networkIntf.GetGvnicNames()
+		nics, err := networkIntf.GetStandardNICs()
 		if err != nil {
 			klog.Fatalf("Error getting nic names: %v", err)
 		}
 		if len(nics) == 0 {
-			klog.Fatal("No nics with eth prefix found")
+			klog.Fatal("No standard NICs (gve or virtio_net) found")
 		}
 
-		disableMultiNIC, err := networkIntf.CheckDisableMultiNic(ctx, *nodeID, nics, *disableMultiNIC)
+		disableMultiNIC, err := networkIntf.CheckDisableMultiNIC(ctx, *nodeID, nics, *disableMultiNIC)
 		if err != nil {
 			klog.Fatal(err)
 		}

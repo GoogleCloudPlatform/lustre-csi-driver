@@ -16,7 +16,9 @@ limitations under the License.
 
 package metadata
 
-type fakeServiceManager struct{}
+type fakeServiceManager struct {
+	nics []NetworkInterface
+}
 
 var _ Service = &fakeServiceManager{}
 
@@ -30,4 +32,8 @@ func (manager *fakeServiceManager) GetZone() string {
 
 func (manager *fakeServiceManager) GetProject() string {
 	return "test-project"
+}
+
+func (manager *fakeServiceManager) GetNetworkInterfaces() ([]NetworkInterface, error) {
+	return manager.nics, nil
 }
