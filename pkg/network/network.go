@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	multiNICLabel = "lustre.csi.storage.gke.io/multi-nic"
+	multiNICLabel = "lustre.csi.storage.gke.io/multi-rail"
 	// max user specified table ID is 252. 253, 254, and 255 are reserved (default, main, local).
 	maxTableID = 252
 )
