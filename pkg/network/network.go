@@ -18,11 +18,14 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/k8sclient"
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
@@ -31,7 +34,7 @@ import (
 )
 
 const (
-	multiNicLabel = "lustre.csi.storage.gke.io/multi-nic"
+	multiNICLabel = "lustre.csi.storage.gke.io/multi-nic"
 	// max user specified table ID is 252. 253, 254, and 255 are reserved (default, main, local).
 	maxTableID = 252
 )
@@ -47,17 +50,23 @@ type netlinker interface {
 	RuleAdd(rule *netlink.Rule) error
 	RuleList(family int) ([]netlink.Rule, error)
 	RouteListFiltered(family int, filter *netlink.Route, mask uint64) ([]netlink.Route, error)
-	GetGvnicNames() ([]string, error)
+	GetStandardNICs() ([]string, error)
 }
 
 type nodeClient interface {
 	GetNodeWithRetry(ctx context.Context, nodeName string) (*v1.Node, error)
 }
 
+// MetadataClient abstracts the metadata service.
+type MetadataClient interface {
+	GetNetworkInterfaces() ([]metadata.NetworkInterface, error)
+}
+
 // RouteManager provides methods for network configuration using the netlinker interface.
 type RouteManager struct {
 	nl netlinker
 	nc nodeClient
+	mc MetadataClient
 }
 
 // realNetlink is the real implementation of netlinker,
@@ -89,7 +98,7 @@ func (r *realNetlink) RouteListFiltered(family int, filter *netlink.Route, mask 
 	return netlink.RouteListFiltered(family, filter, mask)
 }
 
-func (r *realNetlink) GetGvnicNames() ([]string, error) {
+func (r *realNetlink) GetStandardNICs() ([]string, error) {
 	links, err := netlink.LinkList()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list network interfaces: %w", err)
@@ -101,7 +110,7 @@ func (r *realNetlink) GetGvnicNames() ([]string, error) {
 	}
 	defer eth.Close()
 
-	var ethNics []string
+	var ethNICs []string
 	for _, link := range links {
 		name := link.Attrs().Name
 		driver, err := eth.DriverName(name)
@@ -113,7 +122,7 @@ func (r *realNetlink) GetGvnicNames() ([]string, error) {
 
 		if driver == "gve" || driver == "virtio_net" {
 			klog.V(4).Infof("Found valid NIC %s with driver %s", name, driver)
-			ethNics = append(ethNics, name)
+			ethNICs = append(ethNICs, name)
 		} else {
 			// We only care about standard NICs (gVNIC or VirtIO-Net) for Lustre traffic.
 			// RDMA NICs (like irdma, mlx5_core) should be excluded as they are handled separately
@@ -122,9 +131,9 @@ func (r *realNetlink) GetGvnicNames() ([]string, error) {
 		}
 	}
 
-	klog.V(4).Infof("Found %d valid standard NICs: %v", len(ethNics), ethNics)
+	klog.V(4).Infof("Found %d valid standard NICs: %v", len(ethNICs), ethNICs)
 
-	return ethNics, nil
+	return ethNICs, nil
 }
 
 // NewNetlink creates an instance of netlinker.
@@ -136,16 +145,82 @@ func NewK8sClient() nodeClient {
 	return &k8sNodeClient{}
 }
 
-func Manager(nl netlinker, nc nodeClient) *RouteManager {
-	return &RouteManager{nl: nl, nc: nc}
+func Manager(nl netlinker, nc nodeClient, mc MetadataClient) *RouteManager {
+	return &RouteManager{nl: nl, nc: nc, mc: mc}
 }
 
-// GetGvnicNames gets all available nics on the node.
-func (rm *RouteManager) GetGvnicNames() ([]string, error) {
-	return rm.nl.GetGvnicNames()
+// GetStandardNICs gets all standard NICs on the node which are within the same VPC network
+// as the GCE instance primary network.
+func (rm *RouteManager) GetStandardNICs() ([]string, error) {
+	nics, err := rm.nl.GetStandardNICs()
+	if err != nil {
+		return nil, err
+	}
+
+	// If we have 0 or 1 NIC, no need to validate VPC as single NIC is always valid (primary).
+	// Actually, if 1 NIC, it must be primary.
+	if len(nics) <= 1 {
+		return nics, nil
+	}
+
+	if rm.mc == nil {
+		return nil, errors.New("metadata client is nil, cannot perform VPC validation for multi-NIC setup")
+	}
+
+	return rm.validateNICs(nics)
 }
 
-func (rm *RouteManager) configureRoutesForNic(nicName string, nicIPAddr net.IP, instanceIPAddr string, tableID int) error {
+// validateNICs filters the provided NICs, returning only those that belong to the same VPC network
+// as the primary interface (eth0). It uses cached metadata to perform the validation.
+func (rm *RouteManager) validateNICs(nics []string) ([]string, error) {
+	// Get network interfaces from metadata (cached).
+	metaNICs, err := rm.mc.GetNetworkInterfaces()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get network interfaces from metadata: %w", err)
+	}
+
+	if len(metaNICs) == 0 {
+		return nil, errors.New("no network interfaces found in instance metadata; cannot perform VPC validation")
+	}
+
+	// The first network interface in the metadata list corresponds to the primary NIC (index 0).
+	primaryNetwork := metaNICs[0].Network
+
+	// Iterate over all discovered NICs and validate them against the metadata.
+	// We match NICs by MAC address and ensure they belong to the same VPC network
+	// as the primary interface.
+	validNICs := make([]string, 0, len(nics))
+	metaNICMap := make(map[string]metadata.NetworkInterface, len(metaNICs))
+	for _, metaNIC := range metaNICs {
+		metaNICMap[strings.ToLower(metaNIC.Mac)] = metaNIC
+	}
+
+	for _, nic := range nics {
+		link, err := rm.nl.LinkByName(nic)
+		if err != nil {
+			klog.Warningf("Failed to get link for %s: %v", nic, err)
+
+			continue
+		}
+		mac := strings.ToLower(link.Attrs().HardwareAddr.String())
+
+		if metaNIC, ok := metaNICMap[mac]; ok {
+			if metaNIC.Network == primaryNetwork {
+				validNICs = append(validNICs, nic)
+			} else {
+				klog.Infof("Skipping nic %s because it is in a different VPC network: %s (primary: %s)", nic, metaNIC.Network, primaryNetwork)
+			}
+		} else {
+			klog.Warningf("NIC %s with MAC %s not found in instance metadata, skipping", nic, mac)
+		}
+	}
+
+	klog.Infof("Filtered NICs: %v (original: %v)", validNICs, nics)
+
+	return validNICs, nil
+}
+
+func (rm *RouteManager) configureRoutesForNIC(nicName string, nicIPAddr net.IP, instanceIPAddr string, tableID int) error {
 	// Get the network interface handle
 	link, err := rm.nl.LinkByName(nicName)
 	if err != nil {
@@ -229,39 +304,45 @@ func (rm *RouteManager) configureRoutesForNic(nicName string, nicIPAddr net.IP, 
 
 // ConfigureRoute configures route between Lustre Instance and NIC on an available Table ID.
 func (rm *RouteManager) ConfigureRoute(nicName string, instanceIP string, tableID int) error {
-	nicIPAddr, err := rm.GetNicIPAddr(nicName)
+	nicIPAddr, err := rm.GetNICIPAddr(nicName)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get IP address for %s: %w", nicName, err)
 	}
 
-	if err := rm.configureRoutesForNic(nicName, nicIPAddr, instanceIP, tableID); err != nil {
+	if err := rm.configureRoutesForNIC(nicName, nicIPAddr, instanceIP, tableID); err != nil {
 		return fmt.Errorf("failed to configure routes for %s: %w", nicName, err)
 	}
 
 	return nil
 }
 
-// GetNicIPAddr gets primary IP Address of NIC.
-func (rm *RouteManager) GetNicIPAddr(nicName string) (net.IP, error) {
+// GetNICIPAddr gets primary IP Address of NIC.
+func (rm *RouteManager) GetNICIPAddr(nicName string) (net.IP, error) {
+	// Get the network interface handle
 	link, err := rm.nl.LinkByName(nicName)
 	if err != nil {
-		return nil, fmt.Errorf("could not get link for %s: %w", nicName, err)
+		return nil, fmt.Errorf("could not get link %s: %w", nicName, err)
 	}
+
 	addrs, err := rm.nl.AddrList(link, netlink.FAMILY_V4)
-	if err != nil || len(addrs) == 0 {
+	if err != nil {
 		return nil, fmt.Errorf("could not get address for %s: %w", nicName, err)
 	}
-	klog.Infof("Nic %v IP address are: %+v", nicName, addrs)
+
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("could not get address for %s", nicName)
+	}
+	klog.Infof("NIC %v IP address are: %+v", nicName, addrs)
 
 	// We capture primary IP address which is at index 0.
 	return addrs[0].IP, nil
 }
 
-// CheckDisableMultiNic checks for Multi Nic feature via node label and cluster configuration.
+// CheckDisableMultiNIC checks for Multi-NIC feature via node label and cluster configuration.
 // return true if disabled. return false if multi nic is enabled.
 // if node label is specified, then it overrides cluster configuration for multi nic setup.
-func (rm *RouteManager) CheckDisableMultiNic(ctx context.Context, nodeID string, nics []string, disableMultiNic bool) (bool, error) {
-	klog.V(4).Infof("Checking if node label %s exists in %s", multiNicLabel, nodeID)
+func (rm *RouteManager) CheckDisableMultiNIC(ctx context.Context, nodeID string, nics []string, disableMultiNIC bool) (bool, error) {
+	klog.V(4).Infof("Checking if node label %s exists in %s", multiNICLabel, nodeID)
 	if len(nics) <= 1 {
 		klog.V(4).Infof("Node only has 1 nic or less available. Not suitable for Multi-Nic feature. current nics: %v", nics)
 
@@ -272,20 +353,19 @@ func (rm *RouteManager) CheckDisableMultiNic(ctx context.Context, nodeID string,
 		return false, err
 	}
 
-	if val, found := node.GetLabels()[multiNicLabel]; found {
-		isMultiNicEnabled, err := strconv.ParseBool(val)
+	if val, found := node.GetLabels()[multiNICLabel]; found {
+		isMultiNICEnabled, err := strconv.ParseBool(val)
 		if err != nil {
 			return false, err
 		}
-		klog.Infof("Node: %v, Disable MultiNic: %v", nodeID, isMultiNicEnabled)
+		klog.Infof("Node: %v, Disable MultiNic: %v", nodeID, isMultiNICEnabled)
 
-		// we look for inverse since node label specifies if Multi nic is enabled or not.
 		// Ex: If Multi-Nic is enabled, then we return false since we don't want to disable it.
-		return !isMultiNicEnabled, nil
+		return !isMultiNICEnabled, nil
 	}
 
 	// if label not found, then default will be whatever is passed from cluster configuration.
-	return disableMultiNic, nil
+	return disableMultiNIC, nil
 }
 
 func (rm *RouteManager) isTableFree(tableID int, targetIP net.IP) (bool, error) {

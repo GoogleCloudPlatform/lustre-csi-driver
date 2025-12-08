@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/google/go-cmp/cmp"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -59,6 +60,7 @@ type fakeNetlink struct {
 
 	// LinkByName() Mock
 	linkByNameResponse netlink.Link
+	linkByNameMap      map[string]netlink.Link
 	linkByNameErr      error
 
 	// AddrList() Mock
@@ -81,17 +83,28 @@ type fakeNetlink struct {
 	routeListFilteredResponse map[int][]netlink.Route
 	routeListFilteredErr      error
 
-	// GetGvnicNames() Mock
-	getGvnicNamesResponse []string
-	getGvnicNamesErr      error
+	// GetStandardNICs() Mock
+	getStandardNICsResponse []string
+	getStandardNICsErr      error
 }
 
 func (f *fakeNetlink) LinkList() ([]netlink.Link, error) {
 	return f.linkListResponse, f.linkListErr
 }
 
-func (f *fakeNetlink) LinkByName(_ string) (netlink.Link, error) {
-	return f.linkByNameResponse, f.linkByNameErr
+func (f *fakeNetlink) LinkByName(name string) (netlink.Link, error) {
+	if f.linkByNameErr != nil {
+		return nil, f.linkByNameErr
+	}
+	if f.linkByNameMap != nil {
+		if link, ok := f.linkByNameMap[name]; ok {
+			return link, nil
+		}
+
+		return nil, fmt.Errorf("link %s not found", name)
+	}
+
+	return f.linkByNameResponse, nil
 }
 
 func (f *fakeNetlink) AddrList(_ netlink.Link, _ int) ([]netlink.Addr, error) {
@@ -127,17 +140,30 @@ func (f *fakeNetlink) RouteListFiltered(_ int, filter *netlink.Route, mask uint6
 	return []netlink.Route{}, nil
 }
 
-func (f *fakeNetlink) GetGvnicNames() ([]string, error) {
-	return f.getGvnicNamesResponse, f.getGvnicNamesErr
+func (f *fakeNetlink) GetStandardNICs() ([]string, error) {
+	return f.getStandardNICsResponse, f.getStandardNICsErr
 }
 
-func TestGetGvnicNames(t *testing.T) {
+// fakeMetadataClient is a fake implementation of the MetadataClient interface.
+type fakeMetadataClient struct {
+	// GetNetworkInterfaces() Mock
+	getNicsResponse []metadata.NetworkInterface
+	getNicsErr      error
+}
+
+func (f *fakeMetadataClient) GetNetworkInterfaces() ([]metadata.NetworkInterface, error) {
+	return f.getNicsResponse, f.getNicsErr
+}
+
+func TestGetStandardNICs(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name           string
 		fakeGvnicNames []string
 		fakeErr        error
+		fakeNics       []metadata.NetworkInterface
+		fakeMetaErr    error
 		wantNics       []string
 		wantErr        bool
 	}{
@@ -145,8 +171,23 @@ func TestGetGvnicNames(t *testing.T) {
 			name:           "Successfully get eth devices with correct drivers",
 			fakeGvnicNames: []string{"eth0", "eth1"},
 			fakeErr:        nil,
-			wantNics:       []string{"eth0", "eth1"},
-			wantErr:        false,
+			fakeNics: []metadata.NetworkInterface{
+				{Network: "projects/test/global/networks/default", Mac: "00:00:00:00:00:01"},
+				{Network: "projects/test/global/networks/default", Mac: "00:00:00:00:00:02"},
+			},
+			wantNics: []string{"eth0", "eth1"},
+			wantErr:  false,
+		},
+		{
+			name:           "Filter out secondary NIC in different VPC",
+			fakeGvnicNames: []string{"eth0", "eth1"},
+			fakeErr:        nil,
+			fakeNics: []metadata.NetworkInterface{
+				{Network: "projects/test/global/networks/default", Mac: "00:00:00:00:00:01"},
+				{Network: "projects/test/global/networks/other", Mac: "00:00:00:00:00:02"},
+			},
+			wantNics: []string{"eth0"}, // eth1 filtered out
+			wantErr:  false,
 		},
 		{
 			name:           "Filter out devices with wrong drivers",
@@ -176,28 +217,44 @@ func TestGetGvnicNames(t *testing.T) {
 			wantNics:       nil,
 			wantErr:        false,
 		},
+		{
+			name:           "Metadata error",
+			fakeGvnicNames: []string{"eth0", "eth1"},
+			fakeMetaErr:    errors.New("metadata failed"),
+			wantErr:        true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			fakeNL := &fakeNetlink{
-				getGvnicNamesResponse: test.fakeGvnicNames,
-				getGvnicNamesErr:      test.fakeErr,
+				getStandardNICsResponse: test.fakeGvnicNames,
+				getStandardNICsErr:      test.fakeErr,
+				// Mock LinkByName to return MAC addresses.
+				linkByNameMap: map[string]netlink.Link{
+					"eth0": fakeLink{attrs: &netlink.LinkAttrs{Name: "eth0", HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 1}}},
+					"eth1": fakeLink{attrs: &netlink.LinkAttrs{Name: "eth1", HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 2}}},
+				},
 			}
 
-			networkManager := Manager(fakeNL, nil)
-			gotNics, err := networkManager.GetGvnicNames()
+			fakeMeta := &fakeMetadataClient{
+				getNicsResponse: test.fakeNics,
+				getNicsErr:      test.fakeMetaErr,
+			}
+
+			networkManager := Manager(fakeNL, nil, fakeMeta)
+			gotNics, err := networkManager.GetStandardNICs()
 			if (err != nil) != test.wantErr {
-				t.Errorf("GetGvnicNames() error = %v, wantErr: %v", err, test.wantErr)
+				t.Errorf("GetStandardNICs() error = %v, wantErr: %v", err, test.wantErr)
 			}
 			if diff := cmp.Diff(test.wantNics, gotNics); diff != "" {
-				t.Errorf("GetGvnicNames() returned unexpected diff (-want +got):\n%s", diff)
+				t.Errorf("GetStandardNICs() returned unexpected diff (-want +got):\n%s", diff)
 			}
 		})
 	}
 }
 
-func TestGetNicIPAddr(t *testing.T) {
+func TestGetNICIPAddr(t *testing.T) {
 	t.Parallel()
 
 	wantIP := net.ParseIP("192.168.1.10")
@@ -251,15 +308,15 @@ func TestGetNicIPAddr(t *testing.T) {
 				addrListErr:        test.fakeAddrListErr,
 			}
 
-			networkManager := Manager(fakeNL, nil)
-			gotIP, err := networkManager.GetNicIPAddr(nicName)
+			networkManager := Manager(fakeNL, nil, nil)
+			gotIP, err := networkManager.GetNICIPAddr(nicName)
 			if (err != nil) != test.wantErr {
-				t.Errorf("GetNicIPAddr(%s) error = %v, wantErr %v", nicName, err, test.wantErr)
+				t.Errorf("GetNICIPAddr(%s) error = %v, wantErr %v", nicName, err, test.wantErr)
 
 				return
 			}
 			if !test.wantErr && !gotIP.Equal(wantIP) {
-				t.Errorf("GetNicIPAddr(%s) = %v, want %v", nicName, gotIP, wantIP)
+				t.Errorf("GetNICIPAddr(%s) = %v, want %v", nicName, gotIP, wantIP)
 			}
 		})
 	}
@@ -296,14 +353,14 @@ func TestConfigureRoute(t *testing.T) {
 			wantErr:            false,
 		},
 		{
-			name:               "Failure: GetNicIPAddr - LinkByName error",
+			name:               "Failure: GetNICIPAddr - LinkByName error",
 			fakeLinkByNameResp: nil,
 			fakeLinkByNameErr:  errors.New("link not found"),
 			wantErr:            true,
 			expectedErrSubstr:  "could not get link",
 		},
 		{
-			name:               "Failure: GetNicIPAddr - AddrList error",
+			name:               "Failure: GetNICIPAddr - AddrList error",
 			fakeLinkByNameResp: linkResponse,
 			fakeLinkByNameErr:  nil,
 			fakeAddrListResp:   nil,
@@ -312,7 +369,7 @@ func TestConfigureRoute(t *testing.T) {
 			expectedErrSubstr:  "could not get address",
 		},
 		{
-			name:               "Failure: GetNicIPAddr - AddrList returns empty",
+			name:               "Failure: GetNICIPAddr - AddrList returns empty",
 			fakeLinkByNameResp: linkResponse,
 			fakeLinkByNameErr:  nil,
 			fakeAddrListResp:   []netlink.Addr{},
@@ -394,7 +451,7 @@ func TestConfigureRoute(t *testing.T) {
 				ruleAddErr:         test.fakeRuleAddErr,
 			}
 
-			networkManager := Manager(fakeNL, nil)
+			networkManager := Manager(fakeNL, nil, nil)
 			err := networkManager.ConfigureRoute(nic, lustreInstanceIP, tableID)
 			if (err != nil) != test.wantErr {
 				t.Errorf("ConfigureRoute(%s, %s, %d) error = %v, wantErr %v", nic, lustreInstanceIP, tableID, err, test.wantErr)
@@ -497,7 +554,7 @@ func TestFindNextFreeTableID(t *testing.T) {
 				routeListFilteredErr:      test.fakeRouteListFilteredErr,
 			}
 
-			networkManager := Manager(fakeNL, nil)
+			networkManager := Manager(fakeNL, nil, nil)
 			gotID, err := networkManager.FindNextFreeTableID(test.startID, nicIP)
 			switch {
 			case (err != nil) != test.wantErr:
@@ -515,7 +572,7 @@ func TestFindNextFreeTableID(t *testing.T) {
 	}
 }
 
-func TestCheckDisableMultiNic(t *testing.T) {
+func TestCheckDisableMultiNIC(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
@@ -574,7 +631,7 @@ func TestCheckDisableMultiNic(t *testing.T) {
 			name:            "Label found - multiRailLabel: true",
 			nics:            []string{"eth0", "eth1"},
 			disableMultiNic: true, // Should be overridden
-			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNicLabel: "true"}}},
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNICLabel: "true"}}},
 			wantDisable:     false, // !true
 			wantErr:         false,
 		},
@@ -582,7 +639,7 @@ func TestCheckDisableMultiNic(t *testing.T) {
 			name:            "Label found - multiRailLabel: false",
 			nics:            []string{"eth0", "eth1"},
 			disableMultiNic: false, // Should be overridden
-			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNicLabel: "false"}}},
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNICLabel: "false"}}},
 			wantDisable:     true,
 			wantErr:         false,
 		},
@@ -590,7 +647,7 @@ func TestCheckDisableMultiNic(t *testing.T) {
 			name:              "Label found - invalid bool value",
 			nics:              []string{"eth0", "eth1"},
 			disableMultiNic:   false,
-			fakeNode:          &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNicLabel: "invalid"}}},
+			fakeNode:          &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNICLabel: "invalid"}}},
 			wantDisable:       false,
 			wantErr:           true,
 			expectedErrSubstr: `strconv.ParseBool: parsing "invalid": invalid syntax`,
@@ -605,20 +662,20 @@ func TestCheckDisableMultiNic(t *testing.T) {
 				getNodeResp: test.fakeNode,
 				getNodeErr:  test.fakeNodeErr,
 			}
-			rm := Manager(nil, fakeNC)
+			rm := Manager(nil, fakeNC, nil)
 
-			gotDisable, err := rm.CheckDisableMultiNic(ctx, nodeID, test.nics, test.disableMultiNic)
+			gotDisable, err := rm.CheckDisableMultiNIC(ctx, nodeID, test.nics, test.disableMultiNic)
 
 			switch {
 			case (err != nil) != test.wantErr:
-				t.Errorf("CheckDisableMultiNic(%v, %v, %v) got error = %v, wantErr %v", nodeID, test.nics, test.disableMultiNic, err, test.wantErr)
+				t.Errorf("CheckDisableMultiNIC(%v, %v, %v) got error = %v, wantErr %v", nodeID, test.nics, test.disableMultiNic, err, test.wantErr)
 			case err == nil && test.wantErr == false:
 				if gotDisable != test.wantDisable {
-					t.Errorf("CheckDisableMultiNic(%v, %v, %v) = %v, want %v", nodeID, test.nics, test.disableMultiNic, gotDisable, test.wantDisable)
+					t.Errorf("CheckDisableMultiNIC(%v, %v, %v) = %v, want %v", nodeID, test.nics, test.disableMultiNic, gotDisable, test.wantDisable)
 				}
 			case err != nil && test.expectedErrSubstr != "":
 				if !strings.Contains(err.Error(), test.expectedErrSubstr) {
-					t.Errorf("CheckDisableMultiNic(%v, %v, %v) error = %v, should contain %q", nodeID, test.nics, test.disableMultiNic, err, test.expectedErrSubstr)
+					t.Errorf("CheckDisableMultiNIC(%v, %v, %v) error = %v, should contain %q", nodeID, test.nics, test.disableMultiNic, err, test.expectedErrSubstr)
 				}
 			}
 		})
