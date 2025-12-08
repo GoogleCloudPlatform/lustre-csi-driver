@@ -208,7 +208,8 @@ func handle() error {
 		if err := setupNetwork(project); err != nil {
 			return fmt.Errorf("failed to setup VPC network: %w", err)
 		}
-		if *doMultiNICSetup {
+		// TODO(samhalim): Multi-NIC is not yet supported with the GKE managed driver. Remove flag once we have GKE version supporting multi-nic.
+		if *doMultiNICSetup && !*useManagedDriver {
 			if err := multiNICSubnetSetup(project, *gceZone, *gceRegion); err != nil {
 				return fmt.Errorf("failed to setup Multi-NIC subnet: %w", err)
 			}
