@@ -194,15 +194,14 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 	}
 
 	// if specify multi nic, create separate pool with additional multi nic subnet.
-	if multiNICSetup {
+	// TODO(samhalim): Multi-NIC is not yet supported with the GKE managed driver. Remove flag once we have GKE version supporting multi-nic.
+	if multiNICSetup && !useManagedDriver {
 		nodePoolCmd := []string{
 			"container", "node-pools", "create", multiNICNodePoolName,
 			"--cluster=" + *gkeTestClusterName, locationArg, locationVal,
 			"--num-nodes=" + strconv.Itoa(multiNicNumNodes), "--additional-node-network",
 			"network=" + *clusterNewtwork + ",subnetwork=" + multinicSubnetName,
-		}
-		if !useManagedDriver {
-			nodePoolCmd = append(nodePoolCmd, "--enable-kernel-module-signature-enforcement")
+			"--enable-kernel-module-signature-enforcement",
 		}
 		cmd = exec.Command("gcloud")
 		cmd.Args = append(cmd.Args, nodePoolCmd...)
