@@ -20,14 +20,14 @@ limitations under the License.
 
 Run the following queries on [GCP Logs Explorer](https://cloud.google.com/logging/docs/view/logs-explorer-interface) to check logs.
 
-- Lustre CSI drver controller server logs:
+- Lustre CSI driver controller server logs:
 
     ```text
     resource.type="k8s_container"
     resource.labels.pod_name=~"lustre-csi-controller*"
     ```
 
-- Lustre CSI drver node server logs:
+- Lustre CSI driver node server logs:
 
     ```text
     resource.type="k8s_container"
