@@ -166,17 +166,17 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 			// Get NIC IP Addr
 			nicIPAddr, err := networkIntf.GetNICIPAddr(nicName)
 			if err != nil {
-				return nil, err
+				return nil, status.Errorf(codes.Internal, "Could not get NIC IP address: %v", err)
 			}
 			// Find Table ID for NIC
 			tableID, err := networkIntf.FindNextFreeTableID(initialRouteTableID, nicIPAddr)
 			if err != nil {
-				return nil, err
+				return nil, status.Errorf(codes.Internal, "Error trying to find a free Table ID: %v", err)
 			}
 			// Configure route for NIC & Lustre instance.
 			err = networkIntf.ConfigureRoute(nicName, ip, tableID)
 			if err != nil {
-				return nil, err
+				return nil, status.Errorf(codes.Internal, "Route configuration for Multi-NIC failed: %v", err)
 			}
 		}
 	}
