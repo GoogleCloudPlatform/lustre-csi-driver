@@ -18,6 +18,7 @@ package kmodinstaller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,8 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"k8s.io/klog/v2"
 )
 
@@ -62,7 +61,7 @@ func checkLnetPort(expectedPort int) error {
 	if currPort != expectedPortStr {
 		klog.Warningf("LNET port mismatched, Got: %s, Expected: %s", currPort, expectedPortStr)
 
-		return status.Error(codes.FailedPrecondition, "node already has lustre kernel modules installed with an outdated lnet.accept_port configuration. please upgrade your node pool to apply the correct settings")
+		return errors.New("node already has lustre kernel modules installed with an outdated lnet.accept_port configuration. please upgrade your node pool to apply the correct settings")
 	}
 
 	klog.V(4).Info("LNET_PORT matches configuration. Check passed.")
@@ -90,7 +89,7 @@ func checkLnetNetwork(expectedNics string) error {
 	if currNetworkNics != expectedNics {
 		klog.Warningf("LNET network parameter mismatched, Got: %s, Expected: %s", currNetworkNics, expectedNics)
 
-		return status.Error(codes.FailedPrecondition, "node already has lustre kernel modules installed with an outdated lnet.networks configuration. please upgrade your node pool to apply the correct settings")
+		return errors.New("node already has lustre kernel modules installed with an outdated lnet.networks configuration. please upgrade your node pool to apply the correct settings")
 	}
 
 	klog.V(4).Info("Network NICs matches configuration. Check passed.")
