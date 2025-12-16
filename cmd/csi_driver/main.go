@@ -43,7 +43,7 @@ var (
 	cloudConfigFilePath     = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort  = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
 	disableMultiNIC         = flag.Bool("disable-multi-nic", false, "If set to true, multi-NIC support is disabled and the driver will only use the default NIC (eth0).")
-	disableKmodInstall      = flag.Bool("disable-kmod-install", true, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
+	disableKmodInstall      = flag.Bool("disable-kmod-install", false, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
 	enableLabelController   = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
 	leaderElectionNamespace = flag.String("leader-election-namespace", "", "Namespace where the leader election resource will be created. Required for out-of-cluster deployments.")
 
