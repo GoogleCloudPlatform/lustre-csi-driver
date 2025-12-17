@@ -48,7 +48,7 @@ base_cmd="${PKGDIR}/bin/k8s-integration-test \
             --do-driver-build=${do_driver_build} --boskos-resource-type=${boskos_resource_type} \
             --test-version=${test_version} --num-nodes=1 --multi-nic-num-nodes=3 --pkg-dir=${PKGDIR} \
             --use-gke-driver=${use_gke_driver} --gke-cluster-version=${gke_cluster_version} \
-            --enable-legacy-lustre-port=${enable_legacy_lustre_port}
+            --enable-legacy-lustre-port=${enable_legacy_lustre_port}"
 
 if [ -n "$gke_node_version" ]; then
   base_cmd="${base_cmd} --gke-node-version=${gke_node_version}"
