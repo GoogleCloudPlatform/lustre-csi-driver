@@ -358,11 +358,13 @@ func (rm *RouteManager) CheckDisableMultiNIC(ctx context.Context, nodeID string,
 		if err != nil {
 			return false, err
 		}
-		klog.Infof("Node: %v, Disable MultiNic: %v", nodeID, isMultiNICEnabled)
+		klog.Infof("Node: %v, is MultiNic Enabled: %v", nodeID, isMultiNICEnabled)
 
 		// Ex: If Multi-Nic is enabled, then we return false since we don't want to disable it.
 		return !isMultiNICEnabled, nil
 	}
+
+	klog.Infof("Node %v, disable MultiNIC: %v", nodeID, disableMultiNIC)
 
 	// if label not found, then default will be whatever is passed from cluster configuration.
 	return disableMultiNIC, nil
