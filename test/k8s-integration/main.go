@@ -64,7 +64,7 @@ var (
 	gkeTestClusterName     = flag.String("gke-cluster-name", "", "GKE cluster name")
 	gceZone                = flag.String("gce-zone", "", "zone that the gke zonal cluster is created/found in")
 	gceRegion              = flag.String("gce-region", "", "region that the gke regional cluster should be created in")
-	clusterNewtwork        = flag.String("cluster-network", "lustre-network", "the VPC network to be used by the GKE cluster")
+	clusterNetwork         = flag.String("cluster-network", "lustre-network", "the VPC network to be used by the GKE cluster")
 	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "whether to enable the legacy Lustre port")
 )
 

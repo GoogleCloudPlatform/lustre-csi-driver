@@ -26,9 +26,11 @@ import (
 
 const (
 	// Networking constants.
-	ipRangeName         = "lustre-range"
-	multinicSubnetName  = "multinic-subnet"
-	multinicSubnetRange = "172.16.6.0/28"
+	ipRangeName        = "lustre-range"
+	multinicSubnetName = "multinic-subnet"
+
+	// Chosen for better isolation, avoiding common default VPC ranges.
+	multinicSubnetRange = "192.168.254.240/28"
 )
 
 func setupNetwork(project string) error {
@@ -38,10 +40,10 @@ func setupNetwork(project string) error {
 	}
 
 	// Create network if it doesn't exist.
-	cmd = exec.Command("gcloud", "compute", "networks", "describe", *clusterNewtwork, "--project="+project)
+	cmd = exec.Command("gcloud", "compute", "networks", "describe", *clusterNetwork, "--project="+project)
 	if err := runCommand("Checking if VPC network exists", cmd); err != nil {
-		klog.Infof("VPC network %q not found, creating it.", *clusterNewtwork)
-		cmd = exec.Command("gcloud", "compute", "networks", "create", *clusterNewtwork, "--subnet-mode=auto", "--mtu=8896", "--project="+project)
+		klog.Infof("VPC network %q not found, creating it.", *clusterNetwork)
+		cmd = exec.Command("gcloud", "compute", "networks", "create", *clusterNetwork, "--subnet-mode=auto", "--mtu=8896", "--project="+project)
 		if err := runCommand("Creating VPC network", cmd); err != nil {
 			return fmt.Errorf("failed to create VPC network: %w", err)
 		}
@@ -51,7 +53,7 @@ func setupNetwork(project string) error {
 	cmd = exec.Command("gcloud", "compute", "addresses", "describe", ipRangeName, "--global", "--project="+project)
 	if err := runCommand("Checking if IP range exists", cmd); err != nil {
 		klog.Infof("IP range %q not found, creating it.", ipRangeName)
-		cmd = exec.Command("gcloud", "compute", "addresses", "create", ipRangeName, "--global", "--purpose=VPC_PEERING", "--prefix-length=16", "--description=Lustre VPC Peering", "--network="+*clusterNewtwork, "--project="+project)
+		cmd = exec.Command("gcloud", "compute", "addresses", "create", ipRangeName, "--global", "--purpose=VPC_PEERING", "--prefix-length=16", "--description=Lustre VPC Peering", "--network="+*clusterNetwork, "--project="+project)
 		if err := runCommand("Creating IP range", cmd); err != nil {
 			return fmt.Errorf("failed to reserve IP range: %w", err)
 		}
@@ -60,7 +62,7 @@ func setupNetwork(project string) error {
 	// Connect VPC peering.
 	// gcloud services vpc-peerings connect is idempotent. It will update the peering if it already exists.
 	cmd = exec.Command("gcloud", "services", "vpc-peerings", "connect",
-		"--network="+*clusterNewtwork,
+		"--network="+*clusterNetwork,
 		"--project="+project,
 		"--ranges="+ipRangeName,
 		"--service=servicenetworking.googleapis.com")
@@ -80,7 +82,7 @@ func multiNICSubnetSetup(project, gceZone, gceRegion string) error {
 	cmd := exec.Command("gcloud", "compute", "networks", "subnets", "describe", multinicSubnetName, "--project="+project, "--region="+region)
 	if err := runCommand("Checking if multinic subnet already exists", cmd); err != nil {
 		cmd = exec.Command("gcloud", "compute", "networks", "subnets", "create", multinicSubnetName,
-			"--network="+*clusterNewtwork,
+			"--network="+*clusterNetwork,
 			"--range="+multinicSubnetRange,
 			"--region="+region,
 			"--project="+project,
