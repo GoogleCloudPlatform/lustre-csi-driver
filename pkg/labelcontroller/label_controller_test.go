@@ -131,7 +131,7 @@ func TestPvReconciler_Reconcile(t *testing.T) {
 				Name:   "test-instance",
 				Labels: map[string]string{},
 			},
-			expectedLabels: map[string]string{managedByLabelKey: managedByLabelValue},
+			expectedLabels: map[string]string{managedByLabelKey: lustreCSILabelValue},
 		},
 		{
 			name: "PV with existing label - should do nothing",
@@ -150,9 +150,9 @@ func TestPvReconciler_Reconcile(t *testing.T) {
 			},
 			lustreInstance: &lustre.ServiceInstance{
 				Name:   "test-instance-labeled",
-				Labels: map[string]string{managedByLabelKey: managedByLabelValue},
+				Labels: map[string]string{managedByLabelKey: lustreCSILabelValue},
 			},
-			expectedLabels: map[string]string{managedByLabelKey: managedByLabelValue},
+			expectedLabels: map[string]string{managedByLabelKey: lustreCSILabelValue},
 		},
 		{
 			name: "PV with wrong CSI driver - should do nothing",
