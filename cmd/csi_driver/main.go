@@ -144,7 +144,6 @@ func main() {
 			if err := mm.EmitGKEComponentVersion(); err != nil {
 				klog.Fatalf("Failed to emit GKE component version: %v", err)
 			}
-			mm.RegisterSuccessfullyLabeledVolumeMetric()
 		}
 
 		if *lustreAPIEndpoint == "" {
@@ -156,6 +155,7 @@ func main() {
 		}
 		config.Cloud = cloudProvider
 		if *enableLabelController {
+			mm.RegisterSuccessfullyLabeledVolumeMetric()
 			go func() {
 				// Pass empty string for kubeconfig to let controller-runtime handle the flag
 				if err := labelcontroller.Start(ctx, cloudProvider, &mm, *leaderElectionNamespace); err != nil {
