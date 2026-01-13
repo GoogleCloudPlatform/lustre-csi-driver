@@ -75,6 +75,7 @@ install_lustre_client_drivers() {
         -w 0 \
         --kernelmodulestree=/host_modules \
         --module-arg=lnet.accept_port=${LNET_PORT} \
+        --module-arg=lnet.networks="tcp0(eth0)" \
         --lsb-release-path=/host_etc/lsb-release \
         --insert-on-install \
         --logtostderr
