@@ -336,9 +336,8 @@ func (sm *lustreServiceManager) UpdateInstance(ctx context.Context, instance *Se
 			},
 		},
 		Instance: &lustrepb.Instance{
-			Name:        instanceFullName,
-			Labels:      instance.Labels,
-			CapacityGib: instance.CapacityGib,
+			Name:   instanceFullName,
+			Labels: instance.Labels,
 		},
 	}
 	klog.V(4).Infof("Updating Lustre instance %q", instance.Name)
