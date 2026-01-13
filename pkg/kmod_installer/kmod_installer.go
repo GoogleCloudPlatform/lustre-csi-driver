@@ -140,9 +140,7 @@ func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customModuleA
 		"--module-arg=lnet.accept_port="+strconv.Itoa(lnetPort),
 	)
 
-	if !disableMultiNIC {
-		args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
-	}
+	args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
 
 	for _, arg := range customModuleArgs {
 		args = append(args, "--module-arg="+arg)
