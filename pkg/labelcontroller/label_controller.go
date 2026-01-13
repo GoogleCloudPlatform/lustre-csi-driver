@@ -37,9 +37,11 @@ import (
 
 const (
 	managedByLabelKey   = "storage_gke_io_managed-by"
-	managedByLabelValue = "lustre_csi_storage_gke_io"
-	csiDriverName       = "lustre.csi.storage.gke.io"
-	leaderElectionID    = "lustre-csi-label-controller-leader-election"
+	createdByLabelKey   = "storage_gke_io_created-by"
+	lustreCSILabelValue = "lustre_csi_storage_gke_io"
+
+	csiDriverName    = "lustre.csi.storage.gke.io"
+	leaderElectionID = "lustre-csi-label-controller-leader-election"
 )
 
 type PvReconciler struct {
@@ -87,17 +89,19 @@ func (r *PvReconciler) Reconcile(ctx context.Context, request reconcile.Request)
 		return reconcile.Result{}, fmt.Errorf("failed to get lustre instance for PV %s: %w", pv.Name, err)
 	}
 
-	if val, ok := lustreInstance.Labels[managedByLabelKey]; ok && val == managedByLabelValue {
-		klog.Infof("Lustre instance for PV %s already has the correct label", pv.Name)
+	for _, key := range []string{managedByLabelKey, createdByLabelKey} {
+		if lustreInstance.Labels[key] == lustreCSILabelValue {
+			klog.Infof("Lustre instance for PV %s already has the %s label", pv.Name, key)
 
-		return reconcile.Result{}, nil
+			return reconcile.Result{}, nil
+		}
 	}
 
 	klog.Infof("Adding managed-by label to PV %s", pv.Name)
 	if lustreInstance.Labels == nil {
 		lustreInstance.Labels = make(map[string]string)
 	}
-	lustreInstance.Labels[managedByLabelKey] = managedByLabelValue
+	lustreInstance.Labels[managedByLabelKey] = lustreCSILabelValue
 
 	err = r.Cloud.LustreService.UpdateInstance(ctx, lustreInstance)
 	if err != nil {
