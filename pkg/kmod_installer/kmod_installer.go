@@ -18,7 +18,6 @@ package kmodinstaller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,9 +58,14 @@ func checkLnetPort(expectedPort int) error {
 	currPort := strings.TrimSpace(string(file))
 	expectedPortStr := strconv.Itoa(expectedPort)
 	if currPort != expectedPortStr {
-		klog.Warningf("LNET port mismatched, Got: %s, Expected: %s", currPort, expectedPortStr)
+		klog.Warningf("LNET port mismatched, Got: %s, Expected: %s. Removing the file for kmod reinstall", currPort, expectedPortStr)
+		err := os.Remove(lnetAcceptPortFile)
+		if err != nil {
+			return fmt.Errorf("failed to remove LNET port parameter file %s: %w", lnetAcceptPortFile, err)
+		}
+		klog.V(4).Infof("LNET port file %s cleared for kmod reinstall", lnetAcceptPortFile)
 
-		return errors.New("node already has lustre kernel modules installed with an outdated lnet.accept_port configuration. please upgrade your node pool to apply the correct settings")
+		return nil
 	}
 
 	klog.V(4).Info("LNET_PORT matches configuration. Check passed.")
@@ -87,9 +91,14 @@ func checkLnetNetwork(expectedNics string) error {
 		return nil
 	}
 	if currNetworkNics != expectedNics {
-		klog.Warningf("LNET network parameter mismatched, Got: %s, Expected: %s", currNetworkNics, expectedNics)
+		klog.Warningf("LNET network parameter mismatched, Got: %s, Expected: %s. Removing the file for kmod reinstall", currNetworkNics, expectedNics)
+		err := os.Remove(lnetNetworkParameterFile)
+		if err != nil {
+			return fmt.Errorf("failed to remove LNET network parameter file %s: %w", lnetNetworkParameterFile, err)
+		}
+		klog.V(4).Infof("LNET network file %s cleared for kmod reinstall", lnetNetworkParameterFile)
 
-		return errors.New("node already has lustre kernel modules installed with an outdated lnet.networks configuration. please upgrade your node pool to apply the correct settings")
+		return nil
 	}
 
 	klog.V(4).Info("Network NICs matches configuration. Check passed.")
