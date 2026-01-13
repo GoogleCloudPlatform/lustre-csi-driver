@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	cloud.google.com/go/compute/metadata v0.9.0
-	cloud.google.com/go/longrunning v0.7.0
+	cloud.google.com/go/longrunning v0.8.0
 	cloud.google.com/go/lustre v0.2.1
 	github.com/container-storage-interface/spec v1.12.0
 	github.com/go-logr/logr v1.4.3
