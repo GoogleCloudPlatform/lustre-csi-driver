@@ -223,6 +223,17 @@ func TestGetStandardNICs(t *testing.T) {
 			fakeMetaErr:    errors.New("metadata failed"),
 			wantErr:        true,
 		},
+		{
+			name:           "NIC names not in alphabetical order",
+			fakeGvnicNames: []string{"eth1", "eth0"},
+			fakeErr:        nil,
+			fakeNics: []metadata.NetworkInterface{
+				{Network: "projects/test/global/networks/default", Mac: "00:00:00:00:00:01"},
+				{Network: "projects/test/global/networks/default", Mac: "00:00:00:00:00:02"},
+			},
+			wantNics: []string{"eth0", "eth1"},
+			wantErr:  false,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -651,6 +662,33 @@ func TestCheckDisableMultiNIC(t *testing.T) {
 			wantDisable:       false,
 			wantErr:           true,
 			expectedErrSubstr: `strconv.ParseBool: parsing "invalid": invalid syntax`,
+		},
+		{
+			name:            "Alias found - multiRailLabel: true",
+			nics:            []string{"eth0", "eth1"},
+			disableMultiNic: true, // Should be overridden
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNICLabelAlias: "true"}}},
+			wantDisable:     false, // !true
+			wantErr:         false,
+		},
+		{
+			name:            "Alias found - multiRailLabel: false",
+			nics:            []string{"eth0", "eth1"},
+			disableMultiNic: false, // Should be overridden
+			fakeNode:        &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{multiNICLabelAlias: "false"}}},
+			wantDisable:     true,
+			wantErr:         false,
+		},
+		{
+			name:            "Both labels found - multiNicLabel takes precedence",
+			nics:            []string{"eth0", "eth1"},
+			disableMultiNic: true,
+			fakeNode: &v1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+				multiNICLabel:      "true",
+				multiNICLabelAlias: "false",
+			}}},
+			wantDisable: false, // multi-nic is true, so disable is false
+			wantErr:     false,
 		},
 	}
 
