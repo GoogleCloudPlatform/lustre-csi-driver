@@ -156,7 +156,8 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 		return nil, status.Errorf(codes.AlreadyExists, "A mountpoint with the same lustre filesystem name %q already exists on node %s. Please mount different lustre filesystems", fsname, nodeName)
 	}
 
-	if !s.driver.config.DisableMultiNIC {
+	// Check if multi-nic is enabled by checking if there are additional NICs.
+	if len(s.driver.config.AdditionalNics) > 0 {
 		netlinker := network.NewNetlink()
 		nodeClient := network.NewK8sClient()
 		networkIntf := network.Manager(netlinker, nodeClient, s.driver.config.MetadataService)
