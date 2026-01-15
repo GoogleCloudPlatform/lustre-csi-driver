@@ -25,5 +25,5 @@ allowedTopologies:
       values:
         - us-central1-a
 parameters:
-  network: default
+  network: lustre-network
   perUnitStorageThroughput: "1000"

@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"strings"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
@@ -43,7 +44,7 @@ var (
 	cloudConfigFilePath     = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort  = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
 	disableMultiNIC         = flag.Bool("disable-multi-nic", false, "If set to true, multi-NIC support is disabled and the driver will only use the default NIC (eth0).")
-	disableKmodInstall      = flag.Bool("disable-kmod-install", true, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
+	disableKmodInstall      = flag.Bool("disable-kmod-install", false, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
 	enableLabelController   = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
 	leaderElectionNamespace = flag.String("leader-election-namespace", "", "Namespace where the leader election resource will be created. Required for out-of-cluster deployments.")
 
@@ -104,39 +105,68 @@ func main() {
 		networkIntf := network.Manager(netlinker, nodeClient, meta)
 
 		config.Mounter = mount.New("")
-		nics, err := networkIntf.GetStandardNICs()
+		var (
+			nics                     []string
+			effectiveDisableMultiNIC bool
+		)
+
+		// We need to get standard NICs to check if the current LNET configuration (if installed) matches expectation
+		// or to install if not installed.
+		nics, err = networkIntf.GetStandardNICs()
 		if err != nil {
-			klog.Fatalf("Error getting nic names: %v", err)
+			klog.Fatalf("Failed to get nic names: %v", err)
 		}
 		if len(nics) == 0 {
-			klog.Fatal("No standard NICs (gve or virtio_net) found")
+			klog.Fatal("No standard NICs (gve, idpf, or virtio_net) found")
 		}
 
-		disableMultiNIC, err := networkIntf.CheckDisableMultiNIC(ctx, *nodeID, nics, *disableMultiNIC)
+		effectiveDisableMultiNIC, err = networkIntf.CheckDisableMultiNIC(ctx, *nodeID, nics, *disableMultiNIC)
 		if err != nil {
 			klog.Fatal(err)
 		}
-		if !disableMultiNIC && metrics.IsGKEComponentVersionAvailable() {
+
+		isInstalled, err := kmod.IsLustreKmodInstalled(*enableLegacyLustrePort)
+		if err != nil {
+			klog.Fatal(err)
+		}
+
+		if isInstalled {
+			klog.Info("Lustre kernel module already installed. Using the network interface specified in LNET parameters.")
+
+			// Check if the current configuration matches the expectation.
+			expectedNetwork := kmod.DefaultLnetNetwork
+			if !effectiveDisableMultiNIC {
+				expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
+			}
+
+			nics, err = kmod.GetLnetNetwork(expectedNetwork)
+			if err != nil {
+				klog.Fatalf("Failed to get LNET network parameters: %v", err)
+			}
+		} else if !*disableKmodInstall {
+			if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC); err != nil {
+				klog.Fatalf("Kmod install failure: %v", err)
+			}
+		}
+
+		if !effectiveDisableMultiNIC && metrics.IsGKEComponentVersionAvailable() {
 			if err := mm.EmitUsingMultiNic(); err != nil {
 				klog.Fatalf("Failed to emit GKE component version: %v", err)
 			}
 		}
-		if !*disableKmodInstall {
-			if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, customModuleArgs, nics, disableMultiNIC); err != nil {
-				klog.Fatalf("Kmod install failure: %v", err)
-			}
-		}
+
 		// additional NICs are any additional NICs that are not default (eth0).
 		// These NICs will additional setup for multi nic feature.
 		additionalNics := []string{}
-		for _, nic := range nics {
-			if nic != "eth0" {
-				additionalNics = append(additionalNics, nic)
+		if !effectiveDisableMultiNIC {
+			for _, nic := range nics {
+				if nic != "eth0" {
+					additionalNics = append(additionalNics, nic)
+				}
 			}
 		}
 		klog.V(4).Infof("Additional nic(s) %v on Node %v", additionalNics, *nodeID)
 		config.AdditionalNics = additionalNics
-		config.DisableMultiNIC = disableMultiNIC
 	}
 
 	if *runController {
@@ -144,7 +174,6 @@ func main() {
 			if err := mm.EmitGKEComponentVersion(); err != nil {
 				klog.Fatalf("Failed to emit GKE component version: %v", err)
 			}
-			mm.RegisterSuccessfullyLabeledVolumeMetric()
 		}
 
 		if *lustreAPIEndpoint == "" {
@@ -156,6 +185,7 @@ func main() {
 		}
 		config.Cloud = cloudProvider
 		if *enableLabelController {
+			mm.RegisterSuccessfullyLabeledVolumeMetric()
 			go func() {
 				// Pass empty string for kubeconfig to let controller-runtime handle the flag
 				if err := labelcontroller.Start(ctx, cloudProvider, &mm, *leaderElectionNamespace); err != nil {

@@ -161,7 +161,7 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 	cmdParams := []string{
 		"container", "clusters", "create", *gkeTestClusterName,
 		locationArg, locationVal, "--num-nodes", strconv.Itoa(numNodes),
-		"--quiet", "--machine-type", "n1-standard-2", "--image-type", imageType, "--network", *clusterNewtwork,
+		"--quiet", "--machine-type", "n1-standard-2", "--image-type", imageType, "--network", *clusterNetwork,
 		"--workload-pool", project + ".svc.id.goog",
 	}
 
@@ -200,7 +200,7 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 			"container", "node-pools", "create", multiNICNodePoolName,
 			"--cluster=" + *gkeTestClusterName, locationArg, locationVal,
 			"--num-nodes=" + strconv.Itoa(multiNicNumNodes), "--additional-node-network",
-			"network=" + *clusterNewtwork + ",subnetwork=" + multinicSubnetName,
+			"network=" + *clusterNetwork + ",subnetwork=" + multinicSubnetName,
 			"--enable-kernel-module-signature-enforcement",
 		}
 		cmd = exec.Command("gcloud")

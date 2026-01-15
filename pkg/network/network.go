@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -34,7 +35,8 @@ import (
 )
 
 const (
-	multiNICLabel = "lustre.csi.storage.gke.io/multi-rail"
+	multiNICLabel      = "lustre.csi.storage.gke.io/multi-nic"
+	multiNICLabelAlias = "lustre.csi.storage.gke.io/multi-rail"
 	// max user specified table ID is 252. 253, 254, and 255 are reserved (default, main, local).
 	maxTableID = 252
 )
@@ -120,7 +122,7 @@ func (r *realNetlink) GetStandardNICs() ([]string, error) {
 			continue
 		}
 
-		if driver == "gve" || driver == "virtio_net" {
+		if driver == "gve" || driver == "virtio_net" || driver == "idpf" {
 			klog.V(4).Infof("Found valid NIC %s with driver %s", name, driver)
 			ethNICs = append(ethNICs, name)
 		} else {
@@ -156,6 +158,11 @@ func (rm *RouteManager) GetStandardNICs() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Sort the NICs to ensure deterministic order.
+	// This is important for bare metal machines where NICs can be returned in random order. (b/470079386)
+	// For example, we want to ensure eth0 comes before eth1.
+	sort.Strings(nics)
 
 	// If we have 0 or 1 NIC, no need to validate VPC as single NIC is always valid (primary).
 	// Actually, if 1 NIC, it must be primary.
@@ -353,16 +360,25 @@ func (rm *RouteManager) CheckDisableMultiNIC(ctx context.Context, nodeID string,
 		return false, err
 	}
 
-	if val, found := node.GetLabels()[multiNICLabel]; found {
+	val, found := node.GetLabels()[multiNICLabel]
+	labelName := multiNICLabel
+	if !found {
+		val, found = node.GetLabels()[multiNICLabelAlias]
+		labelName = multiNICLabelAlias
+	}
+
+	if found {
 		isMultiNICEnabled, err := strconv.ParseBool(val)
 		if err != nil {
 			return false, err
 		}
-		klog.Infof("Node: %v, Disable MultiNic: %v", nodeID, isMultiNICEnabled)
+		klog.Infof("Node: %v, is MultiNic Enabled: %v (via %s)", nodeID, isMultiNICEnabled, labelName)
 
 		// Ex: If Multi-Nic is enabled, then we return false since we don't want to disable it.
 		return !isMultiNICEnabled, nil
 	}
+
+	klog.Infof("Node %v, disable MultiNIC: %v", nodeID, disableMultiNIC)
 
 	// if label not found, then default will be whatever is passed from cluster configuration.
 	return disableMultiNIC, nil

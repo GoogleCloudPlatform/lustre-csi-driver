@@ -18,7 +18,6 @@ package kmodinstaller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,11 +29,15 @@ import (
 )
 
 const (
+	legacyLNetPort     = 6988
+	defaultLNetPort    = 988
+	cmdTimeout         = 15 * time.Minute
+	DefaultLnetNetwork = "tcp0(eth0)"
+)
+
+var (
 	lnetAcceptPortFile       = "/sys/module/lnet/parameters/accept_port"
 	lnetNetworkParameterFile = "/sys/module/lnet/parameters/networks"
-	legacyLNetPort           = 6988
-	defaultLNetPort          = 988
-	cmdTimeout               = 15 * time.Minute
 )
 
 func lnetPort(enableLegacyLustrePort bool) int {
@@ -45,73 +48,93 @@ func lnetPort(enableLegacyLustrePort bool) int {
 	return defaultLNetPort
 }
 
-func checkLnetPort(expectedPort int) error {
-	file, err := os.ReadFile(lnetAcceptPortFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			klog.V(4).Infof("LNET port file %v not found. Skipping check", lnetAcceptPortFile)
-
-			return nil
-		}
-
-		return fmt.Errorf("error reading file %s: %w", lnetAcceptPortFile, err)
-	}
-	currPort := strings.TrimSpace(string(file))
-	expectedPortStr := strconv.Itoa(expectedPort)
-	if currPort != expectedPortStr {
-		klog.Warningf("LNET port mismatched, Got: %s, Expected: %s", currPort, expectedPortStr)
-
-		return errors.New("node already has lustre kernel modules installed with an outdated lnet.accept_port configuration. please upgrade your node pool to apply the correct settings")
-	}
-
-	klog.V(4).Info("LNET_PORT matches configuration. Check passed.")
-
-	return nil
+// IsLustreKmodInstalled checks if the Lustre kernel modules are installed.
+// It checks for the existence of the lnet accept port file.
+// If the file exists, it validates that the configured port matches the expected port.
+// Returns (true, nil) if installed and valid.
+// Returns (true, error) if installed but configuration mismatch (e.g. wrong port).
+// Returns (false, nil) if not installed.
+// Returns (false, error) if unexpected filesystem error checking the file.
+func IsLustreKmodInstalled(enableLegacyLustrePort bool) (bool, error) {
+	return isLustreKmodInstalled(enableLegacyLustrePort, lnetAcceptPortFile)
 }
 
-func checkLnetNetwork(expectedNics string) error {
-	file, err := os.ReadFile(lnetNetworkParameterFile)
+func isLustreKmodInstalled(enableLegacyLustrePort bool, acceptPortFile string) (bool, error) {
+	// Check if the kernel module is loaded by checking the existence of the parameter file
+	file, err := os.ReadFile(acceptPortFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			klog.V(4).Infof("LNET network parameter file %v not found. Skipping check", lnetNetworkParameterFile)
-
-			return nil
+			return false, nil
 		}
 
-		return fmt.Errorf("error reading file %s: %w", lnetAcceptPortFile, err)
+		return false, fmt.Errorf("failed to read lnet accept port file %s: %w", acceptPortFile, err)
+	}
+
+	currPort := strings.TrimSpace(string(file))
+	expectedPort := lnetPort(enableLegacyLustrePort)
+	expectedPortStr := strconv.Itoa(expectedPort)
+	if currPort != expectedPortStr {
+		klog.Errorf("LNET port mismatched, Got: %s, Expected: %s", currPort, expectedPortStr)
+
+		return true, fmt.Errorf("node already has lustre kernel modules installed with an outdated lnet.accept_port configuration (Got: %s, Expected: %s). please upgrade your node pool to apply the correct settings", currPort, expectedPortStr)
+	}
+
+	return true, nil
+}
+
+// GetLnetNetwork retrieves the currently configured LNet network interfaces.
+// It reads the "networks" parameter from the LNet module parameters.
+// If expectedNics is provided, it validates the current config matches expectation and warns on mismatch.
+// If the file is missing but modules are installed, it returns a default "eth0".
+func GetLnetNetwork(expectedNics string) ([]string, error) {
+	return getLnetNetwork(expectedNics, lnetNetworkParameterFile)
+}
+
+func getLnetNetwork(expectedNics, networkFile string) ([]string, error) {
+	networkStr, err := readLnetConfig(networkFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// If the LNET parameter file is missing but modules are supposedly installed,
+			// falling back to a (tcp0(eth0)) as the default.
+			networkStr = DefaultLnetNetwork
+		} else {
+			return nil, err
+		}
+	}
+
+	if expectedNics != "" && networkStr != expectedNics {
+		klog.Warningf("LNET network parameter mismatched, Got: %s, Expected: %s. Please upgrade your node pool to apply the correct settings.", networkStr, expectedNics)
+	}
+
+	return parseLnetNetwork(networkStr), nil
+}
+
+func readLnetConfig(path string) (string, error) {
+	file, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
 	}
 	currNetworkNics := strings.TrimSpace(string(file))
 	if currNetworkNics == "" {
-		klog.V(4).Infof("LNET network parameter file %v is empty. Skipping check", lnetNetworkParameterFile)
-
-		return nil
-	}
-	if currNetworkNics != expectedNics {
-		klog.Warningf("LNET network parameter mismatched, Got: %s, Expected: %s", currNetworkNics, expectedNics)
-
-		return errors.New("node already has lustre kernel modules installed with an outdated lnet.networks configuration. please upgrade your node pool to apply the correct settings")
+		klog.V(4).Infof("LNET network parameter file %v is empty.", path)
+		// An empty lnetNetworkParameterFile implies either the kernel modules are not installed yet,
+		// or they are installed, but just without any parameters.
+		// If that file is empty, but kernel modules are already installed, eth0 should be used.
+		return DefaultLnetNetwork, nil
 	}
 
-	klog.V(4).Info("Network NICs matches configuration. Check passed.")
-
-	return nil
+	return currNetworkNics, nil
 }
 
-// InstallLustreKmod installs kmod (cos-dkms) on the node.
+// InstallLustreKmod installs the Lustre kernel modules on the node using cos-dkms.
+// It proceeds with the installation using the provided NICs.
 func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool) error {
 	lnetPort := lnetPort(enableLegacyPort)
-	if err := checkLnetPort(lnetPort); err != nil {
-		return err
-	}
-
-	expectedNetwork := fmt.Sprintf("tcp0(%s)", nics[0])
+	expectedNetwork := DefaultLnetNetwork
 	if !disableMultiNIC {
 		expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
 	}
 
-	if err := checkLnetNetwork(expectedNetwork); err != nil {
-		return err
-	}
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
 
@@ -140,9 +163,7 @@ func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customModuleA
 		"--module-arg=lnet.accept_port="+strconv.Itoa(lnetPort),
 	)
 
-	if !disableMultiNIC {
-		args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
-	}
+	args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
 
 	for _, arg := range customModuleArgs {
 		args = append(args, "--module-arg="+arg)
@@ -160,7 +181,18 @@ func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customModuleA
 		return fmt.Errorf("command execution failed: %w\noutput:\n%s", err, string(output))
 	}
 
-	klog.Infof("Cos-dkms output:\n%s\n", string(output))
+	klog.Infof("COS-DKMS output:\n%s\n", string(output))
 
 	return nil
+}
+
+func parseLnetNetwork(networkStr string) []string {
+	// networkStr format: tcp0(eth0,eth1)
+	networkStr = strings.TrimPrefix(networkStr, "tcp0(")
+	networkStr = strings.TrimSuffix(networkStr, ")")
+	if networkStr == "" {
+		return []string{}
+	}
+
+	return strings.Split(networkStr, ",")
 }
