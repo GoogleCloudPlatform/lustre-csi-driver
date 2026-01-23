@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.5 /usr/bin/cos-dkms /usr/bin/cos-dkms
+COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.9 /usr/bin/cos-dkms /usr/bin/cos-dkms
 
 COPY /cmd/kmod_installer/entrypoint.sh /usr/bin/entrypoint.sh
 RUN chmod +x /usr/bin/entrypoint.sh
