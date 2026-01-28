@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y \
     libkrb5support0 \
     libssl3 \
     libjson-c5 \
+    openssl \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
