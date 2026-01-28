@@ -21,6 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN clean-install bash
 RUN apt-get update && apt-get install -y --no-install-recommends \
     kmod \
+    openssl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
