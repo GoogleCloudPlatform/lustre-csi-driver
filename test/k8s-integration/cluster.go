@@ -193,15 +193,15 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 		return fmt.Errorf("failed to bring up kubernetes e2e cluster on gke: %w", err)
 	}
 
-	// if specify multi nic, create separate pool with additional multi nic subnet.
-	// TODO(samhalim): Multi-NIC is not yet supported with the GKE managed driver. Remove flag once we have GKE version supporting multi-nic.
-	if multiNICSetup && !useManagedDriver {
+	if multiNICSetup {
 		nodePoolCmd := []string{
 			"container", "node-pools", "create", multiNICNodePoolName,
 			"--cluster=" + *gkeTestClusterName, locationArg, locationVal,
 			"--num-nodes=" + strconv.Itoa(multiNicNumNodes), "--additional-node-network",
 			"network=" + *clusterNetwork + ",subnetwork=" + multinicSubnetName,
-			"--enable-kernel-module-signature-enforcement",
+		}
+		if !useManagedDriver {
+			nodePoolCmd = append(nodePoolCmd, "--enable-kernel-module-signature-enforcement")
 		}
 		cmd = exec.Command("gcloud")
 		cmd.Args = append(cmd.Args, nodePoolCmd...)
