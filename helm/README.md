@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
 1. Environment Setup
 
     ```sh
-    export VERSION=v0.2.2-gke.1    # Set lustre-csi-driver image tag
+    export VERSION=v0.4.12-gke.0    # Set lustre-csi-driver image tag
     export NAMESPACE="lustre-csi-driver"
     ```
 
