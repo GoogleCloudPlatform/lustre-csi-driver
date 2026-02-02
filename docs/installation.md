@@ -83,10 +83,18 @@ For experimental use, the CSI driver can be deployed directly using Helm with pr
 
 3. **Install the driver**:
 
-   - To install the CSI driver **with pre-built images**, run:
+   - To install the CSI driver **with pre-built images** (kernels modules will be installed), run:
 
      ```bash
      OVERLAY=gke-release make install
+     ```
+
+   - To install the CSI driver **with pre-built images without installing kernel modules** (e.g., if modules are pre-loaded or managed by the user), run:
+
+     > **NOTE:** This option installs the CSI driver **without** installing Lustre kernel modules. It is designed for environments where signed OOT modules are pre-loaded or managed by the user (e.g., using [Secure Kernel Module Loading](https://cloud.google.com/kubernetes-engine/security/secure-modules-cos)).
+
+     ```bash
+     OVERLAY=gke-release DRIVER_ONLY=true make install
      ```
 
    - To install the CSI driver **from custom-built images**, run:
