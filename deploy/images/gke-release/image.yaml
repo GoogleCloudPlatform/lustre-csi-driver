@@ -19,7 +19,7 @@ metadata:
 imageTag:
   name: registry.k8s.io/sig-storage/csi-node-driver-registrar
   newName: gke.gcr.io/csi-node-driver-registrar
-  newTag: "v2.10.1-gke.47"
+  newTag: "v2.15.0-gke.4"
 ---
 apiVersion: builtin
 kind: ImageTagTransformer
@@ -27,7 +27,7 @@ metadata:
   name: imagetag-cos-dkms
 imageTag:
   name: gcr.io/cos-cloud/cos-dkms
-  newTag: "v0.3.5"
+  newTag: "v0.3.9"
 ---
 apiVersion: builtin
 kind: ImageTagTransformer
@@ -35,5 +35,5 @@ metadata:
   name: imagetag-lustre-csi-driver
 imageTag:
   name: gke.gcr.io/lustre-csi-driver
-  newTag: "v0.3.4-gke.0"
+  newTag: "v0.3.14-gke.1"
 
