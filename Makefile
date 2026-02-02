@@ -95,7 +95,30 @@ generate-spec-yaml:
 		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit set image gke.gcr.io/lustre-csi-driver=${DRIVER_IMAGE}:${STAGINGVERSION}; \
 		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit add configmap lustre-config --behavior=merge --disableNameSuffixHash --from-literal=endpoint=${LUSTRE_ENDPOINT}; \
 	fi
+	if [ "${DRIVER_ONLY}" = "true" ] && [ "${OVERLAY}" = "gke-release" ]; then \
+		echo "apiVersion: apps/v1" > ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "kind: DaemonSet" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "metadata:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "  name: lustre-csi-node" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "spec:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "  template:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "    spec:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "      initContainers:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "      - name: disable-loadpin" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "      - name: install-lustre-mods" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "      volumes:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "      - name: host-modules" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "      - name: dev" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "      - name: host-etc" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		cd ./deploy/overlays/${OVERLAY}; ../../../${BINDIR}/kustomize edit add patch --path patch-remove-kmod.yaml; \
+	fi
 	kubectl kustomize deploy/overlays/${OVERLAY} | tee ${BINDIR}/lustre-csi-driver-specs-generated.yaml > /dev/null
+	if [ "${DRIVER_ONLY}" = "true" ] && [ "${OVERLAY}" = "gke-release" ]; then rm ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; fi
 	git restore ./deploy/overlays/${OVERLAY}/kustomization.yaml
 
 init-buildx:
