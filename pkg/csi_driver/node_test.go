@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -462,6 +463,42 @@ func TestNodePublishVolume(t *testing.T) {
 		}
 
 		validateMountPoint(t, test.name, testEnv.fm, test.expectedMount)
+	}
+}
+
+func TestNodePublishVolume_SymlinkRace(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	targetPath := filepath.Join(base, "target")
+	sensitivePath := filepath.Join(base, "sensitive")
+
+	// Create a sensitive directory that an attacker targets
+	if err := os.Mkdir(sensitivePath, 0o755); err != nil {
+		t.Fatalf("failed to create sensitive path: %v", err)
+	}
+
+	// Create a symlink at the target path pointing to the sensitive directory
+	// to simulates the attack.
+	if err := os.Symlink(sensitivePath, targetPath); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	testEnv := initTestNodeServer(t)
+	req := &csi.NodePublishVolumeRequest{
+		VolumeId:          testVolumeID,
+		StagingTargetPath: filepath.Join(base, "staging"),
+		TargetPath:        targetPath,
+		VolumeCapability:  testVolumeCapability,
+		VolumeContext:     testVolumeAttributes,
+	}
+
+	_, err := testEnv.ns.NodePublishVolume(t.Context(), req)
+
+	// The call should fail because a symlink exists
+	if err == nil {
+		t.Error("expected error when target path is a symlink, but got success")
+	} else if !strings.Contains(err.Error(), "exists but is not a directory") {
+		t.Errorf("expected error containing 'exists but is not a directory', got: %v", err)
 	}
 }
 
