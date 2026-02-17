@@ -27,3 +27,4 @@ allowedTopologies:
 parameters:
   network: lustre-network
   perUnitStorageThroughput: "1000"
+  labels: "gke-testing-project=prow"
