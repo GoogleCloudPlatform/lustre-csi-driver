@@ -532,11 +532,35 @@ func hasOption(options []string, opt string) bool {
 }
 
 func makeDir(pathname string) error {
-	err := os.MkdirAll(pathname, os.FileMode(0o755))
-	if err != nil {
-		if !os.IsExist(err) {
-			return err
+	info, err := os.Lstat(pathname)
+	if err == nil {
+		if info.IsDir() {
+			return nil
 		}
+
+		return fmt.Errorf("path %q already exists but is not a directory", pathname)
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to lstat %q: %w", pathname, err)
+	}
+
+	// Use os.Mkdir instead of MkdirAll for the leaf directory to prevent
+	// following a symlink.
+	if err := os.Mkdir(pathname, os.FileMode(0o755)); err != nil {
+		if !os.IsExist(err) {
+			return fmt.Errorf("failed to mkdir %q: %w", pathname, err)
+		}
+		// If the path already exists, re-verify it's a directory and not a symlink,
+		// as it could have been created between the initial Lstat and this Mkdir.
+		info, err2 := os.Lstat(pathname)
+		if err2 != nil {
+			return fmt.Errorf("failed to lstat %q after mkdir failed: %w", pathname, err2)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("path %q already exists but is not a directory", pathname)
+		}
+
+		return fmt.Errorf("failed to mkdir %q: %w", pathname, err)
 	}
 
 	return nil
