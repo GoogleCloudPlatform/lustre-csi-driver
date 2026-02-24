@@ -204,12 +204,28 @@ func handle() error {
 	testParams.testDir = filepath.Join(k8sParentDir, "kubernetes")
 	defer removeDir(k8sParentDir)
 
+	testParams.cloudProviderArgs = getGKEKubeTestArgs(*gceZone, *gceRegion, project)
+	var env string
+	for _, arg := range testParams.cloudProviderArgs {
+		if strings.HasPrefix(arg, "--environment=") {
+			envSplit := strings.Split(arg, "=")
+			if len(envSplit) > 1 {
+				// Full arg example: --environment=staging
+				env = envSplit[1]
+			}
+		}
+	}
+	multiNicUsable := isMultiNicUsable(env)
 	if *doNetworkSetup {
 		if err := setupNetwork(project); err != nil {
 			return fmt.Errorf("failed to setup VPC network: %w", err)
 		}
-		// TODO(samhalim): Multi-NIC is not yet supported with the GKE managed driver. Remove flag once we have GKE version supporting multi-nic.
-		if *doMultiNICSetup && !*useManagedDriver {
+		if *doMultiNICSetup && multiNicUsable {
+			// TODO(samhalim): Remove the hard coded experimental version once we have a GKE version that supports MultiNIC in prod.
+			if *useManagedDriver {
+				*gkeClusterVersion = "1.35.0-gke.2271000"
+			}
+
 			if err := multiNICSubnetSetup(project, *gceZone, *gceRegion); err != nil {
 				return fmt.Errorf("failed to setup Multi-NIC subnet: %w", err)
 			}
@@ -222,7 +238,7 @@ func handle() error {
 	}
 
 	if *bringupCluster {
-		if err := clusterUpGKE(project, *gceZone, *gceRegion, testParams.imageType, *numNodes, *multiNicNumNodes, *useManagedDriver, *enableLegacyLustrePort, *doMultiNICSetup); err != nil {
+		if err := clusterUpGKE(project, *gceZone, *gceRegion, testParams.imageType, *numNodes, *multiNicNumNodes, *useManagedDriver, *enableLegacyLustrePort, *doMultiNICSetup && multiNicUsable); err != nil {
 			return fmt.Errorf("failed to cluster up: %w", err)
 		}
 		defer func() {
@@ -253,8 +269,6 @@ func handle() error {
 			cancel()
 		}
 	}()
-
-	testParams.cloudProviderArgs = getGKEKubeTestArgs(*gceZone, *gceRegion, project)
 
 	testParams.clusterVersion = mustGetKubeClusterVersion()
 	klog.Infof("Kubernetes cluster server version: %s", testParams.clusterVersion)
@@ -294,6 +308,19 @@ func handle() error {
 	}
 
 	return nil
+}
+
+// This function checks to see if the integration test is compatible to run MultiNIC feature or not.
+func isMultiNicUsable(env string) bool {
+	// TODO(samhalim): Remove/refactor this once MultiNIC is fully launched in prod.
+	if !*useManagedDriver {
+		return true
+	}
+	if strings.Contains(*gkeClusterVersion, "1.35") && env == "staging" {
+		return true
+	}
+
+	return false
 }
 
 func generateGKETestSkip(_ *testParameters) string {

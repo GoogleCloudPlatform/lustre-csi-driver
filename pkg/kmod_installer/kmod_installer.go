@@ -174,11 +174,19 @@ func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customModuleA
 	klog.Infof("Installing Lustre kernel modules by executing command: %s", cmd.String())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		if cmdCtx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("command timed out after %s: %w\noutput:\n%s", cmdTimeout, err, string(output))
+		outputStr := string(output)
+		lowerOutput := strings.ToLower(outputStr)
+		if strings.Contains(lowerOutput, "operation not permitted") && strings.Contains(lowerOutput, "insmod") {
+			msg := "lustre kernel module installation failed due to permission issue. Please follow https://docs.cloud.google.com/managed-lustre/docs/lustre-csi-driver-new-volume#node-upgrade-required to upgrade node pool to allow GKE managed Lustre CSI driver installation to complete, or disabling loadpin if you are installing the Lustre CSI driver from open source"
+
+			return fmt.Errorf("command execution failed: %w. %s", err, msg)
 		}
 
-		return fmt.Errorf("command execution failed: %w\noutput:\n%s", err, string(output))
+		if cmdCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("command timed out after %s: %w\noutput:\n%s", cmdTimeout, err, outputStr)
+		}
+
+		return fmt.Errorf("command execution failed: %w\noutput:\n%s", err, outputStr)
 	}
 
 	klog.Infof("COS-DKMS output:\n%s\n", string(output))

@@ -351,7 +351,7 @@ func (rm *RouteManager) GetNICIPAddr(nicName string) (net.IP, error) {
 func (rm *RouteManager) CheckDisableMultiNIC(ctx context.Context, nodeID string, nics []string, disableMultiNIC bool) (bool, error) {
 	klog.V(4).Infof("Checking if node label %s exists in %s", multiNICLabel, nodeID)
 	if len(nics) <= 1 {
-		klog.V(4).Infof("Node only has 1 nic or less available. Not suitable for Multi-Nic feature. current nics: %v", nics)
+		klog.V(4).Infof("Node only has 1 nic or less available. Not suitable for Multi-NIC feature. current nics: %v", nics)
 
 		return true, nil
 	}

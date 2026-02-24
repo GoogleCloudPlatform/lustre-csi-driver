@@ -40,7 +40,6 @@ spec:
       serviceAccount: lustre-csi-node-sa
       nodeSelector:
         kubernetes.io/os: linux
-        kubernetes.io/arch: amd64
         cloud.google.com/gke-os-distribution: cos
       initContainers:
       - name: lustre-kmod-installer
