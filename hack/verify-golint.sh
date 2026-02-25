@@ -17,22 +17,21 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-TOOL_VERSION="v1.64.8"
+TOOL_VERSION="v2.10.1"
 
 export PATH=$PATH:$(go env GOPATH)/bin
-go install "github.com/golangci/golangci-lint/cmd/golangci-lint@${TOOL_VERSION}"
+go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${TOOL_VERSION}"
 
 echo "Verifying golint..."
 
 golangci-lint cache clean
 
 # disable deprecated linters and ohter unnecessary linters
-golangci-lint run --no-config --timeout=10m --sort-results \
+# use default linters and explicit configuration for v2
+golangci-lint run --no-config --timeout=10m \
 --verbose \
 --fix \
---enable-all  \
 --max-same-issues 100 \
---disable exhaustruct,gomnd,lll,gochecknoglobals,funlen,varnamelen,wsl,testpackage,wrapcheck,err113,ireturn,gocyclo,cyclop,godox,gocognit,nestif,gomoddirectives,maintidx,depguard,mnd,execinquery,nilnil,unused,perfsprint,nonamedreturns,gosec,dupl,intrange \
---go 1.24.1 # the builder version
+--disable err113,lll,wsl
 
 echo "Congratulations! Lint check completed for all Go source files."

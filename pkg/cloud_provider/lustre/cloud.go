@@ -108,7 +108,9 @@ func maybeReadConfig(configPath string) (*ConfigFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("couldn't open cloud provider configuration at %s: %w", configPath, err)
 	}
-	defer reader.Close()
+	defer func() {
+		_ = reader.Close()
+	}()
 
 	cfg := &ConfigFile{}
 	if err := gcfg.FatalOnly(gcfg.ReadInto(cfg, reader)); err != nil {

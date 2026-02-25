@@ -60,7 +60,9 @@ func (a *AltTokenSource) token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 	if err := googleapi.CheckResponse(res); err != nil {
 		return nil, err
 	}

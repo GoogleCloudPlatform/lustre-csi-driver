@@ -347,7 +347,7 @@ func runTestsWithConfig(testParams *testParameters, testConfigArg, reportPrefix 
 	if err != nil {
 		return err
 	}
-	os.Setenv("KUBECONFIG", kubeconfig)
+	_ = os.Setenv("KUBECONFIG", kubeconfig)
 
 	artifactsDir, ok := os.LookupEnv("ARTIFACTS")
 	kubetestDumpDir := ""
