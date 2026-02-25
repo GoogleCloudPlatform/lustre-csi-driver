@@ -65,10 +65,8 @@ func generateDriverConfigFile(testParams *testParameters, storageClassFile strin
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
 
 	w := bufio.NewWriter(f)
-	defer w.Flush()
 
 	// Fill in template parameters. Capabilities can be found here:
 	// https://github.com/kubernetes/kubernetes/blob/b717be8269a4f381ab6c23e711e8924bc1f64c93/test/e2e/storage/testsuites/testdriver.go#L136
@@ -105,6 +103,16 @@ func generateDriverConfigFile(testParams *testParameters, storageClassFile strin
 	// Write config file
 	err = t.Execute(w, params)
 	if err != nil {
+		_ = f.Close() // Attempt to close, but we are returning the execution error.
+		return "", err
+	}
+
+	if err = w.Flush(); err != nil {
+		_ = f.Close() // Attempt to close, but we are returning the flush error.
+		return "", err
+	}
+
+	if err = f.Close(); err != nil {
 		return "", err
 	}
 

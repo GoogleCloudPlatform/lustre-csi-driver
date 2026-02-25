@@ -377,7 +377,7 @@ func (s *controllerServer) prepareNewInstance(name string, capBytes int64, param
 	if !exists {
 		return nil, fmt.Errorf("parameter 'perUnitStorageThroughput' is required; supported values are 1000, 500, 250, or 125")
 	}
-	if !(v == "1000" || v == "500" || v == "250" || v == "125") {
+	if v != "1000" && v != "500" && v != "250" && v != "125" {
 		return nil, fmt.Errorf("invalid perUnitStorageThroughput %s, must be 1000, 500, 250 or 125", v)
 	}
 	perUnitStorageThroughput, err := strconv.ParseInt(v, 10, 64)

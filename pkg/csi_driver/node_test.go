@@ -780,7 +780,9 @@ func TestSetVolumeOwnershipOwner(t *testing.T) {
 				t.Fatalf("error creating temp dir: %v", err)
 			}
 
-			defer os.RemoveAll(tmpDir)
+			defer func() {
+				_ = os.RemoveAll(tmpDir)
+			}()
 
 			err = setVolumeOwnershipTopLevel(testVolumeID, tmpDir, test.fsGroup, false)
 			if err != nil {

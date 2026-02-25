@@ -21,8 +21,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"k8s.io/klog/v2"
 )
 
 var (
@@ -43,22 +41,6 @@ func (v *version) String() string {
 	}
 
 	return fmt.Sprintf("%d.%d.%d", v.version[0], v.version[1], v.version[2])
-}
-
-func (v *version) major() int {
-	return v.version[0]
-}
-
-func (v *version) minor() int {
-	return v.version[1]
-}
-
-func (v *version) patch() int {
-	return v.version[2]
-}
-
-func (v *version) extra() int {
-	return v.version[3]
 }
 
 func (v *version) isGKEExtraVersion(extrastr string) bool {
@@ -119,16 +101,6 @@ func parseVersion(vs string) (*version, error) {
 	return &v, nil
 }
 
-// mustParseVersion parses a GKE cluster version.
-func mustParseVersion(version string) *version {
-	v, err := parseVersion(version)
-	if err != nil {
-		klog.Fatalf("Failed to parse GKE version: %q", version)
-	}
-
-	return v
-}
-
 // Helper function to compare versions.
 //
 //	-1 -- if left  < right
@@ -150,9 +122,4 @@ func (v *version) compare(right *version) int {
 // Compare versions if left is strictly less than right.
 func (v *version) lessThan(right *version) bool {
 	return v.compare(right) < 0
-}
-
-// Compare versions if left is greater than or equal to right.
-func (v *version) atLeast(right *version) bool {
-	return v.compare(right) >= 0
 }

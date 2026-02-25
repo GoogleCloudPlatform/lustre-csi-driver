@@ -103,7 +103,7 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 			pods, err := cs.CoreV1().Pods(ns).List(ctx, options)
 			if err != nil {
 				if to.StatusWriter != nil {
-					fmt.Fprintf(to.StatusWriter, "ERROR: get pod list in %s: %s\n", ns, err)
+					_, _ = fmt.Fprintf(to.StatusWriter, "ERROR: get pod list in %s: %s\n", ns, err)
 				}
 
 				return
@@ -115,7 +115,7 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 					if len(pod.Status.ContainerStatuses) <= i {
 						continue
 					}
-					name := pod.ObjectMeta.Name + "/" + c.Name
+					name := pod.Name + "/" + c.Name
 					id := name + "/" + pod.Status.ContainerStatuses[i].ContainerID
 					if active[name] ||
 						// If we have worked on a container before and it has now terminated, then
@@ -131,7 +131,7 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 							pod.Status.ContainerStatuses[i].State.Terminated == nil) {
 						continue
 					}
-					readCloser, err := logsForPod(ctx, cs, ns, pod.ObjectMeta.Name,
+					readCloser, err := logsForPod(ctx, cs, ns, pod.Name,
 						&v1.PodLogOptions{
 							Container: c.Name,
 							Follow:    true,
@@ -141,7 +141,7 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 						// We can ignore those.
 						if to.StatusWriter != nil &&
 							expectedErrors.FindStringIndex(err.Error()) == nil {
-							fmt.Fprintf(to.StatusWriter, "WARNING: pod log: %s: %s\n", name, err)
+							_, _ = fmt.Fprintf(to.StatusWriter, "WARNING: pod log: %s: %s\n", name, err)
 						}
 
 						continue
@@ -162,11 +162,11 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 						prefix = name + "@" + nodeName + ": "
 					} else {
 						var err error
-						filename := to.LogPathPrefix + pod.ObjectMeta.Name + "-" + c.Name + ".log"
+						filename := to.LogPathPrefix + pod.Name + "-" + c.Name + ".log"
 						err = os.MkdirAll(path.Dir(filename), 0o755)
 						if err != nil {
 							if to.StatusWriter != nil {
-								fmt.Fprintf(to.StatusWriter, "ERROR: pod log: create directory for %s: %s\n", filename, err)
+								_, _ = fmt.Fprintf(to.StatusWriter, "ERROR: pod log: create directory for %s: %s\n", filename, err)
 							}
 
 							return
@@ -176,7 +176,7 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 						file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 						if err != nil {
 							if to.StatusWriter != nil {
-								fmt.Fprintf(to.StatusWriter, "ERROR: pod log: create file %s: %s\n", filename, err)
+								_, _ = fmt.Fprintf(to.StatusWriter, "ERROR: pod log: create file %s: %s\n", filename, err)
 							}
 
 							return
@@ -186,7 +186,9 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 					}
 					go func() {
 						if closer != nil {
-							defer closer.Close()
+							defer func() {
+								_ = closer.Close()
+							}()
 						}
 						first := true
 						defer func() {
@@ -194,14 +196,14 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 							// If we never printed anything, then also skip the final message.
 							if !first {
 								if prefix != "" {
-									fmt.Fprintf(out, "%s==== end of pod log ====\n", prefix)
+									_, _ = fmt.Fprintf(out, "%s==== end of pod log ====\n", prefix)
 								} else {
-									fmt.Fprintf(out, "==== end of pod log for container %s ====\n", name)
+									_, _ = fmt.Fprintf(out, "==== end of pod log for container %s ====\n", name)
 								}
 							}
 							active[name] = false
 							m.Unlock()
-							readCloser.Close()
+							_ = readCloser.Close()
 						}()
 						scanner := bufio.NewScanner(readCloser)
 						for scanner.Scan() {
@@ -218,13 +220,13 @@ func CopyPodLogs(ctx context.Context, cs clientset.Interface, ns, podName string
 									// in different test instances, log an extra line to separate them.
 									// Also provides some useful extra information.
 									if prefix == "" {
-										fmt.Fprintf(out, "==== start of pod log for container %s ====\n", name)
+										_, _ = fmt.Fprintf(out, "==== start of pod log for container %s ====\n", name)
 									} else {
-										fmt.Fprintf(out, "%s==== start of pod log ====\n", prefix)
+										_, _ = fmt.Fprintf(out, "%s==== start of pod log ====\n", prefix)
 									}
 									first = false
 								}
-								fmt.Fprintf(out, "%s%s\n", prefix, line)
+								_, _ = fmt.Fprintf(out, "%s%s\n", prefix, line)
 							}
 						}
 					}()
