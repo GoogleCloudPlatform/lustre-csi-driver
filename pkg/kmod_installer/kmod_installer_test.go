@@ -31,7 +31,7 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 		name             string
 		fileContent      string
 		fileMissing      bool
-		chmodZero        bool
+		isDir            bool
 		enableLegacyPort bool
 		wantInstalled    bool
 		wantErr          bool
@@ -73,7 +73,7 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 		{
 			name:          "File unreadable",
 			fileContent:   "988",
-			chmodZero:     true,
+			isDir:         true,
 			wantInstalled: false,
 			wantErr:       true,
 		},
@@ -86,12 +86,13 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 			acceptPortFile := filepath.Join(tempDir, "accept_port")
 
 			if !tc.fileMissing {
-				if err := os.WriteFile(acceptPortFile, []byte(tc.fileContent), 0o644); err != nil {
-					t.Fatalf("Failed to write temp file: %v", err)
-				}
-				if tc.chmodZero {
-					if err := os.Chmod(acceptPortFile, 0o000); err != nil {
-						t.Fatalf("Failed to chmod temp file: %v", err)
+				if tc.isDir {
+					if err := os.Mkdir(acceptPortFile, 0o755); err != nil {
+						t.Fatalf("Failed to create temp dir: %v", err)
+					}
+				} else {
+					if err := os.WriteFile(acceptPortFile, []byte(tc.fileContent), 0o644); err != nil {
+						t.Fatalf("Failed to write temp file: %v", err)
 					}
 				}
 			}
