@@ -156,13 +156,17 @@ func ParseVolumeID(id string) (string, string, string, error) {
 
 // GetRegionFromZone return the corresponding region name based on a zone name.
 // Example "us-central1-a" return "us-central1".
+// Returns an error if the location is not a zone.
 func GetRegionFromZone(location string) (string, error) {
+	if location == "" {
+		return "", fmt.Errorf("failed to parse location: location must be provided")
+	}
 	tokens := strings.Split(location, "-")
 	if len(tokens) != 3 {
-		return "", fmt.Errorf("failed to parse location %s", location)
+		return "", fmt.Errorf("failed to parse location %s: not a valid zone", location)
 	}
 
-	return strings.Join(tokens[0:2], "-"), nil
+	return strings.Join(tokens[:2], "-"), nil
 }
 
 func BytesToGib(bytes int64) int64 {

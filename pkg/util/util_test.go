@@ -211,6 +211,61 @@ func TestConvertLabelsStringToMap(t *testing.T) {
 	})
 }
 
+func TestGetRegionFromZone(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name           string
+		location       string
+		expectedOutput string
+		expectedError  bool
+	}{
+		{
+			name:           "Standard zone",
+			location:       "us-central1-a",
+			expectedOutput: "us-central1",
+		},
+		{
+			name:          "Standard region",
+			location:      "us-central1",
+			expectedError: true,
+		},
+		{
+			name:          "Multi-part region",
+			location:      "northamerica-northeast1",
+			expectedError: true,
+		},
+		{
+			name:           "Multi-part zone",
+			location:       "northamerica-northeast1-a",
+			expectedOutput: "northamerica-northeast1",
+		},
+		{
+			name:          "Empty location",
+			location:      "",
+			expectedError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			output, err := GetRegionFromZone(tc.location)
+			if tc.expectedError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if output != tc.expectedOutput {
+				t.Errorf("expected %q, got %q", tc.expectedOutput, output)
+			}
+		})
+	}
+}
+
 func TestParseEndpoint(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
