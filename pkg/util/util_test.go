@@ -254,6 +254,7 @@ func TestGetRegionFromZone(t *testing.T) {
 				if err == nil {
 					t.Errorf("expected error, got nil")
 				}
+
 				return
 			}
 			if err != nil {
