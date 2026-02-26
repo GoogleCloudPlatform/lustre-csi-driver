@@ -508,14 +508,11 @@ func (s *controllerServer) generateUniqueFilesystemName(ctx context.Context, ins
 	if err != nil {
 		return "", err
 	}
-	allZones, err := s.cloudProvider.LustreService.ListLocations(ctx, &lustre.ListFilter{Project: instance.Project})
+	allLocations, err := s.cloudProvider.LustreService.ListLocations(ctx, &lustre.ListFilter{Project: instance.Project})
 	if err != nil {
 		return "", err
 	}
-	targetZones, err := filterZonesByRegion(allZones, targetRegion)
-	if err != nil {
-		return "", err
-	}
+	targetZones := filterZonesByRegion(allLocations, targetRegion)
 
 	// Create a set of existing filesystem names for quick lookup.
 	existingFSNames := make(map[string]struct{})
@@ -544,19 +541,21 @@ func (s *controllerServer) generateUniqueFilesystemName(ctx context.Context, ins
 }
 
 // filterZonesByRegion filters zones that belong to the specified region.
-func filterZonesByRegion(zones []string, region string) ([]string, error) {
+func filterZonesByRegion(locations []string, region string) []string {
 	var filteredZones []string
-	for _, zone := range zones {
-		zoneRegion, err := util.GetRegionFromZone(zone)
+	for _, location := range locations {
+		zoneRegion, err := util.GetRegionFromZone(location)
 		if err != nil {
-			return nil, err
+			klog.Infof("Skipping location %s: %v", location, err)
+
+			continue
 		}
 		if zoneRegion == region {
-			filteredZones = append(filteredZones, zone)
+			filteredZones = append(filteredZones, location)
 		}
 	}
 
-	return filteredZones, nil
+	return filteredZones
 }
 
 // generateRandomID generates an 8-character alphanumeric identifier with format "lfs-<NNNNN>".
