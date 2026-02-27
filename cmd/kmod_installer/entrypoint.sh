@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # Copyright 2025 Google LLC
 #
@@ -69,7 +69,8 @@ install_lustre_client_drivers() {
     #                                     essential for proper communication between Lustre clients
     #                                     and servers. The default value is 988.
     # -w Set the number of parallel downloads (`0` downloads all files in parallel).
-    /usr/bin/cos-dkms install lustre-client-drivers \
+    set -o pipefail
+    if ! /usr/bin/cos-dkms install lustre-client-drivers \
         --gcs-bucket=cos-default \
         --latest \
         -w 0 \
@@ -78,7 +79,12 @@ install_lustre_client_drivers() {
         --module-arg=lnet.networks="tcp0(eth0)" \
         --lsb-release-path=/host_etc/lsb-release \
         --insert-on-install \
-        --logtostderr
+        --logtostderr 2>&1 | tee /tmp/cos-dkms.log; then
+        if grep -qi "operation not permitted" /tmp/cos-dkms.log && grep -qi "insmod" /tmp/cos-dkms.log; then
+            echo "lustre kernel module installation failed due to permission issue. Please follow https://docs.cloud.google.com/managed-lustre/docs/lustre-csi-driver-new-volume#node-upgrade-required to upgrade node pool to allow GKE managed Lustre CSI driver installation to complete, or disabling loadpin if you are installing the Lustre CSI driver from open source"
+        fi
+        exit 1
+    fi
 }
 
 if [ "${CHECK_LOADPIN}" = "true" ]; then
