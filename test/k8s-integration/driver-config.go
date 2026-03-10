@@ -88,8 +88,17 @@ func generateDriverConfigFile(testParams *testParameters, storageClassFile strin
 
 	minVolumeSize := "1Ti"
 	if testParams.gkeManagedDriver {
-		// TODO(rishitagolla): Update Prow tests to provision 9000 GiB instances once the underlying driver change is rolled out.
-		minVolumeSize = "18000Gi"
+		minSupportedVersion := "1.34.1"
+		clusterVer, err := parseVersion(testParams.clusterVersion)
+		if err != nil {
+			return "", err
+		}
+		ver, _ := parseVersion(minSupportedVersion)
+		if !clusterVer.lessThan(ver) {
+			minVolumeSize = "9000Gi"
+		} else {
+			minVolumeSize = "18000Gi"
+		}
 	}
 
 	params := driverConfig{
