@@ -21,7 +21,7 @@ WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
 ADD . .
 RUN make driver GOARCH=${TARGETARCH} BINDIR=/bin
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.6-gke.1 AS debian
+FROM gke.gcr.io/debian-base:bookworm-v1.0.7-gke.2 AS debian
 ENV DEBIAN_FRONTEND=noninteractive
 ARG TARGETPLATFORM
 
@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.9 /usr/bin/cos-dkms /usr/bin/cos-dkms
+COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.12 /usr/bin/cos-dkms /usr/bin/cos-dkms
 
 COPY /bin/lustre/$TARGETPLATFORM/lustre-client.deb /lustre/lustre-client.deb
 
