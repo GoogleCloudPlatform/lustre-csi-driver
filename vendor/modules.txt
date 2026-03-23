@@ -200,7 +200,7 @@ github.com/google/uuid
 ## explicit; go 1.24.11
 github.com/googleapis/enterprise-certificate-proxy/client
 github.com/googleapis/enterprise-certificate-proxy/client/util
-# github.com/googleapis/gax-go/v2 v2.18.0
+# github.com/googleapis/gax-go/v2 v2.19.0
 ## explicit; go 1.25.0
 github.com/googleapis/gax-go/v2
 github.com/googleapis/gax-go/v2/apierror
@@ -537,14 +537,14 @@ google.golang.org/api/option
 google.golang.org/api/option/internaloption
 google.golang.org/api/transport/grpc
 google.golang.org/api/transport/http
-# google.golang.org/genproto v0.0.0-20260217215200-42d3e9bedb6d
+# google.golang.org/genproto v0.0.0-20260316180232-0b37fe3546d5
 ## explicit; go 1.25.0
 google.golang.org/genproto/googleapis/cloud/location
-# google.golang.org/genproto/googleapis/api v0.0.0-20260217215200-42d3e9bedb6d
+# google.golang.org/genproto/googleapis/api v0.0.0-20260316180232-0b37fe3546d5
 ## explicit; go 1.25.0
 google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations
-# google.golang.org/genproto/googleapis/rpc v0.0.0-20260311181403-84a4fc48630c
+# google.golang.org/genproto/googleapis/rpc v0.0.0-20260316180232-0b37fe3546d5
 ## explicit; go 1.25.0
 google.golang.org/genproto/googleapis/rpc/code
 google.golang.org/genproto/googleapis/rpc/errdetails
