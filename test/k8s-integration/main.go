@@ -43,9 +43,10 @@ var (
 	imageType        = flag.String("image-type", "cos_containerd", "the node image type to use for the cluster")
 
 	// Test infrastructure flags.
-	boskosResourceType = flag.String("boskos-resource-type", "gke-internal-project", "name of the boskos resource type to reserve")
-	storageClassFiles  = flag.String("storageclass-files", "storage-class.yaml", "name of storageclass yaml file to use for test relative to test/k8s-integration/config")
-	inProw             = flag.Bool("run-in-prow", false, "whether the test is running in PROW")
+	boskosResourceType   = flag.String("boskos-resource-type", "gke-internal-project", "name of the boskos resource type to reserve")
+	storageClassFiles    = flag.String("storageclass-files", "storage-class.yaml", "name of storageclass yaml file to use for test relative to test/k8s-integration/config")
+	inProw               = flag.Bool("run-in-prow", false, "whether the test is running in PROW")
+	cleanupLeakyInstance = flag.Bool("cleanup-leaky-instance", true, "whether to cleanup leaky lustre instance before and after test")
 
 	// Driver flags.
 	deployOverlayName = flag.String("deploy-overlay-name", "dev", "which kustomize overlay to deploy the driver with")
@@ -186,6 +187,10 @@ func handle() error {
 		return err
 	}
 
+	if *cleanupLeakyInstance && *inProw {
+		cleanupLeakyInstances(project, *lustreEndpoint)
+	}
+
 	if *doDriverBuild {
 		err := pushImage(testParams.pkgDir, testParams.stagingVersion)
 		if err != nil {
@@ -235,6 +240,11 @@ func handle() error {
 				}
 			}()
 		}
+	}
+
+	// Lustre instance cleanup must happen before network cleanup.
+	if *cleanupLeakyInstance && *inProw {
+		defer cleanupLeakyInstances(project, *lustreEndpoint)
 	}
 
 	if *bringupCluster {

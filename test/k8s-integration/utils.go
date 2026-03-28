@@ -160,3 +160,26 @@ func setupProwConfig(resourceType string) (project, serviceAccount string) {
 
 	return project, serviceAccount
 }
+
+// Clean up any potential stale instances before/after the test in order to avoid
+// running into quota/stockout issues.
+func cleanupLeakyInstances(project string, endpoint string) {
+	klog.Info("Cleaning up potentially stale Lustre instances...")
+
+	var endpointURL string
+	switch endpoint {
+	case "staging":
+		endpointURL = "https://staging-lustre.sandbox.googleapis.com/"
+	case "autopush":
+		endpointURL = "https://autopush-lustre.sandbox.googleapis.com/"
+	}
+
+	cmd := exec.Command("bash", "-c", fmt.Sprintf(`set -o pipefail; gcloud lustre instances list --location=- --project=%s --format='value(name)' | while read -r line; do echo "deleting $line"; gcloud lustre instances delete $line --location=- -q --async; done`, project))
+	if endpointURL != "" {
+		cmd.Env = append(os.Environ(), "CLOUDSDK_API_ENDPOINT_OVERRIDES_LUSTRE="+endpointURL)
+	}
+
+	if err := runCommand("Deleting Lustre instances", cmd); err != nil {
+		klog.Warningf("Failed to delete Lustre instances: %v", err)
+	}
+}
