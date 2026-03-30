@@ -16,7 +16,7 @@ require (
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.42.0
-	google.golang.org/api v0.272.0
+	google.golang.org/api v0.273.0
 	google.golang.org/genproto v0.0.0-20260316180232-0b37fe3546d5
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11
@@ -119,7 +119,7 @@ require (
 	golang.org/x/tools v0.43.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.5.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260316180232-0b37fe3546d5 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260316180232-0b37fe3546d5 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260319201613-d00831a3d3e7 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
