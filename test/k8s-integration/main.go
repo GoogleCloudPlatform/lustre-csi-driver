@@ -226,11 +226,6 @@ func handle() error {
 			return fmt.Errorf("failed to setup VPC network: %w", err)
 		}
 		if *doMultiNICSetup && multiNicUsable {
-			// TODO(samhalim): Remove the hard coded experimental version once we have a GKE version that supports MultiNIC in prod.
-			if *useManagedDriver {
-				*gkeClusterVersion = "1.35.0-gke.2271000"
-			}
-
 			if err := multiNICSubnetSetup(project, *gceZone, *gceRegion); err != nil {
 				return fmt.Errorf("failed to setup Multi-NIC subnet: %w", err)
 			}
@@ -322,15 +317,7 @@ func handle() error {
 
 // This function checks to see if the integration test is compatible to run MultiNIC feature or not.
 func isMultiNicUsable(env string) bool {
-	// TODO(samhalim): Remove/refactor this once MultiNIC is fully launched in prod.
-	if !*useManagedDriver {
-		return true
-	}
-	if strings.Contains(*gkeClusterVersion, "1.35") && env == "staging" {
-		return true
-	}
-
-	return false
+	return strings.Contains(*gkeClusterVersion, "1.35")
 }
 
 func generateGKETestSkip(_ *testParameters) string {
