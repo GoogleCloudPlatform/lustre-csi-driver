@@ -16,9 +16,9 @@ require (
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.42.0
-	google.golang.org/api v0.273.0
+	google.golang.org/api v0.274.0
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7
-	google.golang.org/grpc v1.79.3
+	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/gcfg.v1 v1.2.3
 	k8s.io/api v0.34.1
