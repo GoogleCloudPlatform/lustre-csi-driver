@@ -38,10 +38,6 @@ func setupNetwork(project string) error {
 	if err := runCommand("Enabling service networkiing API", cmd); err != nil {
 		return fmt.Errorf("failed to enable service networking API: %w", err)
 	}
-	cmd = exec.Command("gcloud", "services", "enable", "autopush-servicenetworking.sandbox.googleapis.com", "--project="+project)
-	if err := runCommand("Enabling autopush service networking API", cmd); err != nil {
-		return fmt.Errorf("failed to enable autopush service networking API: %w", err)
-	}
 
 	// Create network if it doesn't exist.
 	cmd = exec.Command("gcloud", "compute", "networks", "describe", *clusterNetwork, "--project="+project)
