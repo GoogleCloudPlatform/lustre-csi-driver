@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"k8s.io/klog/v2"
 )
 
@@ -33,6 +34,7 @@ const (
 	defaultLNetPort    = 988
 	cmdTimeout         = 15 * time.Minute
 	DefaultLnetNetwork = "tcp0(eth0)"
+	osNodeLabel        = "cloud.google.com/gke-os-distribution"
 )
 
 var (
@@ -126,9 +128,9 @@ func readLnetConfig(path string) (string, error) {
 	return currNetworkNics, nil
 }
 
-// InstallLustreKmod installs the Lustre kernel modules on the node using cos-dkms.
+// InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
 // It proceeds with the installation using the provided NICs.
-func InstallLustreKmod(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool) error {
+func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	expectedNetwork := DefaultLnetNetwork
 	if !disableMultiNIC {
@@ -203,4 +205,17 @@ func parseLnetNetwork(networkStr string) []string {
 	}
 
 	return strings.Split(networkStr, ",")
+}
+
+// HostOSFromNodeLabel returns the OS identifier from node label.
+func HostOSFromNodeLabel(ctx context.Context, nodeID string, nc network.NodeClient) (string, error) {
+	node, err := nc.GetNodeWithRetry(ctx, nodeID)
+	if err != nil {
+		return "", err
+	}
+	val, found := node.GetLabels()[osNodeLabel]
+	if !found {
+		return "unknown", nil
+	}
+	return val, nil
 }
