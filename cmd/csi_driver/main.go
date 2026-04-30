@@ -144,8 +144,22 @@ func main() {
 				klog.Fatalf("Failed to get LNET network parameters: %v", err)
 			}
 		} else if !*disableKmodInstall {
-			if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC); err != nil {
-				klog.Fatalf("Kmod install failure: %v", err)
+			hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
+			if err != nil {
+				klog.Errorf("Failed to read OS Host Info: %v", err)
+			}
+			switch hostOS {
+			case "cos":
+				err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
+				if err != nil {
+					klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
+				}
+			case "ubuntu":
+				// TODO(samhalim): Add function for kmod install on Ubuntu Nodes
+			case "windows":
+				klog.Warning("Lustre kernel modules are not supported on Windows nodes.")
+			default:
+				klog.Fatalf("Unsupported or unknown Host OS: %q. Canot perform Kmod Installation", hostOS)
 			}
 		}
 
