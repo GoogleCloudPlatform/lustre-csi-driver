@@ -55,7 +55,7 @@ type netlinker interface {
 	GetStandardNICs() ([]string, error)
 }
 
-type nodeClient interface {
+type NodeClient interface {
 	GetNodeWithRetry(ctx context.Context, nodeName string) (*v1.Node, error)
 }
 
@@ -67,7 +67,7 @@ type MetadataClient interface {
 // RouteManager provides methods for network configuration using the netlinker interface.
 type RouteManager struct {
 	nl netlinker
-	nc nodeClient
+	nc NodeClient
 	mc MetadataClient
 }
 
@@ -143,11 +143,11 @@ func NewNetlink() netlinker {
 	return &realNetlink{}
 }
 
-func NewK8sClient() nodeClient {
+func NewK8sClient() NodeClient {
 	return &k8sNodeClient{}
 }
 
-func Manager(nl netlinker, nc nodeClient, mc MetadataClient) *RouteManager {
+func Manager(nl netlinker, nc NodeClient, mc MetadataClient) *RouteManager {
 	return &RouteManager{nl: nl, nc: nc, mc: mc}
 }
 
