@@ -17,11 +17,15 @@ limitations under the License.
 package kmodinstaller
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestIsLustreKmodInstalled(t *testing.T) {
@@ -178,6 +182,74 @@ func TestGetLnetNetwork(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("getLnetNetwork() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+type mockNodeClient struct {
+	node *v1.Node
+	err  error
+}
+
+func (m *mockNodeClient) GetNodeWithRetry(ctx context.Context, nodeName string) (*v1.Node, error) {
+	return m.node, m.err
+}
+
+func TestHostOSFromNodeLabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mockNode *v1.Node
+		wantOS   string
+		mockErr  error
+		wantErr  bool
+	}{
+		{
+			name: "Valid label found",
+			mockNode: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{osNodeLabel: "cos"},
+				},
+			},
+			wantOS: "cos",
+		},
+		{
+			name: "Host OS Label missing - returns unknown",
+			mockNode: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"random-key": "ubuntu"},
+				},
+			},
+			wantOS: "unknown",
+		},
+		{
+			name:    "API error from k8s client",
+			mockErr: fmt.Errorf("k8s node timeout"),
+			wantOS:  "",
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &mockNodeClient{
+				node: tc.mockNode,
+				err:  tc.mockErr,
+			}
+
+			got, err := HostOSFromNodeLabel(context.Background(), "node-name", client)
+
+			// Error check
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("HostOSFromNodeLabel() error = %v, wantErr %v", err, tc.wantErr)
+			}
+
+			// Node label value check
+			if got != tc.wantOS {
+				t.Errorf("HostOSFromNodeLabel() got = %v, want %v", got, tc.wantOS)
 			}
 		})
 	}
