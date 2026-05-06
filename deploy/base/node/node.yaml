@@ -75,6 +75,8 @@ spec:
               mountPath: /host_etc/lsb-release
             - name: host-modules
               mountPath: /host_modules
+            - name: host-udev
+              mountPath: /host_etc_udev
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -126,6 +128,10 @@ spec:
         - name: dev
           hostPath:
             path: /dev
+        - name: host-udev
+          hostPath:
+            path: /etc/udev
+            type: Directory
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should
       # be scheduled on all nodes.

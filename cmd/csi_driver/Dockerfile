@@ -19,7 +19,7 @@ ARG TARGETARCH
 
 WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
 ADD . .
-RUN make driver GOARCH=${TARGETARCH} BINDIR=/bin
+RUN make all GOARCH=${TARGETARCH} BINDIR=/bin
 
 FROM gke.gcr.io/debian-base:bookworm-v1.0.7-gke.2 AS debian
 ENV DEBIAN_FRONTEND=noninteractive
@@ -63,4 +63,5 @@ RUN rm -rf /lustre
 FROM debian
 ARG DRIVER_BINARY=lustre-csi-driver
 COPY --from=driverbuilder /bin/${DRIVER_BINARY} /${DRIVER_BINARY}
+COPY --from=driverbuilder /bin/lustre-host-proxy /usr/bin/lustre-host-proxy
 ENTRYPOINT ["/lustre-csi-driver"]
