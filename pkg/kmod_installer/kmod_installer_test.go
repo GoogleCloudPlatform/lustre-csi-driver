@@ -200,11 +200,12 @@ func TestHostOSFromNodeLabel(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		mockNode *v1.Node
-		wantOS   string
-		mockErr  error
-		wantErr  bool
+		name      string
+		mockNode  *v1.Node
+		wantOS    string
+		wantImage string
+		mockErr   error
+		wantErr   bool
 	}{
 		{
 			name: "Valid label found",
@@ -212,8 +213,14 @@ func TestHostOSFromNodeLabel(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{osNodeLabel: "cos"},
 				},
+				Status: v1.NodeStatus{
+					NodeInfo: v1.NodeSystemInfo{
+						OSImage: "Container-Optimized OS from Google",
+					},
+				},
 			},
-			wantOS: "cos",
+			wantOS:    "cos",
+			wantImage: "Container-Optimized OS from Google",
 		},
 		{
 			name: "Host OS Label missing - returns unknown",
@@ -221,8 +228,14 @@ func TestHostOSFromNodeLabel(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"random-key": "ubuntu"},
 				},
+				Status: v1.NodeStatus{
+					NodeInfo: v1.NodeSystemInfo{
+						OSImage: "Ubuntu 24.04.4 LTS",
+					},
+				},
 			},
-			wantOS: "unknown",
+			wantOS:    "unknown",
+			wantImage: "Ubuntu 24.04.4 LTS",
 		},
 		{
 			name:    "API error from k8s client",
@@ -240,7 +253,7 @@ func TestHostOSFromNodeLabel(t *testing.T) {
 				err:  tc.mockErr,
 			}
 
-			got, err := HostOSFromNodeLabel(context.Background(), "node-name", client)
+			gotOS, gotImage, err := HostOSFromNodeLabel(context.Background(), "node-name", client)
 
 			// Error check
 			if (err != nil) != tc.wantErr {
@@ -248,8 +261,12 @@ func TestHostOSFromNodeLabel(t *testing.T) {
 			}
 
 			// Node label value check
-			if got != tc.wantOS {
-				t.Errorf("HostOSFromNodeLabel() got = %v, want %v", got, tc.wantOS)
+			if gotOS != tc.wantOS {
+				t.Errorf("HostOSFromNodeLabel() gotOS = %v, want %v", gotOS, tc.wantOS)
+			}
+
+			if gotImage != tc.wantImage {
+				t.Errorf("HostOSFromNodeLabel() gotImage = %v, want %v", gotImage, tc.wantImage)
 			}
 		})
 	}

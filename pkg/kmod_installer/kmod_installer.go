@@ -207,16 +207,16 @@ func parseLnetNetwork(networkStr string) []string {
 	return strings.Split(networkStr, ",")
 }
 
-// HostOSFromNodeLabel returns the OS identifier from node label.
-func HostOSFromNodeLabel(ctx context.Context, nodeID string, nc network.NodeClient) (string, error) {
+// HostOSFromNodeLabel returns the OS identifier from node label and returns full OS image (e.g. Ubuntu 24.04.4 LTS)
+func HostOSFromNodeLabel(ctx context.Context, nodeID string, nc network.NodeClient) (hostOS string, osImage string, err error) {
 	node, err := nc.GetNodeWithRetry(ctx, nodeID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	val, found := node.GetLabels()[osNodeLabel]
 	if !found {
 		klog.Warningf("Label %v could not be found on the node", osNodeLabel)
-		return "unknown", nil
+		return "unknown", node.Status.NodeInfo.OSImage, nil
 	}
-	return val, nil
+	return val, node.Status.NodeInfo.OSImage, nil
 }

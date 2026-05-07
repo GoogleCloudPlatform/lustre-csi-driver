@@ -144,10 +144,11 @@ func main() {
 				klog.Fatalf("Failed to get LNET network parameters: %v", err)
 			}
 		} else if !*disableKmodInstall {
-			hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
+			hostOS, osImage, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
 			if err != nil {
-				klog.Errorf("Failed to read OS Host Info: %v", err)
+				klog.Fatalf("Failed to read OS Host Info: %v", err)
 			}
+			klog.Infof("Discovered Host OS: %s, OS Image: %q", hostOS, osImage)
 			switch hostOS {
 			case "cos":
 				err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
