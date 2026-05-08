@@ -39,9 +39,20 @@ spec:
           type: RuntimeDefault
       priorityClassName: csi-lustre-node
       serviceAccount: lustre-csi-node-sa
-      nodeSelector:
-        kubernetes.io/os: linux
-        cloud.google.com/gke-os-distribution: cos
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+                  - key: cloud.google.com/gke-os-distribution
+                    operator: In
+                    values:
+                      - cos
+                      - ubuntu
       initContainers:
         - name: lustre-kmod-installer
           securityContext:
@@ -92,6 +103,8 @@ spec:
               mountPath: /csi
             - name: host-udev
               mountPath: /host_etc_udev
+            - name: dev
+              mountPath: /dev
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -143,6 +156,10 @@ spec:
         - name: host-udev
           hostPath:
             path: /etc/udev
+            type: Directory
+        - name: dev
+          hostPath:
+            path: /dev
             type: Directory
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should

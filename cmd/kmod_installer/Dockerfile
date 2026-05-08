@@ -29,7 +29,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     kmod \
     openssl \
     ca-certificates \
+    curl \
+    gpg \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor --batch --yes -o /usr/share/keyrings/google-cloud.gpg && \
+    curl -fsSL https://us-apt.pkg.dev/doc/repo-signing-key.gpg | gpg --dearmor --batch --yes -o /usr/share/keyrings/lustre-client.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/google-cloud.gpg] http://packages.cloud.google.com/apt apt-transport-artifact-registry-stable main" | tee /etc/apt/sources.list.d/artifact-registry.list && \
+    apt-get update && apt-get install -y --no-install-recommends apt-transport-artifact-registry && \
+    echo "deb [signed-by=/usr/share/keyrings/lustre-client.gpg] ar+https://us-apt.pkg.dev/projects/lustre-client-binaries lustre-client-ubuntu-noble main" | tee -a /etc/apt/sources.list.d/artifact-registry.list && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.12 /usr/bin/cos-dkms /usr/bin/cos-dkms
 COPY --from=builder /bin/lustre-kmod-installer /usr/bin/lustre-kmod-installer
