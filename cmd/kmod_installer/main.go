@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 
+	gcemetadata "cloud.google.com/go/compute/metadata"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	kmod "github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/kmod_installer"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
@@ -90,14 +91,22 @@ func main() {
 		klog.Fatalf("Lustre kernel module installation check failed: %v", err)
 	}
 
+	hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
+	if err != nil {
+		klog.Fatalf("Failed to read OS Host Info: %v", err)
+	}
+
 	if isInstalled {
 		// Check if the current configuration matches the expectation.
-		expectedNetwork := kmod.DefaultLnetNetwork
+		expectedNetwork := kmod.DefaultCosLnetNetwork
+		if hostOS == "ubuntu" {
+			expectedNetwork = kmod.DefaultUbuntuLnetNetwork
+		}
+
 		if !effectiveDisableMultiNIC {
 			expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
 		}
-
-		if _, err = kmod.GetLnetNetwork(expectedNetwork); err != nil {
+		if _, err = kmod.GetLnetNetwork(expectedNetwork, hostOS); err != nil {
 			klog.Fatalf("Failed to get LNET network parameters: %v", err)
 		}
 
@@ -107,11 +116,6 @@ func main() {
 
 	klog.Info("Lustre kernel module is not installed. Proceeding with installation.")
 
-	hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
-	if err != nil {
-		klog.Fatalf("Failed to read OS Host Info: %v", err)
-	}
-
 	switch hostOS {
 	case "cos":
 		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
@@ -119,7 +123,25 @@ func main() {
 			klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
 		}
 	case "ubuntu":
-		// TODO(samhalim): Add function for kmod install on Ubuntu Nodes.
+		scopes, err := gcemetadata.ScopesWithContext(ctx, "")
+		if err != nil {
+			klog.Warningf("Failed to get service account scopes from GCE metadata: %v", err)
+		} else {
+			hasCloudPlatformScope := false
+			for _, scope := range scopes {
+				if scope == "https://www.googleapis.com/auth/cloud-platform" {
+					hasCloudPlatformScope = true
+					break
+				}
+			}
+			if !hasCloudPlatformScope {
+				klog.Fatalf("The https://www.googleapis.com/auth/cloud-platform scope is missing. This is required for installing Lustre packages from Artifact Registry")
+			}
+		}
+		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
+		if err != nil {
+			klog.Fatalf("Failed to install lustre kernel modules on Ubuntu: %v", err)
+		}
 	case "windows":
 		klog.Warning("Lustre kernel modules are not supported on Windows nodes.")
 	default:
