@@ -49,3 +49,6 @@ _rundir/
 
 # Python cache
 __pycache__
+
+# Agent files
+.agent
