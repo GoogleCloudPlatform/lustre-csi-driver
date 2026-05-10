@@ -29,6 +29,7 @@ import (
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/labelcontroller"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/metrics"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/upcall"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 )
@@ -125,6 +126,11 @@ func main() {
 			klog.Fatal(err)
 		}
 
+		hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
+		if err != nil {
+			klog.Fatalf("Failed to read OS Host Info: %v", err)
+		}
+
 		isInstalled, err := kmod.IsLustreKmodInstalled(*enableLegacyLustrePort)
 		if err != nil {
 			klog.Fatal(err)
@@ -144,14 +150,38 @@ func main() {
 				klog.Fatalf("Failed to get LNET network parameters: %v", err)
 			}
 		} else if !*disableKmodInstall {
-			if err := kmod.InstallLustreKmod(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC); err != nil {
-				klog.Fatalf("Kmod install failure: %v", err)
+			switch hostOS {
+			case "cos":
+				err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
+				if err != nil {
+					klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
+				}
+			case "ubuntu":
+				// TODO(samhalim): Add function for kmod install on Ubuntu Nodes
+			case "windows":
+				klog.Warning("Lustre kernel modules are not supported on Windows nodes.")
+			default:
+				klog.Fatalf("Unsupported or unknown Host OS: %q. Cannot perform Lustre kernel module installation", hostOS)
 			}
+		}
+
+		// Set up host proxy and start the upcall IPC server only on COS nodes.
+		// Other nodes (like Ubuntu) have Lustre client utilities installed natively on the host.
+		if hostOS == "cos" {
+			go func() {
+				if err := upcall.SetupHostArtifacts(); err != nil {
+					klog.Errorf("Failed to set up Lustre upcall host artifacts: %v", err)
+					return
+				}
+				if err := upcall.StartServer(ctx); err != nil {
+					klog.Errorf("Lustre upcall IPC server failed: %v", err)
+				}
+			}()
 		}
 
 		if !effectiveDisableMultiNIC && metrics.IsGKEComponentVersionAvailable() {
 			if err := mm.EmitUsingMultiNic(); err != nil {
-				klog.Fatalf("Failed to emit GKE component version: %v", err)
+				klog.Errorf("Failed to emit GKE component version: %v", err)
 			}
 		}
 
@@ -172,7 +202,7 @@ func main() {
 	if *runController {
 		if metrics.IsGKEComponentVersionAvailable() {
 			if err := mm.EmitGKEComponentVersion(); err != nil {
-				klog.Fatalf("Failed to emit GKE component version: %v", err)
+				klog.Errorf("Failed to emit GKE component version: %v", err)
 			}
 		}
 
