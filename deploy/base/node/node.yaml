@@ -42,6 +42,25 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
         cloud.google.com/gke-os-distribution: cos
+      initContainers:
+        - name: lustre-kmod-installer
+          securityContext:
+            privileged: true
+          image: gke.gcr.io/lustre-kmod-installer
+          imagePullPolicy: Always
+          args:
+            - --v=5
+            - --nodeid=$(KUBE_NODE_NAME)
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: host-etc
+              mountPath: /host_etc/lsb-release
+            - name: host-modules
+              mountPath: /host_modules
       containers:
         - name: lustre-csi-driver
           securityContext:
@@ -71,10 +90,6 @@ spec:
               mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
-            - name: host-etc
-              mountPath: /host_etc/lsb-release
-            - name: host-modules
-              mountPath: /host_modules
             - name: host-udev
               mountPath: /host_etc_udev
         - name: csi-driver-registrar
@@ -125,9 +140,6 @@ spec:
         - name: host-modules
           hostPath:
             path: /lib/modules
-        - name: dev
-          hostPath:
-            path: /dev
         - name: host-udev
           hostPath:
             path: /etc/udev
