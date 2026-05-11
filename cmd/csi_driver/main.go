@@ -19,8 +19,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
-	"strings"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
@@ -44,33 +42,15 @@ var (
 	lustreAPIEndpoint       = flag.String("lustre-endpoint", "", "Lustre API service endpoint, supported values are autopush, staging and prod.")
 	cloudConfigFilePath     = flag.String("cloud-config", "", "Path to GCE cloud provider config")
 	enableLegacyLustrePort  = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
-	disableMultiNIC         = flag.Bool("disable-multi-nic", false, "If set to true, multi-NIC support is disabled and the driver will only use the default NIC (eth0).")
-	disableKmodInstall      = flag.Bool("disable-kmod-install", false, "If true, Lustre CSI driver will not install kmod and user will need to manage Lustre kmod independently.")
 	enableLabelController   = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
 	leaderElectionNamespace = flag.String("leader-election-namespace", "", "Namespace where the leader election resource will be created. Required for out-of-cluster deployments.")
-
-	// customModuleArgs contains custom module-args arguments for cos-dkms installation provided by user.
-	customModuleArgs stringSlice
 
 	// These are set at compile time.
 	version = "unknown"
 )
 
-type stringSlice []string
-
-func (s *stringSlice) String() string {
-	return strings.Join(*s, ", ")
-}
-
-func (s *stringSlice) Set(value string) error {
-	*s = append(*s, value)
-
-	return nil
-}
-
 func main() {
 	klog.InitFlags(nil)
-	flag.Var(&customModuleArgs, "custom-module-args", "Custom module-args for cos-dkms install command. (Can be specified multiple times).")
 	flag.Parse()
 	mm := metrics.NewMetricsManager()
 	if *httpEndpoint != "" {
@@ -100,69 +80,12 @@ func main() {
 		}
 		klog.Infof("Metadata service setup: %+v", meta)
 		config.MetadataService = meta
-
-		netlinker := network.NewNetlink()
-		nodeClient := network.NewK8sClient()
-		networkIntf := network.Manager(netlinker, nodeClient, meta)
-
 		config.Mounter = mount.New("")
-		var (
-			nics                     []string
-			effectiveDisableMultiNIC bool
-		)
 
-		// We need to get standard NICs to check if the current LNET configuration (if installed) matches expectation
-		// or to install if not installed.
-		nics, err = networkIntf.GetStandardNICs()
-		if err != nil {
-			klog.Fatalf("Failed to get nic names: %v", err)
-		}
-		if len(nics) == 0 {
-			klog.Fatal("No standard NICs (gve, idpf, or virtio_net) found")
-		}
-
-		effectiveDisableMultiNIC, err = networkIntf.CheckDisableMultiNIC(ctx, *nodeID, nics, *disableMultiNIC)
-		if err != nil {
-			klog.Fatal(err)
-		}
-
+		nodeClient := network.NewK8sClient()
 		hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
 		if err != nil {
 			klog.Fatalf("Failed to read OS Host Info: %v", err)
-		}
-
-		isInstalled, err := kmod.IsLustreKmodInstalled(*enableLegacyLustrePort)
-		if err != nil {
-			klog.Fatal(err)
-		}
-
-		if isInstalled {
-			klog.Info("Lustre kernel module already installed. Using the network interface specified in LNET parameters.")
-
-			// Check if the current configuration matches the expectation.
-			expectedNetwork := kmod.DefaultLnetNetwork
-			if !effectiveDisableMultiNIC {
-				expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
-			}
-
-			nics, err = kmod.GetLnetNetwork(expectedNetwork)
-			if err != nil {
-				klog.Fatalf("Failed to get LNET network parameters: %v", err)
-			}
-		} else if !*disableKmodInstall {
-			switch hostOS {
-			case "cos":
-				err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
-				if err != nil {
-					klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
-				}
-			case "ubuntu":
-				// TODO(samhalim): Add function for kmod install on Ubuntu Nodes
-			case "windows":
-				klog.Warning("Lustre kernel modules are not supported on Windows nodes.")
-			default:
-				klog.Fatalf("Unsupported or unknown Host OS: %q. Cannot perform Lustre kernel module installation", hostOS)
-			}
 		}
 
 		// Set up host proxy and start the upcall IPC server only on COS nodes.
@@ -179,22 +102,22 @@ func main() {
 			}()
 		}
 
-		if !effectiveDisableMultiNIC && metrics.IsGKEComponentVersionAvailable() {
-			if err := mm.EmitUsingMultiNic(); err != nil {
-				klog.Errorf("Failed to emit GKE component version: %v", err)
+		klog.Info("Retrieving the network interface specified in LNET parameters.")
+		// Pass an empty string as expected network because the kmod-installer initContainer is responsible
+		// for configuring multi-NIC and loading the module. CSI driver will just read the actual config.
+		nics, err := kmod.GetLnetNetwork("")
+		if err != nil {
+			klog.Fatalf("Failed to get LNET network parameters: %v", err)
+		}
+		// additional NICs are any additional NICs that are not default (eth0).
+		// These NICs will require additional setup for multi nic feature.
+		additionalNics := []string{}
+		for _, nic := range nics {
+			if nic != "eth0" {
+				additionalNics = append(additionalNics, nic)
 			}
 		}
 
-		// additional NICs are any additional NICs that are not default (eth0).
-		// These NICs will additional setup for multi nic feature.
-		additionalNics := []string{}
-		if !effectiveDisableMultiNIC {
-			for _, nic := range nics {
-				if nic != "eth0" {
-					additionalNics = append(additionalNics, nic)
-				}
-			}
-		}
 		klog.V(4).Infof("Additional nic(s) %v on Node %v", additionalNics, *nodeID)
 		config.AdditionalNics = additionalNics
 	}
