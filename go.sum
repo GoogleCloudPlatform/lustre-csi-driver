@@ -20,8 +20,8 @@ cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCB
 cloud.google.com/go/datastore v1.0.0/go.mod h1:LXYbyblFSglQ5pkeyhO+Qmw7ukd3C+pD7TKLgZqpHYE=
 cloud.google.com/go/longrunning v1.0.0 h1:lwzWEYD8+NkYV7dhexOz6kmlvajZA70+bW/xMhRVVdY=
 cloud.google.com/go/longrunning v1.0.0/go.mod h1:8nqFBPOO1U/XkhWl0I19AMZEphrHi73VNABIpKYaTwM=
-cloud.google.com/go/lustre v0.6.0 h1:MrEajgj4qomhgtnq0D7Ra0KLVbV1lxkjSA0MagQjCEI=
-cloud.google.com/go/lustre v0.6.0/go.mod h1:8QuwOGjz2vzPSR8ZOUTO3YxKLX8VOrXCjsC0saSt3e0=
+cloud.google.com/go/lustre v1.0.0 h1:IDjvLORPU4LU7t9PKlVFW1QF8jOSTmQ9+FwzIOUuJhM=
+cloud.google.com/go/lustre v1.0.0/go.mod h1:8QuwOGjz2vzPSR8ZOUTO3YxKLX8VOrXCjsC0saSt3e0=
 cloud.google.com/go/pubsub v1.0.1/go.mod h1:R0Gpsv3s54REJCy4fxDixWD93lHJMoZTyQ2kNxGRt3I=
 cloud.google.com/go/pubsub v1.1.0/go.mod h1:EwwdRX2sKPjnvnqCa270oGRyludottCI76h+R3AArQw=
 cloud.google.com/go/storage v1.0.0/go.mod h1:IhtSnM/ZTZV8YYJWCY8RULGVqBDmpoyjwiyrjsg+URw=
