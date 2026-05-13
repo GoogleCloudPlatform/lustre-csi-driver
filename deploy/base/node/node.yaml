@@ -88,6 +88,9 @@ spec:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet
               mountPropagation: "Bidirectional"
+            - name: lustre-dir
+              mountPath: /var/lib/lustre
+              mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
             - name: host-udev
@@ -125,6 +128,10 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins_registry/
             type: Directory
+        - name: lustre-dir
+          hostPath:
+            path: /var/lib/lustre
+            type: DirectoryOrCreate
         - name: kubelet-dir
           hostPath:
             path: /var/lib/kubelet
