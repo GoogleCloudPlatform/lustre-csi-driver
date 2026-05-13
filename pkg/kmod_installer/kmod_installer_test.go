@@ -35,6 +35,7 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 		name             string
 		fileContent      string
 		fileMissing      bool
+		lustreMissing    bool
 		isDir            bool
 		enableLegacyPort bool
 		wantInstalled    bool
@@ -81,6 +82,13 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 			wantInstalled: false,
 			wantErr:       true,
 		},
+		{
+			name:          "Lustre directory missing",
+			fileContent:   "988",
+			lustreMissing: true,
+			wantInstalled: false,
+			wantErr:       false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -88,6 +96,7 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 			t.Parallel()
 			tempDir := t.TempDir()
 			acceptPortFile := filepath.Join(tempDir, "accept_port")
+			lustreDir := filepath.Join(tempDir, "lustre")
 
 			if !tc.fileMissing {
 				if tc.isDir {
@@ -101,7 +110,13 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 				}
 			}
 
-			gotInstalled, err := isLustreKmodInstalled(tc.enableLegacyPort, acceptPortFile)
+			if !tc.lustreMissing {
+				if err := os.Mkdir(lustreDir, 0o755); err != nil {
+					t.Fatalf("Failed to create dummy lustre dir: %v", err)
+				}
+			}
+
+			gotInstalled, err := isLustreKmodInstalled(tc.enableLegacyPort, acceptPortFile, lustreDir)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("isLustreKmodInstalled() error = %v, wantErr %v", err, tc.wantErr)
 			}

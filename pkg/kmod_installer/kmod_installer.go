@@ -40,6 +40,7 @@ const (
 var (
 	lnetAcceptPortFile       = "/sys/module/lnet/parameters/accept_port"
 	lnetNetworkParameterFile = "/sys/module/lnet/parameters/networks"
+	lustreModuleDir          = "/sys/module/lustre"
 )
 
 func lnetPort(enableLegacyLustrePort bool) int {
@@ -51,17 +52,17 @@ func lnetPort(enableLegacyLustrePort bool) int {
 }
 
 // IsLustreKmodInstalled checks if the Lustre kernel modules are installed.
-// It checks for the existence of the lnet accept port file.
-// If the file exists, it validates that the configured port matches the expected port.
+// It checks for the existence of the lnet accept port file and the lustre module directory.
+// If the files exist, it validates that the configured port matches the expected port.
 // Returns (true, nil) if installed and valid.
 // Returns (true, error) if installed but configuration mismatch (e.g. wrong port).
 // Returns (false, nil) if not installed.
-// Returns (false, error) if unexpected filesystem error checking the file.
+// Returns (false, error) if unexpected filesystem error checking the files.
 func IsLustreKmodInstalled(enableLegacyLustrePort bool) (bool, error) {
-	return isLustreKmodInstalled(enableLegacyLustrePort, lnetAcceptPortFile)
+	return isLustreKmodInstalled(enableLegacyLustrePort, lnetAcceptPortFile, lustreModuleDir)
 }
 
-func isLustreKmodInstalled(enableLegacyLustrePort bool, acceptPortFile string) (bool, error) {
+func isLustreKmodInstalled(enableLegacyLustrePort bool, acceptPortFile, lustreDir string) (bool, error) {
 	// Check if the kernel module is loaded by checking the existence of the parameter file
 	file, err := os.ReadFile(acceptPortFile)
 	if err != nil {
@@ -70,6 +71,15 @@ func isLustreKmodInstalled(enableLegacyLustrePort bool, acceptPortFile string) (
 		}
 
 		return false, fmt.Errorf("failed to read lnet accept port file %s: %w", acceptPortFile, err)
+	}
+
+	// Also verify that the lustre module itself is loaded, not just lnet
+	if _, err := os.Stat(lustreDir); err != nil {
+		if os.IsNotExist(err) {
+			klog.Warningf("LNet module is loaded but lustre module directory %s is missing. Considering kmod installation incomplete.", lustreDir)
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check lustre module directory %s: %w", lustreDir, err)
 	}
 
 	currPort := strings.TrimSpace(string(file))
@@ -219,4 +229,170 @@ func HostOSFromNodeLabel(ctx context.Context, nodeID string, nc network.NodeClie
 		return "unknown", nil
 	}
 	return val, nil
+}
+
+// InstallLustreKmodOnUbuntu installs the Lustre kernel modules on the node via the Driver Container approach.
+// It fetches the dynamic kernel module package matching the node's kernel version, extracts it locally,
+// configures LNet parameters, runs depmod, and loads the module using modprobe.
+func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool) error {
+	lnetPort := lnetPort(enableLegacyPort)
+	primaryNIC := "ens4"
+	if len(nics) > 0 {
+		primaryNIC = nics[0]
+	}
+	expectedNetwork := fmt.Sprintf("tcp0(%s)", primaryNIC)
+	if !disableMultiNIC && len(nics) > 0 {
+		expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
+	}
+
+	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
+	defer cancel()
+
+	// 1. Determine running kernel version
+	unameCmd := exec.CommandContext(cmdCtx, "uname", "-r")
+	unameOut, err := unameCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to determine kernel version via uname -r: %w", err)
+	}
+	kernelVersion := strings.TrimSpace(string(unameOut))
+	klog.Infof("Detected target Ubuntu kernel version: %s", kernelVersion)
+
+	// 2. Run apt-get update inside the container
+	klog.Info("Updating apt repositories to locate dynamic kernel modules")
+	updateCmd := exec.CommandContext(cmdCtx, "apt-get", "update")
+	if out, err := updateCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("apt-get update failed: %w\noutput:\n%s", err, string(out))
+	}
+
+	// 3. Download the package for the current kernel version
+	pkgName := fmt.Sprintf("lustre-client-modules-%s", kernelVersion)
+	tmpDir, err := os.MkdirTemp("", "lustre-kmod-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	klog.Infof("Downloading package %s via apt-get download", pkgName)
+	downloadCmd := exec.CommandContext(cmdCtx, "apt-get", "download", pkgName)
+	downloadCmd.Dir = tmpDir
+	if out, err := downloadCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to download package %s: %w\noutput:\n%s", pkgName, err, string(out))
+	}
+
+	// Find the downloaded .deb file
+	files, err := os.ReadDir(tmpDir)
+	if err != nil {
+		return fmt.Errorf("failed to read download directory: %w", err)
+	}
+	var debFile string
+	for _, f := range files {
+		if strings.HasSuffix(f.Name(), ".deb") {
+			debFile = f.Name()
+			break
+		}
+	}
+	if debFile == "" {
+		return fmt.Errorf("no .deb file found after successful apt-get download in %s", tmpDir)
+	}
+
+	// 4. Extract the package locally
+	extractDir := "/tmp/extracted-kmod"
+	_ = os.RemoveAll(extractDir)
+	if err := os.MkdirAll(extractDir, 0755); err != nil {
+		return fmt.Errorf("failed to create extract directory: %w", err)
+	}
+	defer os.RemoveAll(extractDir)
+
+	klog.Infof("Extracting package %s to %s", debFile, extractDir)
+	extractCmd := exec.CommandContext(cmdCtx, "dpkg", "-x", tmpDir+"/"+debFile, extractDir)
+	if out, err := extractCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("dpkg -x failed: %w\noutput:\n%s", err, string(out))
+	}
+
+	// 5. Write module options to /etc/modprobe.d/lustre.conf inside the container
+	/*
+	if err := os.MkdirAll("/etc/modprobe.d", 0755); err != nil {
+		return fmt.Errorf("failed to create /etc/modprobe.d directory: %w", err)
+	}
+
+	optionsMap := map[string][]string{
+		"lnet": {
+			fmt.Sprintf("accept_port=%d", lnetPort),
+			fmt.Sprintf("networks=\"%s\"", expectedNetwork),
+		},
+	}
+
+	for _, arg := range customModuleArgs {
+		parts := strings.SplitN(arg, ".", 2)
+		if len(parts) == 2 {
+			modName := parts[0]
+			param := parts[1]
+			optionsMap[modName] = append(optionsMap[modName], param)
+		} else {
+			klog.Warningf("Invalid custom module arg format (expected module.param=value): %s", arg)
+		}
+	}
+
+	var confLines []string
+	for modName, opts := range optionsMap {
+		confLines = append(confLines, fmt.Sprintf("options %s %s", modName, strings.Join(opts, " ")))
+	}
+	confContent := strings.Join(confLines, "\n") + "\n"
+	klog.Infof("Writing module configuration to /etc/modprobe.d/lustre.conf:\n%s", confContent)
+	if err := os.WriteFile("/etc/modprobe.d/lustre.conf", []byte(confContent), 0644); err != nil {
+		return fmt.Errorf("failed to write /etc/modprobe.d/lustre.conf: %w", err)
+	}
+	*/
+
+	// 6. Run depmod on the extracted directory
+	klog.Infof("Running depmod for extracted modules in basedir %s", extractDir)
+	depmodCmd := exec.CommandContext(cmdCtx, "depmod", "-b", extractDir, kernelVersion)
+	if out, err := depmodCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("depmod failed: %w\noutput:\n%s", err, string(out))
+	}
+
+	// 6.5 Unload any stale modules left over from previous failed attempts using rmmod directly to bypass path mapping issues
+	klog.Info("Unloading any stale lustre/lnet modules using rmmod")
+	if out, err := exec.CommandContext(cmdCtx, "rmmod", "lustre").CombinedOutput(); err != nil {
+		klog.V(5).Infof("rmmod lustre output (harmless if not loaded): %s", string(out))
+	}
+	if out, err := exec.CommandContext(cmdCtx, "rmmod", "ksocklnd").CombinedOutput(); err != nil {
+		klog.V(5).Infof("rmmod ksocklnd output (harmless if not loaded): %s", string(out))
+	}
+	if out, err := exec.CommandContext(cmdCtx, "rmmod", "lnet").CombinedOutput(); err != nil {
+		klog.V(5).Infof("rmmod lnet output (harmless if not loaded): %s", string(out))
+	}
+	if out, err := exec.CommandContext(cmdCtx, "rmmod", "libcfs").CombinedOutput(); err != nil {
+		klog.V(5).Infof("rmmod libcfs output (harmless if not loaded): %s", string(out))
+	}
+
+	// 7. Load lnet explicitly with discovered primary NIC binding arguments on the command line
+	lnetArgs := []string{"-d", extractDir, "lnet", fmt.Sprintf("accept_port=%d", lnetPort), fmt.Sprintf("networks=%s", expectedNetwork)}
+	for _, arg := range customModuleArgs {
+		if strings.HasPrefix(arg, "lnet.") {
+			lnetArgs = append(lnetArgs, strings.TrimPrefix(arg, "lnet."))
+		}
+	}
+	klog.Infof("Loading lnet module explicitly via modprobe with args: %v", lnetArgs)
+	lnetCmd := exec.CommandContext(cmdCtx, "modprobe", lnetArgs...)
+	if out, err := lnetCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("modprobe lnet failed: %w\noutput:\n%s", err, string(out))
+	}
+
+	// 8. Explicitly load ksocklnd (LNet TCP Network Driver) to prevent internal host request_module failures
+	klog.Info("Loading ksocklnd module explicitly via modprobe")
+	ksockCmd := exec.CommandContext(cmdCtx, "modprobe", "-d", extractDir, "ksocklnd")
+	if out, err := ksockCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("modprobe ksocklnd failed: %w\noutput:\n%s", err, string(out))
+	}
+
+	// 9. Load the lustre module using modprobe
+	klog.Info("Loading lustre module via modprobe")
+	modprobeCmd := exec.CommandContext(cmdCtx, "modprobe", "-d", extractDir, "lustre")
+	if out, err := modprobeCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("modprobe lustre failed: %w\noutput:\n%s", err, string(out))
+	}
+
+	klog.Info("Successfully installed Lustre kernel modules for Ubuntu")
+	return nil
 }

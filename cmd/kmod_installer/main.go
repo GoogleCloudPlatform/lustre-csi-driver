@@ -119,7 +119,10 @@ func main() {
 			klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
 		}
 	case "ubuntu":
-		// TODO(samhalim): Add function for kmod install on Ubuntu Nodes.
+		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
+		if err != nil {
+			klog.Fatalf("Failed to install lustre kernel modules on Ubuntu: %v", err)
+		}
 	case "windows":
 		klog.Warning("Lustre kernel modules are not supported on Windows nodes.")
 	default:
