@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -28,6 +29,7 @@ const (
 	defaultSocketPath = "/var/lib/kubelet/plugins/lustre.csi.storage.gke.io/ipc.sock"
 	socketEnvVar      = "LUSTRE_IPC_SOCKET"
 	timeoutDuration   = 60 * time.Second
+	iamUpcallBinary   = "l_gssiam_upcall"
 )
 
 type Request struct {
@@ -43,9 +45,18 @@ type Response struct {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <command> [args...]\n", os.Args[0])
-		os.Exit(1)
+	invocationName := filepath.Base(os.Args[0])
+
+	var args []string
+	if invocationName == iamUpcallBinary {
+		// When invoked as the upcall symlink, we forward all arguments including the invocation name.
+		args = os.Args
+	} else {
+		if len(os.Args) < 2 {
+			fmt.Fprintf(os.Stderr, "Usage: %s <command> [args...]\n", os.Args[0])
+			os.Exit(1)
+		}
+		args = os.Args[1:]
 	}
 
 	socketPath := os.Getenv(socketEnvVar)
@@ -54,7 +65,7 @@ func main() {
 	}
 
 	req := Request{
-		Args: os.Args[1:],
+		Args: args,
 		Env:  os.Environ(),
 	}
 

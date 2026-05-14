@@ -40,6 +40,12 @@ func TestValidateCommand(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "Valid l_gssiam_upcall",
+			binary:  "/usr/sbin/l_gssiam_upcall",
+			args:    []string{"-o", "user"},
+			wantErr: false,
+		},
+		{
 			name:    "Invalid lctl subcommand",
 			binary:  "/usr/sbin/lctl",
 			args:    []string{"get_param", "osc.*.max_dirty_mb"},
@@ -134,5 +140,26 @@ func TestServerEndToEndMock(t *testing.T) {
 	// It should pass validation and fail on execution because /usr/sbin/lctl doesn't exist on the test runner host
 	if !strings.Contains(resp2.Error, "no such file or directory") {
 		t.Errorf("expected execution to fail due to missing binary, but expected validation to pass. Got resp: %+v", resp2)
+	}
+
+	// Test 3: IAM upcall routing with full path
+	clientConn3, err := net.Dial("unix", tmpSock)
+	if err != nil {
+		t.Fatalf("failed to dial test socket third time: %v", err)
+	}
+
+	req3 := Request{
+		Args: []string{"/etc/udev/l_gssiam_upcall", "arg1", "arg2"},
+		Env:  os.Environ(),
+	}
+	_ = json.NewEncoder(clientConn3).Encode(req3)
+
+	var resp3 Response
+	_ = json.NewDecoder(clientConn3).Decode(&resp3)
+	_ = clientConn3.Close()
+
+	// It should pass validation (routed to /usr/sbin/l_gssiam_upcall) and fail on execution
+	if !strings.Contains(resp3.Error, "/usr/sbin/l_gssiam_upcall") || !strings.Contains(resp3.Error, "no such file or directory") {
+		t.Errorf("expected routing to /usr/sbin/l_gssiam_upcall to pass validation but fail execution for full path. Got resp: %+v", resp3)
 	}
 }
