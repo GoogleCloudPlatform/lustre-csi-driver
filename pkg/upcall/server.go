@@ -25,6 +25,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,6 +34,9 @@ import (
 
 const (
 	containerSocketPath = "/csi/ipc.sock"
+	iamUpcallBinary     = "l_gssiam_upcall"
+	iamUpcallPath       = "/usr/sbin/l_gssiam_upcall"
+	lctlPath            = "/usr/sbin/lctl"
 )
 
 type Request struct {
@@ -120,6 +124,11 @@ func executeCommand(ctx context.Context, req Request) Response {
 	binaryPath := req.Args[0]
 	cmdArgs := req.Args[1:]
 
+	if filepath.Base(binaryPath) == iamUpcallBinary {
+		// Route generic upcall invocation name to the absolute container path.
+		binaryPath = iamUpcallPath
+	}
+
 	// Strict Security Whitelist Validation.
 	if err := validateCommand(binaryPath, cmdArgs); err != nil {
 		klog.Errorf("Security rejection: %v", err)
@@ -176,10 +185,13 @@ func executeCommand(ctx context.Context, req Request) Response {
 
 func validateCommand(binary string, args []string) error {
 	switch binary {
-	case "/usr/sbin/lctl":
+	case lctlPath:
 		if len(args) < 2 || args[0] != "set_param" {
 			return fmt.Errorf("unauthorized lctl subcommand or arguments: %v", args)
 		}
+		return nil
+	case iamUpcallPath:
+		// Allow the IAM upcall binary.
 		return nil
 	default:
 		return fmt.Errorf("unauthorized binary path execution request: %s", binary)
