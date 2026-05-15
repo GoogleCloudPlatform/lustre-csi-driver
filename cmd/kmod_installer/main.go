@@ -80,6 +80,11 @@ func main() {
 		klog.Fatal("No standard NICs (gve, idpf, or virtio_net) found")
 	}
 
+	primaryNic, err := networkIntf.GetPrimaryNIC()
+	if err != nil {
+		klog.Fatalf("Failed to identify primary NIC: %v", err)
+	}
+
 	effectiveDisableMultiNIC, err := networkIntf.CheckDisableMultiNIC(ctx, *nodeID, nics, *disableMultiNIC)
 	if err != nil {
 		klog.Fatalf("Failed to check multi-NIC status: %v", err)
@@ -98,15 +103,18 @@ func main() {
 
 	if isInstalled {
 		// Check if the current configuration matches the expectation.
-		expectedNetwork := kmod.DefaultCosLnetNetwork
-		if hostOS == "ubuntu" {
-			expectedNetwork = kmod.DefaultUbuntuLnetNetwork
-		}
+		expectedNetwork := fmt.Sprintf("tcp0(%s)", primaryNic)
 
 		if !effectiveDisableMultiNIC {
-			expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
+			orderedNics := []string{primaryNic}
+			for _, nic := range nics {
+				if nic != primaryNic {
+					orderedNics = append(orderedNics, nic)
+				}
+			}
+			expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(orderedNics, ","))
 		}
-		if _, err = kmod.GetLnetNetwork(expectedNetwork, hostOS); err != nil {
+		if _, err = kmod.GetLnetNetwork(expectedNetwork, primaryNic); err != nil {
 			klog.Fatalf("Failed to get LNET network parameters: %v", err)
 		}
 
@@ -118,7 +126,7 @@ func main() {
 
 	switch hostOS {
 	case "cos":
-		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
+		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
 		}
@@ -138,7 +146,7 @@ func main() {
 				klog.Fatalf("The https://www.googleapis.com/auth/cloud-platform scope is missing. This is required for installing Lustre packages from Artifact Registry")
 			}
 		}
-		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC)
+		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on Ubuntu: %v", err)
 		}
