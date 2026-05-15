@@ -82,10 +82,17 @@ func main() {
 		config.MetadataService = meta
 		config.Mounter = mount.New("")
 
+		netlinker := network.NewNetlink()
 		nodeClient := network.NewK8sClient()
 		hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
 		if err != nil {
 			klog.Fatalf("Failed to read OS Host Info: %v", err)
+		}
+
+		networkIntf := network.Manager(netlinker, nodeClient, meta)
+		defaultNic, err := networkIntf.GetPrimaryNIC()
+		if err != nil {
+			klog.Fatalf("Failed to identify primary NIC: %v", err)
 		}
 
 		// Set up host proxy and start the upcall IPC server only on COS nodes.
@@ -105,16 +112,11 @@ func main() {
 		klog.Info("Retrieving the network interface specified in LNET parameters.")
 		// Pass an empty string as expected network because the kmod-installer initContainer is responsible
 		// for configuring multi-NIC and loading the module. CSI driver will just read the actual config.
-		nics, err := kmod.GetLnetNetwork("", hostOS)
+		nics, err := kmod.GetLnetNetwork("", defaultNic)
 		if err != nil {
 			klog.Fatalf("Failed to get LNET network parameters: %v", err)
 		}
-		// These NICs will require additional setup for multi nic feature.
-		defaultNic := "eth0"
-		if hostOS == "ubuntu" {
-			// This is an assumption we've made that Ubuntu nodes will always use ens4 as default NIC.
-			defaultNic = "ens4"
-		}
+
 		additionalNics := []string{}
 		for _, nic := range nics {
 			if nic != defaultNic {

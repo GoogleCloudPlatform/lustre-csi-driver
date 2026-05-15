@@ -719,3 +719,102 @@ func TestCheckDisableMultiNIC(t *testing.T) {
 		})
 	}
 }
+
+func TestGetPrimaryNIC(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		fakeGvnicNames []string
+		fakeErr        error
+		fakeNics       []metadata.NetworkInterface
+		fakeMetaErr    error
+		wantNic        string
+		wantErr        bool
+	}{
+		{
+			name:           "Successfully match primary NIC by MAC",
+			fakeGvnicNames: []string{"eth0", "eth1"},
+			fakeNics: []metadata.NetworkInterface{
+				{Network: "default", Mac: "00:00:00:00:00:01"},
+				{Network: "default", Mac: "00:00:00:00:00:02"},
+			},
+			wantNic: "eth0",
+			wantErr: false,
+		},
+		{
+			name:           "Successfully match primary NIC when enumeration order differs",
+			fakeGvnicNames: []string{"ens5", "ens4"},
+			fakeNics: []metadata.NetworkInterface{
+				{Network: "default", Mac: "00:00:00:00:00:02"}, // Primary metadata interface MAC ends in 02
+			},
+			wantNic: "ens4",
+			wantErr: false,
+		},
+		{
+			name:    "Metadata client is nil",
+			wantErr: true,
+		},
+		{
+			name:        "Metadata error",
+			fakeMetaErr: errors.New("metadata server error"),
+			wantErr:     true,
+		},
+		{
+			name:     "No metadata NICs returned",
+			fakeNics: []metadata.NetworkInterface{},
+			wantErr:  true,
+		},
+		{
+			name:           "Netlink error",
+			fakeGvnicNames: []string{"eth0", "eth1"},
+			fakeNics: []metadata.NetworkInterface{
+				{Network: "default", Mac: "00:00:00:00:00:01"},
+			},
+			fakeErr: errors.New("netlink get standard nics error"),
+			wantErr: true,
+		},
+		{
+			name:           "No matching kernel interface MAC found",
+			fakeGvnicNames: []string{"eth0"},
+			fakeNics: []metadata.NetworkInterface{
+				{Network: "default", Mac: "99:99:99:99:99:99"},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var metaClient MetadataClient
+			if test.fakeNics != nil {
+				metaClient = &fakeMetadataClient{
+					getNicsResponse: test.fakeNics,
+					getNicsErr:      test.fakeMetaErr,
+				}
+			}
+
+			fakeNL := &fakeNetlink{
+				getStandardNICsResponse: test.fakeGvnicNames,
+				getStandardNICsErr:      test.fakeErr,
+				linkByNameMap: map[string]netlink.Link{
+					"eth0": fakeLink{attrs: &netlink.LinkAttrs{Name: "eth0", HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 1}}},
+					"eth1": fakeLink{attrs: &netlink.LinkAttrs{Name: "eth1", HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 2}}},
+					"ens4": fakeLink{attrs: &netlink.LinkAttrs{Name: "ens4", HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 2}}},
+					"ens5": fakeLink{attrs: &netlink.LinkAttrs{Name: "ens5", HardwareAddr: net.HardwareAddr{0, 0, 0, 0, 0, 3}}},
+				},
+			}
+
+			networkManager := Manager(fakeNL, nil, metaClient)
+			gotNic, err := networkManager.GetPrimaryNIC()
+			if (err != nil) != test.wantErr {
+				t.Errorf("GetPrimaryNIC() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if !test.wantErr && gotNic != test.wantNic {
+				t.Errorf("GetPrimaryNIC() = %v, want %v", gotNic, test.wantNic)
+			}
+		})
+	}
+}

@@ -227,6 +227,45 @@ func (rm *RouteManager) validateNICs(nics []string) ([]string, error) {
 	return validNICs, nil
 }
 
+// GetPrimaryNIC identifies the primary network interface name (e.g. eth0, ens4) by matching
+// the kernel network interface MAC address with GCE metadata interface 0 MAC address.
+func (rm *RouteManager) GetPrimaryNIC() (string, error) {
+	if rm.mc == nil {
+		return "", errors.New("metadata client is nil, cannot identify primary NIC")
+	}
+
+	metaNICs, err := rm.mc.GetNetworkInterfaces()
+	if err != nil {
+		return "", fmt.Errorf("failed to get network interfaces from metadata: %w", err)
+	}
+
+	if len(metaNICs) == 0 {
+		return "", errors.New("no network interfaces found in instance metadata")
+	}
+
+	primaryMAC := strings.ToLower(metaNICs[0].Mac)
+
+	nics, err := rm.nl.GetStandardNICs()
+	if err != nil {
+		return "", fmt.Errorf("failed to get standard NICs: %w", err)
+	}
+
+	for _, nic := range nics {
+		link, err := rm.nl.LinkByName(nic)
+		if err != nil {
+			klog.Warningf("Failed to get link for %s: %v", nic, err)
+			continue
+		}
+		mac := strings.ToLower(link.Attrs().HardwareAddr.String())
+		if mac == primaryMAC {
+			klog.V(4).Infof("Identified primary NIC %s with MAC %s", nic, mac)
+			return nic, nil
+		}
+	}
+
+	return "", fmt.Errorf("no standard NIC found matching primary metadata MAC %s", primaryMAC)
+}
+
 func (rm *RouteManager) configureRoutesForNIC(nicName string, nicIPAddr net.IP, instanceIPAddr string, tableID int) error {
 	// Get the network interface handle
 	link, err := rm.nl.LinkByName(nicName)
