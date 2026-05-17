@@ -135,7 +135,7 @@ func TestGetLnetNetwork(t *testing.T) {
 		fileContent  string
 		fileMissing  bool
 		expectedNics string
-		hostOS       string
+		defaultNic   string
 		want         []string
 		// We don't check for specific log output here, but we verify the return values
 		// and that it doesn't crash on warnings.
@@ -143,58 +143,58 @@ func TestGetLnetNetwork(t *testing.T) {
 		{
 			name:        "File missing - returns default eth0 on cos",
 			fileMissing: true,
-			hostOS:      "cos",
+			defaultNic:  "eth0",
 			want:        []string{"eth0"},
 		},
 		{
 			name:        "File missing - returns default ens4 on ubuntu",
 			fileMissing: true,
-			hostOS:      "ubuntu",
+			defaultNic:  "ens4",
 			want:        []string{"ens4"},
 		},
 		{
 			name:        "File empty - returns default eth0 on cos",
 			fileContent: "",
-			hostOS:      "cos",
+			defaultNic:  "eth0",
 			want:        []string{"eth0"},
 		},
 		{
 			name:        "File empty - returns default ens4 on ubuntu",
 			fileContent: "",
-			hostOS:      "ubuntu",
+			defaultNic:  "ens4",
 			want:        []string{"ens4"},
 		},
 		{
 			name:        "Single NIC",
 			fileContent: "tcp0(eth0)",
-			hostOS:      "cos",
+			defaultNic:  "eth0",
 			want:        []string{"eth0"},
 		},
 		{
 			name:        "Multi NIC",
 			fileContent: "tcp0(eth0,eth1)",
-			hostOS:      "cos",
+			defaultNic:  "eth0",
 			want:        []string{"eth0", "eth1"},
 		},
 		{
 			name:         "Validation match",
 			fileContent:  "tcp0(eth0,eth1)",
 			expectedNics: "tcp0(eth0,eth1)",
-			hostOS:       "cos",
+			defaultNic:   "eth0",
 			want:         []string{"eth0", "eth1"},
 		},
 		{
 			name:         "Validation mismatch - single NIC expected",
 			fileContent:  "tcp0(eth0,eth1)",
 			expectedNics: "tcp0(eth0)",
-			hostOS:       "cos",
+			defaultNic:   "eth0",
 			want:         []string{"eth0", "eth1"},
 		},
 		{
 			name:         "Validation mismatch - multi NIC expected",
 			fileContent:  "tcp0(eth0)",
 			expectedNics: "tcp0(eth0,eth1)",
-			hostOS:       "cos",
+			defaultNic:   "eth0",
 			want:         []string{"eth0"},
 		},
 	}
@@ -211,7 +211,7 @@ func TestGetLnetNetwork(t *testing.T) {
 				}
 			}
 
-			got, err := getLnetNetwork(tc.expectedNics, networkFile, tc.hostOS)
+			got, err := getLnetNetwork(tc.expectedNics, networkFile, tc.defaultNic)
 			if err != nil {
 				t.Fatalf("getLnetNetwork() unexpected error: %v", err)
 			}
