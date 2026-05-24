@@ -521,7 +521,7 @@ golang.org/x/tools/internal/versions
 # gomodules.xyz/jsonpatch/v2 v2.5.0
 ## explicit; go 1.20
 gomodules.xyz/jsonpatch/v2
-# google.golang.org/api v0.278.0
+# google.golang.org/api v0.279.0
 ## explicit; go 1.25.0
 google.golang.org/api/cloudresourcemanager/v1
 google.golang.org/api/compute/v1
@@ -550,7 +550,7 @@ google.golang.org/genproto/googleapis/api/annotations
 google.golang.org/genproto/googleapis/rpc/code
 google.golang.org/genproto/googleapis/rpc/errdetails
 google.golang.org/genproto/googleapis/rpc/status
-# google.golang.org/grpc v1.81.0
+# google.golang.org/grpc v1.81.1
 ## explicit; go 1.25.0
 google.golang.org/grpc
 google.golang.org/grpc/attributes
