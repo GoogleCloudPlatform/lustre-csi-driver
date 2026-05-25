@@ -30,12 +30,10 @@ import (
 )
 
 const (
-	legacyLNetPort           = 6988
-	defaultLNetPort          = 988
-	cmdTimeout               = 15 * time.Minute
-	DefaultCosLnetNetwork    = "tcp0(eth0)"
-	DefaultUbuntuLnetNetwork = "tcp0(ens4)"
-	osNodeLabel              = "cloud.google.com/gke-os-distribution"
+	legacyLNetPort  = 6988
+	defaultLNetPort = 988
+	cmdTimeout      = 15 * time.Minute
+	osNodeLabel     = "cloud.google.com/gke-os-distribution"
 )
 
 var (
@@ -96,21 +94,18 @@ func isLustreKmodInstalled(enableLegacyLustrePort bool, acceptPortFile, lustreMo
 // GetLnetNetwork retrieves the currently configured LNet network interfaces.
 // It reads the "networks" parameter from the LNet module parameters.
 // If expectedNics is provided, it validates the current config matches expectation and warns on mismatch.
-// If the file is missing but modules are installed, it returns a default "eth0".
-func GetLnetNetwork(expectedNics, hostOS string) ([]string, error) {
-	return getLnetNetwork(expectedNics, lnetNetworkParameterFile, hostOS)
+// If the file is missing but modules are installed, it returns a default network based on defaultNic.
+func GetLnetNetwork(expectedNics, defaultNic string) ([]string, error) {
+	return getLnetNetwork(expectedNics, lnetNetworkParameterFile, defaultNic)
 }
 
-func getLnetNetwork(expectedNics, networkFile, hostOS string) ([]string, error) {
-	networkStr, err := readLnetConfig(networkFile, hostOS)
+func getLnetNetwork(expectedNics, networkFile, defaultNic string) ([]string, error) {
+	networkStr, err := readLnetConfig(networkFile, defaultNic)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// If the LNET parameter file is missing but modules are supposedly installed,
-			// falling back to a (tcp0(eth0)) / (tcp0(ens4)) as the default.
-			networkStr = DefaultCosLnetNetwork
-			if hostOS == "ubuntu" {
-				networkStr = DefaultUbuntuLnetNetwork
-			}
+			// falling back to a default network using defaultNic.
+			networkStr = fmt.Sprintf("tcp0(%s)", defaultNic)
 		} else {
 			return nil, err
 		}
@@ -123,7 +118,7 @@ func getLnetNetwork(expectedNics, networkFile, hostOS string) ([]string, error) 
 	return parseLnetNetwork(networkStr), nil
 }
 
-func readLnetConfig(path, hostOS string) (string, error) {
+func readLnetConfig(path, defaultNic string) (string, error) {
 	file, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -133,11 +128,8 @@ func readLnetConfig(path, hostOS string) (string, error) {
 		klog.V(4).Infof("LNET network parameter file %v is empty.", path)
 		// An empty lnetNetworkParameterFile implies either the kernel modules are not installed yet,
 		// or they are installed, but just without any parameters.
-		// If that file is empty, but kernel modules are already installed, eth0 should be used.
-		if hostOS == "ubuntu" {
-			return DefaultUbuntuLnetNetwork, nil
-		}
-		return DefaultCosLnetNetwork, nil
+		// If that file is empty, but kernel modules are already installed, defaultNic should be used.
+		return fmt.Sprintf("tcp0(%s)", defaultNic), nil
 	}
 
 	return currNetworkNics, nil
@@ -145,12 +137,9 @@ func readLnetConfig(path, hostOS string) (string, error) {
 
 // InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
 // It proceeds with the installation using the provided NICs.
-func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool) error {
+func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic string) error {
 	lnetPort := lnetPort(enableLegacyPort)
-	expectedNetwork := DefaultCosLnetNetwork
-	if !disableMultiNIC {
-		expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
-	}
+	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
@@ -212,12 +201,9 @@ func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customMo
 }
 
 // InstallLustreKmodOnUbuntu installs the Lustre kernel modules on Ubuntu nodes.
-func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool) error {
+func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic string) error {
 	lnetPort := lnetPort(enableLegacyPort)
-	expectedNetwork := DefaultUbuntuLnetNetwork
-	if len(nics) > 0 && !disableMultiNIC {
-		expectedNetwork = fmt.Sprintf("tcp0(%s)", strings.Join(nics, ","))
-	}
+	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
@@ -352,4 +338,18 @@ func HostOSFromNodeLabel(ctx context.Context, nodeID string, nc network.NodeClie
 		return "unknown", nil
 	}
 	return val, nil
+}
+
+// BuildLnetNetworkString constructs the LNet network configuration string.
+func BuildLnetNetworkString(nics []string, primaryNic string, disableMultiNIC bool) string {
+	if disableMultiNIC {
+		return fmt.Sprintf("tcp0(%s)", primaryNic)
+	}
+	orderedNics := []string{primaryNic}
+	for _, nic := range nics {
+		if nic != primaryNic {
+			orderedNics = append(orderedNics, nic)
+		}
+	}
+	return fmt.Sprintf("tcp0(%s)", strings.Join(orderedNics, ","))
 }
