@@ -66,8 +66,9 @@ const (
 	TopologyKeyZone = "topology.gke.io/zone"
 
 	// PV Volume attributes.
-	keyInstanceIP = "ip"
-	keyMountPoint = "mountpoint"
+	keyInstanceIP              = "ip"
+	keyMountPoint              = "mountpoint"
+	keyIAMAccessControlEnabled = "iam_access_control_enabled"
 
 	defaultNetwork = "default"
 
@@ -89,6 +90,7 @@ var (
 		keyInstanceIP,
 		keyFilesystem,
 		keyMountPoint,
+		keyIAMAccessControlEnabled,
 	}
 )
 
