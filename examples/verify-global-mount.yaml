@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verify-sa-shared
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verify-sa-isolated
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: verify-shared
+  labels:
+    app: verify-shared
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: verify-shared
+  template:
+    metadata:
+      labels:
+        app: verify-shared
+    spec:
+      serviceAccountName: verify-sa-shared
+      containers:
+      - name: nginx
+        image: nginx
+        volumeMounts:
+        - mountPath: /lustre_volume
+          name: mypvc
+      volumes:
+      - name: mypvc
+        persistentVolumeClaim:
+          claimName: preprov-pvc-iam
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-isolated
+  labels:
+    app: verify-isolated
+spec:
+  serviceAccountName: verify-sa-isolated
+  containers:
+  - name: nginx
+    image: nginx
+    volumeMounts:
+    - mountPath: /lustre_volume
+      name: mypvc
+  volumes:
+  - name: mypvc
+    persistentVolumeClaim:
+      claimName: preprov-pvc-iam

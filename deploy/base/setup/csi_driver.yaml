@@ -18,3 +18,7 @@ metadata:
   name: lustre.csi.storage.gke.io
 spec:
   attachRequired: false
+  podInfoOnMount: true
+  requiresRepublish: true
+  tokenRequests:
+  - audience: tyuchn-joonix.svc.id.goog

@@ -18,10 +18,15 @@ package driver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
@@ -38,6 +43,15 @@ const (
 	roMask              = os.FileMode(0o440)
 	execMask            = os.FileMode(0o110)
 	initialRouteTableID = 100
+
+	keyPodUID         = "csi.storage.k8s.io/pod.uid"
+)
+
+var (
+	GlobalMountRoot   = "/var/lib/lustre/mounts"
+	keyServiceAccount = "csi.storage.k8s.io/serviceAccount.name"
+	keyPodNamespace   = "csi.storage.k8s.io/pod.namespace"
+	keyServiceToken   = "csi.storage.k8s.io/serviceAccount.tokens"
 )
 
 var mountPointRegex = regexp.MustCompile(`^(.+)@tcp:/([^/]+)$`)
@@ -148,12 +162,18 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	hasFSName, err := s.hasMountWithSameFSName(fsname)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "Could not check if there is an existing mountpoint with the same Lustre filesystem name %s on node %s: %v", fsname, nodeName, err)
-	}
-	if hasFSName {
-		return nil, status.Errorf(codes.AlreadyExists, "A mountpoint with the same lustre filesystem name %q already exists on node %s. Please mount different lustre filesystems", fsname, nodeName)
+	// Check for IAM access type
+	accessType := vc[normalize(keyAccessCheckType)]
+	isIAM := accessType == "IAM"
+
+	if !isIAM {
+		hasFSName, err := s.hasMountWithSameFSName(fsname)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "Could not check if there is an existing mountpoint with the same Lustre filesystem name %s on node %s: %v", fsname, nodeName, err)
+		}
+		if hasFSName {
+			return nil, status.Errorf(codes.AlreadyExists, "A mountpoint with the same lustre filesystem name %q already exists on node %s. Please mount different lustre filesystems", fsname, nodeName)
+		}
 	}
 
 	// Check if multi-nic is enabled by checking if there are additional NICs.
@@ -180,6 +200,11 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 				return nil, status.Errorf(codes.Internal, "Route configuration for Multi-NIC failed: %v", err)
 			}
 		}
+	}
+
+	if isIAM {
+		klog.Infof("NodeStageVolume: access_check_type=IAM, skipping node mount for volume %s", volumeID)
+		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
 	klog.V(5).Infof("NodeStageVolume creating dir %s on node %s", target, nodeName)
@@ -266,111 +291,229 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	// Global Mount Logic
+	klog.Infof("NodePublishVolume: targetPath=%s", targetPath)
+	// First acquire lock on targetPath to serialize operations on the same target
 	if acquired := s.volumeLocks.TryAcquire(targetPath); !acquired {
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
 
-	mountOptions := []string{"bind"}
+	// Check for IAM access type
+	// Check for IAM access type
+	vc, err := normalizeVolumeContext(req.GetVolumeContext())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	accessType := vc[normalize(keyAccessCheckType)]
+	isIAM := accessType == "IAM"
+
+	// Common bind mount options
+	bindOptions := []string{"bind"}
 	ro := req.GetReadonly()
 	if ro {
-		mountOptions = append(mountOptions, "ro")
+		bindOptions = append(bindOptions, "ro")
 	}
 
-	var fsGroup string
-	if m := volCap.GetMount(); m != nil {
-		for _, f := range m.GetMountFlags() {
-			if !hasOption(mountOptions, f) {
-				mountOptions = append(mountOptions, f)
-			}
-		}
-
-		if m.GetVolumeMountGroup() != "" {
-			fsGroup = m.GetVolumeMountGroup()
-		}
+	klog.V(5).Infof("NodePublishVolume creating target dir %s", targetPath)
+	if err := makeDir(targetPath); err != nil {
+		return nil, status.Errorf(codes.Internal, "Could not create dir %q: %v", targetPath, err)
 	}
 
-	nodeName := s.driver.config.NodeID
-
-	mounted, err := s.isMounted(targetPath)
+	// Check if target is already mounted
+	targetMounted, err := s.isMounted(targetPath)
 	if err != nil {
 		return nil, err
 	}
 
-	if mounted {
-		if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
-			klog.Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
-			if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-				klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
+	if isIAM {
+		// --- VIRTUAL GLOBAL MOUNT PATH ---
+		podUID := vc[normalize(keyPodUID)]
+		namespace := vc[normalize(keyPodNamespace)]
+		saName := vc[normalize(keyServiceAccount)]
+
+		if podUID == "" || namespace == "" || saName == "" {
+			return nil, status.Error(codes.InvalidArgument, "Missing Pod or ServiceAccount info in VolumeContext for IAM volume")
+		}
+
+		principal := fmt.Sprintf("%s/%s", namespace, saName)
+		key := computeHash(volumeID + principal)
+		globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
+
+		// Acquire lock on the Global Key
+		if acquired := s.volumeLocks.TryAcquire(key); !acquired {
+			return nil, status.Errorf(codes.Aborted, "Operation exists for key %s", key)
+		}
+		defer s.volumeLocks.Release(key)
+
+		if err := ensureGlobalDirectories(key); err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to ensure global directories: %v", err)
+		}
+
+		projectID := s.driver.config.MetadataService.GetProject()
+		audience := fmt.Sprintf("%s.svc.id.goog", projectID)
+		if tokenJSON, ok := vc[normalize(keyServiceToken)]; ok {
+			token, err := parseToken(tokenJSON, audience)
+			if err != nil {
+				klog.Warningf("Failed to parse token for key %s: %v", key, err)
+			} else {
+				if err := updateTokenFile(key, token); err != nil {
+					klog.Errorf("Failed to update token file for key %s: %v", key, err)
+					return nil, status.Errorf(codes.Internal, "Failed to update token file: %v", err)
+				}
 			}
-
-			return nil, status.Error(codes.Internal, err.Error())
 		}
 
-		return &csi.NodePublishVolumeResponse{}, nil
-	}
-
-	klog.V(5).Infof("NodePublishVolume creating dir %s on node %s", targetPath, nodeName)
-	if err := makeDir(targetPath); err != nil {
-		return nil, status.Errorf(codes.Internal, "Could not create dir %q on node %s: %v", targetPath, nodeName, err)
-	}
-
-	if err := s.mounter.MountSensitiveWithoutSystemd(stagingTargetPath, targetPath, "lustre", mountOptions, nil); err != nil {
-		klog.Errorf("Mount %q failed on node %s, cleaning up", targetPath, nodeName)
-		if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
+		// Check if Global Path is already mounted
+		globalMounted, err := s.isMounted(globalMountPath)
+		if err != nil {
+			return nil, err
 		}
 
-		return nil, status.Errorf(codes.Internal, "mount %q failed on node %s: %v", targetPath, nodeName, err.Error())
+		if !globalMounted {
+			ip := vc[normalize(keyInstanceIP)]
+			fsname := vc[normalize(keyFilesystem)]
+			mountPoint := vc[normalize(keyMountPoint)]
+
+			if len(mountPoint) != 0 {
+				var err error
+				ip, fsname, err = parseMountPoint(mountPoint)
+				if err != nil {
+					return nil, status.Error(codes.InvalidArgument, err.Error())
+				}
+			}
+			if len(ip) == 0 || len(fsname) == 0 {
+				return nil, status.Error(codes.InvalidArgument, "Lustre instance IP or filesystem name not provided")
+			}
+			source := fmt.Sprintf("%s@tcp:/%s", ip, fsname)
+			// userOpt := fmt.Sprintf("user=gke-wi://%s+%s", principal, key)
+			// mountOptions := []string{userOpt}
+			mountOptions := []string{}
+			
+
+			klog.Infof("Mounting Global Path %s from %s with options %v", globalMountPath, source, mountOptions)
+			if err := s.mounter.MountSensitiveWithoutSystemd(source, globalMountPath, "lustre", mountOptions, nil); err != nil {
+				klog.Errorf("Global Mount %q failed: %v", globalMountPath, err)
+				return nil, status.Errorf(codes.Internal, "Global Mount failed: %v", err)
+			}
+		}
+
+		if err := addPodReference(key, podUID, req.GetVolumeId()); err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to add pod reference: %v", err)
+		}
+
+		if !targetMounted {
+			klog.Infof("Bind mounting %s to %s", globalMountPath, targetPath)
+			if err := s.mounter.MountSensitiveWithoutSystemd(globalMountPath, targetPath, "", bindOptions, nil); err != nil {
+				return nil, status.Errorf(codes.Internal, "Bind mount failed: %v", err)
+			}
+		}
+	} else {
+		// --- LEGACY PATH ---
+		if !targetMounted {
+			klog.Infof("NodePublishVolume: legacy bind mounting %s to %s", stagingTargetPath, targetPath)
+			if err := s.mounter.MountSensitiveWithoutSystemd(stagingTargetPath, targetPath, "", bindOptions, nil); err != nil {
+				return nil, status.Errorf(codes.Internal, "Legacy bind mount failed: %v", err)
+			}
+		}
 	}
 
-	klog.V(4).Infof("NodePublishVolume successfully mounted %s on node %s", targetPath, nodeName)
-
+	// Handle FSGroup / Ownership
+	var fsGroup string
+	if m := volCap.GetMount(); m != nil && m.GetVolumeMountGroup() != "" {
+		fsGroup = m.GetVolumeMountGroup()
+	}
 	if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
-		klog.Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
-		if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
-		}
-
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
-	// Validate arguments.
+func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "NodeUnpublishVolume target path must be provided")
 	}
 
-	// Acquire a lock on the target path instead of volumeID, since we do not want to serialize multiple node unpublish calls on the same volume.
 	if acquired := s.volumeLocks.TryAcquire(targetPath); !acquired {
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
 	defer s.volumeLocks.Release(targetPath)
 
-	// Check if the target path is mounted before unmounting.
-	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(targetPath); notMnt {
-		klog.V(5).InfoS("NodeUnpublishVolume: target path not mounted, skipping unmount", "target", targetPath)
-
-		return &csi.NodeUnpublishVolumeResponse{}, nil
-	}
-	// Always unmount the target path regardless of the detected mount state.
-	// In cases where Lustre was force-unmounted, CleanupMountPoint may fail
-	// to detect the state and error out with "cannot send after transport endpoint shutdown".
-	klog.V(5).InfoS("NodeUnpublishVolume attempting to unmount", "target", targetPath)
-	if err := s.mounter.Unmount(targetPath); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to unmount target %q: %v", targetPath, err)
+	// 1. Resolve Key using Pod UID and Volume ID
+	// Extract Pod UID from target path
+	podUID, err := extractPodUIDFromPath(targetPath)
+	if err != nil {
+		klog.Warningf("Likely legacy mount or error extracting pod UID for target %s: %v", targetPath, err)
+		return s.nodeUnpublishLegacy(ctx, req)
 	}
 
-	if err := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); err != nil {
+	key, err := s.findKeyForPod(podUID, req.GetVolumeId())
+	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	if key == "" {
+		// If we can't find the key, check if it's already unmounted or valid legacy.
+		isMnt, mntErr := s.isMounted(targetPath)
+		if mntErr == nil && !isMnt {
+			return &csi.NodeUnpublishVolumeResponse{}, nil
+		}
+		
+		klog.Warningf("Global mount key not found for pod %s volume %s. Assuming legacy or already cleaned up.", podUID, req.GetVolumeId())
+		return s.nodeUnpublishLegacy(ctx, req)
+	}
+
+	// 2. Unmount bind mount
+	if err := mount.CleanupMountPoint(targetPath, s.mounter, false); err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to unmount target %s: %v", targetPath, err)
+	}
+
+	// 3. Remove Ref
+	if err := removePodReference(key, podUID); err != nil {
+		klog.Warningf("Failed to remove pod reference for key %s, pod %s: %v", key, podUID, err)
+	}
+
+	// 4. Garbage Collection (Global Unmount)
+	if acquired := s.volumeLocks.TryAcquire(key); !acquired {
+		// If we can't acquire lock, another pod might be mounting/unmounting.
+		return nil, status.Errorf(codes.Aborted, "Operation exists for key %s", key)
+	}
+	defer s.volumeLocks.Release(key)
+
+	// Check if any refs remain
+	exists, err := globalMountRefExists(key)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to check refs for key %s: %v", key, err)
+	}
+	if !exists {
+		klog.Infof("No refs remaining for key %s. Cleaning up global mount.", key)
+		// Unmount Global Path
+		mountPath := filepath.Join(GlobalMountRoot, key, "mount")
+		if err := mount.CleanupMountPoint(mountPath, s.mounter, false); err != nil {
+			return nil, status.Errorf(codes.Internal, "Failed to unmount global path %s: %v", mountPath, err)
+		}
+		// Remove Directory
+		keyPath := filepath.Join(GlobalMountRoot, key)
+		if err := os.RemoveAll(keyPath); err != nil {
+			klog.Warningf("Failed to remove key directory %s: %v", keyPath, err)
+		}
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
+
+func (s *nodeServer) nodeUnpublishLegacy(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+	targetPath := req.GetTargetPath()
+	klog.Infof("nodeUnpublishLegacy: cleaning up target %s", targetPath)
+	if err := mount.CleanupMountPoint(targetPath, s.mounter, false); err != nil {
+		return nil, status.Errorf(codes.Internal, "Failed to unmount target %s: %v", targetPath, err)
+	}
+	return &csi.NodeUnpublishVolumeResponse{}, nil
+}
+
+
 
 func (s *nodeServer) NodeGetVolumeStats(_ context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
 	if len(req.GetVolumeId()) == 0 {
@@ -610,4 +753,122 @@ func setVolumeOwnershipTopLevel(volumeID, dir, fsGroup string, readOnly bool) er
 	klog.InfoS("NodePublishVolume successfully changed ownership and permissions of top-level directory", "volume", volumeID, "path", dir, "fsGroup", fsGroup)
 
 	return nil
+}
+
+// Global Mount Helpers
+
+func computeHash(s string) string {
+	h := sha256.New()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func ensureGlobalDirectories(key string) error {
+	mountPath := filepath.Join(GlobalMountRoot, key, "mount")
+	refsPath := filepath.Join(GlobalMountRoot, key, "refs")
+	if err := os.MkdirAll(mountPath, 0755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(refsPath, 0755); err != nil {
+		return err
+	}
+	return nil
+}
+
+func updateTokenFile(key, token string) error {
+	tokenPath := filepath.Join(GlobalMountRoot, key, "token")
+	// Write with 0600 to secure the token
+	return os.WriteFile(tokenPath, []byte(token), 0600)
+}
+
+func parseToken(tokenJSON, audience string) (string, error) {
+	// Format: {"audience": {"token": "...", "expirationTimestamp": "..."}}
+	var tokens map[string]struct {
+		Token               string `json:"token"`
+		ExpirationTimestamp string `json:"expirationTimestamp"`
+	}
+	if err := json.Unmarshal([]byte(tokenJSON), &tokens); err != nil {
+		return "", err
+	}
+	// We asked for audience "{PROJECT_ID}.svc.id.goog"
+	if t, ok := tokens[audience]; ok {
+		return t.Token, nil
+	}
+	return "", fmt.Errorf("token for audience %q not found", audience)
+}
+
+func addPodReference(key, podUID, volumeID string) error {
+	refPath := filepath.Join(GlobalMountRoot, key, "refs", podUID)
+	// Write volumeID to the ref file to verify ownership during unpublish
+	return os.WriteFile(refPath, []byte(volumeID), 0644)
+}
+
+func removePodReference(key, podUID string) error {
+	refPath := filepath.Join(GlobalMountRoot, key, "refs", podUID)
+	if err := os.Remove(refPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func globalMountRefExists(key string) (bool, error) {
+	refsPath := filepath.Join(GlobalMountRoot, key, "refs")
+	entries, err := os.ReadDir(refsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return len(entries) > 0, nil
+}
+
+func extractPodUIDFromPath(path string) (string, error) {
+	// Path pattern: .../pods/<UID>/volumes/...
+	re := regexp.MustCompile(`/pods/([^/]+)/volumes`)
+	matches := re.FindStringSubmatch(path)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("could not extract pod UID from path %s", path)
+	}
+	return matches[1], nil
+}
+
+func (s *nodeServer) findKeyForPod(podUID, volumeID string) (string, error) {
+	// Search /var/lib/lustre/mounts/*/refs/<POD_UID>
+	// We need to iterate over all keys in GlobalMountRoot
+	entries, err := os.ReadDir(GlobalMountRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		key := entry.Name()
+		refPath := filepath.Join(GlobalMountRoot, key, "refs", podUID)
+		
+		// Check if ref file exists
+		content, err := os.ReadFile(refPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			klog.Warningf("Failed to read ref file %s: %v", refPath, err)
+			continue
+		}
+
+		// Check if VolumeID matches
+		if strings.TrimSpace(string(content)) == volumeID {
+			return key, nil
+		}
+	}
+
+	return "", nil
 }
