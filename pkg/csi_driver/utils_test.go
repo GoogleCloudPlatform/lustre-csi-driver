@@ -80,6 +80,16 @@ func TestNormalizeVolumeContext(t *testing.T) {
 			expectedErr: false,
 		},
 		{
+			name: "iam key",
+			input: map[string]string{
+				"iam_access_control_enabled": "true",
+			},
+			expected: map[string]string{
+				normalize(keyIAMAccessControlEnabled): "true",
+			},
+			expectedErr: false,
+		},
+		{
 			name:        "unsupported key",
 			input:       map[string]string{"unknown": "val2"},
 			expected:    nil,
