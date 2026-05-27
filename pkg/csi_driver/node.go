@@ -22,6 +22,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
@@ -84,9 +85,11 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+
 	ip := vc[keyInstanceIP]
 	fsname := vc[keyFilesystem]
 	mountPoint := vc[normalize(keyMountPoint)]
+	iamAccessControlEnabled := vc[normalize(keyIAMAccessControlEnabled)]
 
 	if len(mountPoint) != 0 {
 		var err error
@@ -102,6 +105,11 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 
 	if len(fsname) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Lustre filesystem name is not provided")
+	}
+
+	if strings.ToLower(iamAccessControlEnabled) == "true" {
+		klog.V(4).Infof("NodeStageVolume skipping for IAM-enabled volume %s", volumeID)
+		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
 	source := fmt.Sprintf("%s@tcp:/%s", ip, fsname)
