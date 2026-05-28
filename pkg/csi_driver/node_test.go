@@ -130,6 +130,21 @@ func TestNodeStageVolme(t *testing.T) {
 			expectErr: true,
 		},
 		{
+			name: "IAM enabled request skipped",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingTargetPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					keyInstanceIP:              "127.0.0.2",
+					keyFilesystem:              testFilesystem,
+					keyIAMAccessControlEnabled: "true",
+				},
+			},
+			expectErr:     false,
+			expectedMount: nil,
+		},
+		{
 			name:   "same fsname already mounted",
 			mounts: []mount.MountPoint{{Device: testDevice, Path: stagingTargetPath}},
 			req: &csi.NodeStageVolumeRequest{
