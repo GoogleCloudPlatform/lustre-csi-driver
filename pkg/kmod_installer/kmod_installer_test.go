@@ -35,6 +35,7 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 		name             string
 		fileContent      string
 		fileMissing      bool
+		lustreDirMissing bool
 		isDir            bool
 		enableLegacyPort bool
 		wantInstalled    bool
@@ -45,6 +46,13 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 			fileMissing:   true,
 			wantInstalled: false,
 			wantErr:       false,
+		},
+		{
+			name:             "accept_port exists but lustre module dir missing",
+			fileContent:      "988",
+			lustreDirMissing: true,
+			wantInstalled:    false,
+			wantErr:          false,
 		},
 		{
 			name:             "File exists, default port match",
@@ -88,6 +96,13 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 			t.Parallel()
 			tempDir := t.TempDir()
 			acceptPortFile := filepath.Join(tempDir, "accept_port")
+			lustreModuleDir := filepath.Join(tempDir, "lustre")
+
+			if !tc.lustreDirMissing {
+				if err := os.Mkdir(lustreModuleDir, 0o755); err != nil {
+					t.Fatalf("Failed to create temp lustre dir: %v", err)
+				}
+			}
 
 			if !tc.fileMissing {
 				if tc.isDir {
@@ -101,7 +116,7 @@ func TestIsLustreKmodInstalled(t *testing.T) {
 				}
 			}
 
-			gotInstalled, err := isLustreKmodInstalled(tc.enableLegacyPort, acceptPortFile)
+			gotInstalled, err := isLustreKmodInstalled(tc.enableLegacyPort, acceptPortFile, lustreModuleDir)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("isLustreKmodInstalled() error = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -120,46 +135,66 @@ func TestGetLnetNetwork(t *testing.T) {
 		fileContent  string
 		fileMissing  bool
 		expectedNics string
+		hostOS       string
 		want         []string
 		// We don't check for specific log output here, but we verify the return values
 		// and that it doesn't crash on warnings.
 	}{
 		{
-			name:        "File missing - returns default eth0",
+			name:        "File missing - returns default eth0 on cos",
 			fileMissing: true,
+			hostOS:      "cos",
 			want:        []string{"eth0"},
 		},
 		{
-			name:        "File empty - returns default eth0",
+			name:        "File missing - returns default ens4 on ubuntu",
+			fileMissing: true,
+			hostOS:      "ubuntu",
+			want:        []string{"ens4"},
+		},
+		{
+			name:        "File empty - returns default eth0 on cos",
 			fileContent: "",
+			hostOS:      "cos",
 			want:        []string{"eth0"},
+		},
+		{
+			name:        "File empty - returns default ens4 on ubuntu",
+			fileContent: "",
+			hostOS:      "ubuntu",
+			want:        []string{"ens4"},
 		},
 		{
 			name:        "Single NIC",
 			fileContent: "tcp0(eth0)",
+			hostOS:      "cos",
 			want:        []string{"eth0"},
 		},
 		{
 			name:        "Multi NIC",
 			fileContent: "tcp0(eth0,eth1)",
+			hostOS:      "cos",
 			want:        []string{"eth0", "eth1"},
 		},
 		{
 			name:         "Validation match",
 			fileContent:  "tcp0(eth0,eth1)",
 			expectedNics: "tcp0(eth0,eth1)",
+			hostOS:       "cos",
 			want:         []string{"eth0", "eth1"},
 		},
 		{
 			name:         "Validation mismatch - single NIC expected",
 			fileContent:  "tcp0(eth0,eth1)",
 			expectedNics: "tcp0(eth0)",
+			hostOS:       "cos",
 			want:         []string{"eth0", "eth1"},
 		},
 		{
 			name:         "Validation mismatch - multi NIC expected",
 			fileContent:  "tcp0(eth0)",
 			expectedNics: "tcp0(eth0,eth1)",
+			hostOS:       "cos",
 			want:         []string{"eth0"},
 		},
 	}
@@ -176,7 +211,7 @@ func TestGetLnetNetwork(t *testing.T) {
 				}
 			}
 
-			got, err := getLnetNetwork(tc.expectedNics, networkFile)
+			got, err := getLnetNetwork(tc.expectedNics, networkFile, tc.hostOS)
 			if err != nil {
 				t.Fatalf("getLnetNetwork() unexpected error: %v", err)
 			}

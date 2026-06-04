@@ -105,15 +105,19 @@ func main() {
 		klog.Info("Retrieving the network interface specified in LNET parameters.")
 		// Pass an empty string as expected network because the kmod-installer initContainer is responsible
 		// for configuring multi-NIC and loading the module. CSI driver will just read the actual config.
-		nics, err := kmod.GetLnetNetwork("")
+		nics, err := kmod.GetLnetNetwork("", hostOS)
 		if err != nil {
 			klog.Fatalf("Failed to get LNET network parameters: %v", err)
 		}
-		// additional NICs are any additional NICs that are not default (eth0).
 		// These NICs will require additional setup for multi nic feature.
+		defaultNic := "eth0"
+		if hostOS == "ubuntu" {
+			// This is an assumption we've made that Ubuntu nodes will always use ens4 as default NIC.
+			defaultNic = "ens4"
+		}
 		additionalNics := []string{}
 		for _, nic := range nics {
-			if nic != "eth0" {
+			if nic != defaultNic {
 				additionalNics = append(additionalNics, nic)
 			}
 		}
