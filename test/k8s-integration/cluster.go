@@ -182,9 +182,15 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 		}
 	}
 
-	if !useManagedDriver {
-		cmdParams = append(cmdParams, "--enable-kernel-module-signature-enforcement")
+	// For setting specific flags based on image type (cos or ubuntu).
+	imageSpecificFlags := []string{}
+	if !useManagedDriver && imageType == "cos_containerd" {
+		imageSpecificFlags = append(imageSpecificFlags, "--enable-kernel-module-signature-enforcement")
 	}
+	if imageType == "ubuntu_containerd" {
+		imageSpecificFlags = append(imageSpecificFlags, "--scopes=https://www.googleapis.com/auth/cloud-platform")
+	}
+	cmdParams = append(cmdParams, imageSpecificFlags...)
 
 	cmd = exec.Command("gcloud")
 	cmd.Args = append(cmd.Args, cmdParams...)
@@ -199,10 +205,10 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 			"--cluster=" + *gkeTestClusterName, locationArg, locationVal,
 			"--num-nodes=" + strconv.Itoa(multiNicNumNodes), "--additional-node-network",
 			"network=" + *clusterNetwork + ",subnetwork=" + multinicSubnetName,
+			"--image-type", imageType,
 		}
-		if !useManagedDriver {
-			nodePoolCmd = append(nodePoolCmd, "--enable-kernel-module-signature-enforcement")
-		}
+		nodePoolCmd = append(nodePoolCmd, imageSpecificFlags...)
+
 		cmd = exec.Command("gcloud")
 		cmd.Args = append(cmd.Args, nodePoolCmd...)
 		err = runCommand("Creating Multi-Nic Nodepool", cmd)
