@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -51,6 +52,16 @@ var (
 		keyInstanceIP: testIP,
 		keyFilesystem: testFilesystem,
 	}
+
+	testVolumeAttributesIAM = map[string]string{
+		keyInstanceIP:              testIP,
+		keyFilesystem:              testFilesystem,
+		keyPodUID:                  "test-pod-uid",
+		keyServiceAccount:          "test-sa",
+		keyPodNamespace:            "test-ns",
+		keyIAMAccessControlEnabled: "true",
+		keyServiceToken:            `{"test-project.svc.id.goog":{"token":"test-token","expirationTimestamp":"2099-01-01T00:00:00Z"}}`,
+	}
 )
 
 type nodeServerTestEnv struct {
@@ -58,12 +69,32 @@ type nodeServerTestEnv struct {
 	fm *mount.FakeMounter
 }
 
-type fakeBlockingMounter struct {
+type mockMetadataService struct {
+	project string
+	zone    string
+	nics    []metadata.NetworkInterface
+}
+
+func (m *mockMetadataService) GetZone() string {
+	return m.zone
+}
+
+func (m *mockMetadataService) GetProject() string {
+	return m.project
+}
+
+func (m *mockMetadataService) GetNetworkInterfaces() ([]metadata.NetworkInterface, error) {
+	return m.nics, nil
+}
+
+type fakeMounter struct {
 	*mount.FakeMounter
 	// 'operationUnblocker' channel is used to block the execution of the respective function using it.
 	// This is done by sending a channel of empty struct over 'operationUnblocker' channel,
 	// and wait until the tester gives a go-ahead to proceed further in the execution of the function.
 	operationUnblocker chan chan struct{}
+	mountErr           error
+	failTarget         string
 }
 
 type nodeRequestConfig struct {
@@ -77,6 +108,7 @@ func initTestNodeServer(t *testing.T) *nodeServerTestEnv {
 	t.Helper()
 	mounter := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
 	driver := initTestDriver(t)
+	driver.config.MetadataService = &mockMetadataService{project: "test-project"}
 
 	return &nodeServerTestEnv{
 		ns: newNodeServer(driver, mounter),
@@ -88,6 +120,7 @@ func initBlockingTestNodeServer(t *testing.T, operationUnblocker chan chan struc
 	t.Helper()
 	mounter := newFakeBlockingMounter(operationUnblocker)
 	driver := initTestDriver(t)
+	driver.config.MetadataService = &mockMetadataService{project: "test-project"}
 
 	return &nodeServerTestEnv{
 		ns: newNodeServer(driver, mounter),
@@ -95,17 +128,23 @@ func initBlockingTestNodeServer(t *testing.T, operationUnblocker chan chan struc
 	}
 }
 
-func newFakeBlockingMounter(operationUnblocker chan chan struct{}) *fakeBlockingMounter {
-	return &fakeBlockingMounter{
+func newFakeBlockingMounter(operationUnblocker chan chan struct{}) *fakeMounter {
+	return &fakeMounter{
 		FakeMounter:        &mount.FakeMounter{MountPoints: []mount.MountPoint{}},
 		operationUnblocker: operationUnblocker,
 	}
 }
 
-func (m *fakeBlockingMounter) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	execute := make(chan struct{})
-	m.operationUnblocker <- execute
-	<-execute
+func (m *fakeMounter) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
+	if m.operationUnblocker != nil {
+		execute := make(chan struct{})
+		m.operationUnblocker <- execute
+		<-execute
+	}
+
+	if m.mountErr != nil && (m.failTarget == "" || target == m.failTarget) {
+		return m.mountErr
+	}
 
 	return m.FakeMounter.MountSensitiveWithoutSystemd(source, target, fstype, options, sensitiveOptions)
 }
@@ -341,7 +380,12 @@ func TestNodeUnstageVolume(t *testing.T) {
 }
 
 func TestNodePublishVolume(t *testing.T) {
-	t.Parallel()
+	// Disable t.Parallel() and redirect GlobalMountRoot to t.TempDir() to avoid
+	// host permission errors.
+	oldRoot := GlobalMountRoot
+	defer func() { GlobalMountRoot = oldRoot }()
+	GlobalMountRoot = t.TempDir()
+
 	defaultPerm := os.FileMode(0o750) + os.ModeDir
 
 	// Setup mount target path
@@ -351,13 +395,15 @@ func TestNodePublishVolume(t *testing.T) {
 		t.Fatalf("Failed to setup target path: %v", err)
 	}
 	stagingTargetPath := filepath.Join(base, "staging")
+	key := computeHash(testVolumeID + "test-ns/test-sa")
+	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
 	cases := []struct {
-		name          string
-		mounts        []mount.MountPoint // already existing mounts
-		req           *csi.NodePublishVolumeRequest
-		actions       []mount.FakeAction
-		expectedMount *mount.MountPoint
-		expectErr     bool
+		name           string
+		mounts         []mount.MountPoint // already existing mounts
+		req            *csi.NodePublishVolumeRequest
+		actions        []mount.FakeAction
+		expectedMounts []*mount.MountPoint
+		expectErr      bool
 	}{
 		{
 			name:      "empty request",
@@ -373,8 +419,8 @@ func TestNodePublishVolume(t *testing.T) {
 				VolumeCapability:  testVolumeCapability,
 				VolumeContext:     testVolumeAttributes,
 			},
-			actions:       []mount.FakeAction{{Action: mount.FakeActionMount}},
-			expectedMount: &mount.MountPoint{Device: stagingTargetPath, Path: testTargetPath, Type: "lustre", Opts: []string{"bind"}},
+			actions:        []mount.FakeAction{{Action: mount.FakeActionMount}},
+			expectedMounts: []*mount.MountPoint{{Device: stagingTargetPath, Path: testTargetPath, Type: "lustre", Opts: []string{"bind"}}},
 		},
 		{
 			name:   "valid request already mounted",
@@ -386,7 +432,7 @@ func TestNodePublishVolume(t *testing.T) {
 				VolumeCapability:  testVolumeCapability,
 				VolumeContext:     testVolumeAttributes,
 			},
-			expectedMount: &mount.MountPoint{Device: "/test-device", Path: testTargetPath},
+			expectedMounts: []*mount.MountPoint{{Device: "/test-device", Path: testTargetPath}},
 		},
 		{
 			name: "valid request with user mount options",
@@ -406,9 +452,8 @@ func TestNodePublishVolume(t *testing.T) {
 				},
 				VolumeContext: testVolumeAttributes,
 			},
-			actions: []mount.FakeAction{{Action: mount.FakeActionMount}},
-
-			expectedMount: &mount.MountPoint{Device: stagingTargetPath, Path: testTargetPath, Type: "lustre", Opts: []string{"bind", "foo", "bar"}},
+			actions:        []mount.FakeAction{{Action: mount.FakeActionMount}},
+			expectedMounts: []*mount.MountPoint{{Device: stagingTargetPath, Path: testTargetPath, Type: "lustre", Opts: []string{"bind", "foo", "bar"}}},
 		},
 		{
 			name: "valid request read only",
@@ -420,8 +465,66 @@ func TestNodePublishVolume(t *testing.T) {
 				VolumeContext:     testVolumeAttributes,
 				Readonly:          true,
 			},
-			actions:       []mount.FakeAction{{Action: mount.FakeActionMount}},
-			expectedMount: &mount.MountPoint{Device: stagingTargetPath, Path: testTargetPath, Type: "lustre", Opts: []string{"bind", "ro"}},
+			actions:        []mount.FakeAction{{Action: mount.FakeActionMount}},
+			expectedMounts: []*mount.MountPoint{{Device: stagingTargetPath, Path: testTargetPath, Type: "lustre", Opts: []string{"bind", "ro"}}},
+		},
+		{
+			name: "valid request IAM (Global Mount)",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingTargetPath,
+				TargetPath:        testTargetPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext:     testVolumeAttributesIAM,
+			},
+			actions: []mount.FakeAction{{Action: mount.FakeActionMount}, {Action: mount.FakeActionMount}}, // Global + Bind
+			expectedMounts: []*mount.MountPoint{
+				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user=gke-wi://test-ns/test-sa+" + key}},
+				{Device: testDevice, Path: testTargetPath, Type: "lustre", Opts: []string{"bind"}},
+			},
+		},
+		{
+			name: "valid request IAM with user mount options (Global Mount)",
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingTargetPath,
+				TargetPath:        testTargetPath,
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: &csi.VolumeCapability_Mount{
+						Mount: &csi.VolumeCapability_MountVolume{
+							MountFlags: []string{"flock", "noatime"},
+						},
+					},
+					AccessMode: &csi.VolumeCapability_AccessMode{
+						Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+					},
+				},
+				VolumeContext: testVolumeAttributesIAM,
+			},
+			actions: []mount.FakeAction{{Action: mount.FakeActionMount}, {Action: mount.FakeActionMount}}, // Global + Bind
+			expectedMounts: []*mount.MountPoint{
+				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user=gke-wi://test-ns/test-sa+" + key, "flock", "noatime"}},
+				{Device: testDevice, Path: testTargetPath, Type: "lustre", Opts: []string{"bind", "flock", "noatime"}},
+			},
+		},
+		{
+			name: "valid request IAM (Token Refresh)",
+			mounts: []mount.MountPoint{
+				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user=gke-wi://test-ns/test-sa+" + key}},
+				{Device: testDevice, Path: testTargetPath, Type: "lustre", Opts: []string{"bind"}},
+			},
+			req: &csi.NodePublishVolumeRequest{
+				VolumeId:          testVolumeID,
+				StagingTargetPath: stagingTargetPath,
+				TargetPath:        testTargetPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext:     testVolumeAttributesIAM,
+			},
+			actions: []mount.FakeAction{},
+			expectedMounts: []*mount.MountPoint{
+				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user=gke-wi://test-ns/test-sa+" + key}},
+				{Device: testDevice, Path: testTargetPath, Type: "lustre", Opts: []string{"bind"}},
+			},
 		},
 		{
 			name: "empty target path",
@@ -476,7 +579,7 @@ func TestNodePublishVolume(t *testing.T) {
 			t.Errorf("Test %q failed: got success", test.name)
 		}
 
-		validateMountPoint(t, test.name, testEnv.fm, test.expectedMount)
+		validateMountPoint(t, test.name, testEnv.fm, test.expectedMounts...)
 	}
 }
 
@@ -549,9 +652,16 @@ func TestNodeUnpublishVolume(t *testing.T) {
 	}
 }
 
-func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, e *mount.MountPoint) {
+func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, expectedMounts ...*mount.MountPoint) {
 	t.Helper()
-	if e == nil {
+	var validExpected []*mount.MountPoint
+	for _, e := range expectedMounts {
+		if e != nil {
+			validExpected = append(validExpected, e)
+		}
+	}
+
+	if len(validExpected) == 0 {
 		if len(fm.MountPoints) != 0 {
 			t.Errorf("Test %q failed: got mounts %+v, expected none", name, fm.MountPoints)
 		}
@@ -559,34 +669,36 @@ func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, e *mou
 		return
 	}
 
-	if mLen := len(fm.MountPoints); mLen != 1 {
-		t.Errorf("Test %q failed: got %v mounts(%+v), expected %v", name, mLen, fm.MountPoints, 1)
+	if mLen := len(fm.MountPoints); mLen != len(validExpected) {
+		t.Errorf("Test %q failed: got %v mounts(%+v), expected %v", name, mLen, fm.MountPoints, len(validExpected))
 
 		return
 	}
 
-	a := &fm.MountPoints[0]
-	if a.Device != e.Device {
-		t.Errorf("Test %q failed: got device %q, expected %q", name, a.Device, e.Device)
-	}
-	if a.Path != e.Path {
-		t.Errorf("Test %q failed: got path %q, expected %q", name, a.Path, e.Path)
-	}
-	if a.Type != e.Type {
-		t.Errorf("Test %q failed: got type %q, expected %q", name, a.Type, e.Type)
-	}
+	for idx, e := range validExpected {
+		a := &fm.MountPoints[idx]
+		if a.Device != e.Device {
+			t.Errorf("Test %q [%d] failed: got device %q, expected %q", name, idx, a.Device, e.Device)
+		}
+		if a.Path != e.Path {
+			t.Errorf("Test %q [%d] failed: got path %q, expected %q", name, idx, a.Path, e.Path)
+		}
+		if a.Type != e.Type {
+			t.Errorf("Test %q [%d] failed: got type %q, expected %q", name, idx, a.Type, e.Type)
+		}
 
-	aLen := len(a.Opts)
-	eLen := len(e.Opts)
-	if aLen != eLen {
-		t.Errorf("Test %q failed: got opts length %v, expected %v", name, aLen, eLen)
-	}
+		aLen := len(a.Opts)
+		eLen := len(e.Opts)
+		if aLen != eLen {
+			t.Errorf("Test %q [%d] failed: got opts length %v, expected %v", name, idx, aLen, eLen)
+		}
 
-	for i := range a.Opts {
-		aOpt := a.Opts[i]
-		eOpt := e.Opts[i]
-		if aOpt != eOpt {
-			t.Errorf("Test %q failed: got opt %q, expected %q", name, aOpt, eOpt)
+		for i := range a.Opts {
+			aOpt := a.Opts[i]
+			eOpt := e.Opts[i]
+			if aOpt != eOpt {
+				t.Errorf("Test %q [%d] failed: got opt %q, expected %q", name, idx, aOpt, eOpt)
+			}
 		}
 	}
 }
@@ -828,4 +940,410 @@ func verifyFileOwner(path string, uid, gid int) bool {
 	}
 
 	return true
+}
+
+func TestPublishIAMVolume(t *testing.T) {
+	// Isolate package-level global Go directory Root and inject hermetic MetadataService
+	oldRoot := GlobalMountRoot
+	defer func() { GlobalMountRoot = oldRoot }()
+	GlobalMountRoot = t.TempDir()
+
+	testVolumeID := "test-vol-publish-iam"
+	testTargetPath := filepath.Join(t.TempDir(), "target-mount")
+	testPodUID := "pod-uid-1234"
+	testNamespace := "default"
+	testServiceAccount := "lustre-client-sa"
+	testPrincipal := fmt.Sprintf("%s/%s", testNamespace, testServiceAccount)
+	testKey := computeHash(testVolumeID + testPrincipal)
+
+	testGlobalMountPath := filepath.Join(GlobalMountRoot, testKey, "mount")
+	testTokenPath := filepath.Join(GlobalMountRoot, testKey, "token")
+	testRefPath := filepath.Join(GlobalMountRoot, testKey, "refs", testPodUID)
+
+	validTokenJSON := `{"test-project.svc.id.goog": {"token": "jwt-token", "expirationTimestamp": "2027-01-01T00:00:00Z"}}`
+
+	validVC := map[string]string{
+		keyPodUID:         testPodUID,
+		keyPodNamespace:   testNamespace,
+		keyServiceAccount: testServiceAccount,
+		keyServiceToken:   validTokenJSON,
+		keyInstanceIP:     testIP,
+		keyFilesystem:     testFilesystem,
+	}
+
+	cases := []struct {
+		name           string
+		targetMounted  bool
+		existingMounts []mount.MountPoint
+		preCreateRef   bool
+		vc             map[string]string
+		mountErr       error
+		failTarget     string
+		expectedMounts []*mount.MountPoint
+		expectErr      bool
+		expectToken    string
+	}{
+		{
+			name:          "valid initial publish",
+			targetMounted: false,
+			vc:            validVC,
+			expectedMounts: []*mount.MountPoint{
+				{
+					Device: testIP + "@tcp:/" + testFilesystem,
+					Path:   testGlobalMountPath,
+					Type:   "lustre",
+					Opts:   []string{"user=gke-wi://default/lustre-client-sa+" + testKey},
+				},
+				{
+					Device: testIP + "@tcp:/" + testFilesystem, // FakeMounter resolves bind mount source to underlying device
+					Path:   testTargetPath,
+					Type:   "lustre",
+					Opts:   []string{"bind"},
+				},
+			},
+			expectErr:   false,
+			expectToken: "jwt-token",
+		},
+		{
+			name:          "valid republish/token refresh (already mounted)",
+			targetMounted: true,
+			existingMounts: []mount.MountPoint{
+				{Device: testIP + "@tcp:/" + testFilesystem, Path: testGlobalMountPath},
+				{Device: testGlobalMountPath, Path: testTargetPath},
+			},
+			preCreateRef: true,
+			vc: map[string]string{
+				keyPodUID:         testPodUID,
+				keyPodNamespace:   testNamespace,
+				keyServiceAccount: testServiceAccount,
+				keyServiceToken:   `{"test-project.svc.id.goog": {"token": "newer-refreshed-jwt-token"}}`,
+				keyInstanceIP:     testIP,
+				keyFilesystem:     testFilesystem,
+			},
+			expectedMounts: []*mount.MountPoint{
+				{Device: testIP + "@tcp:/" + testFilesystem, Path: testGlobalMountPath},
+				{Device: testGlobalMountPath, Path: testTargetPath},
+			},
+			expectErr:   false,
+			expectToken: "newer-refreshed-jwt-token",
+		},
+		{
+			name: "missing Pod UID",
+			vc: map[string]string{
+				keyPodNamespace:   testNamespace,
+				keyServiceAccount: testServiceAccount,
+			},
+			expectErr: true,
+		},
+		{
+			name: "missing Pod Namespace",
+			vc: map[string]string{
+				keyPodUID:         testPodUID,
+				keyServiceAccount: testServiceAccount,
+			},
+			expectErr: true,
+		},
+		{
+			name: "missing ServiceAccount",
+			vc: map[string]string{
+				keyPodUID:       testPodUID,
+				keyPodNamespace: testNamespace,
+			},
+			expectErr: true,
+		},
+		{
+			name: "missing Workload Identity token",
+			vc: map[string]string{
+				keyPodUID:         testPodUID,
+				keyPodNamespace:   testNamespace,
+				keyServiceAccount: testServiceAccount,
+			},
+			expectErr: true,
+		},
+		{
+			name:          "bind mount failure returns error",
+			targetMounted: false,
+			vc:            validVC,
+			mountErr:      fmt.Errorf("simulated bind mount failure"),
+			failTarget:    testTargetPath,
+			expectErr:     true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			// Wipe GlobalMountRoot cleanly before each run
+			if err := os.RemoveAll(GlobalMountRoot); err != nil {
+				t.Fatalf("Failed to remove global mount root: %v", err)
+			}
+
+			if tc.preCreateRef {
+				if err := makeGlobalDirs(testKey); err != nil {
+					t.Fatalf("Failed to create global dirs: %v", err)
+				}
+				if err := addPodReference(testKey, testPodUID, testVolumeID); err != nil {
+					t.Fatalf("Failed to pre-create ref: %v", err)
+				}
+			}
+
+			fm := &mount.FakeMounter{MountPoints: tc.existingMounts}
+			if fm.MountPoints == nil {
+				fm.MountPoints = []mount.MountPoint{}
+			}
+			mounter := &fakeMounter{FakeMounter: fm, mountErr: tc.mountErr, failTarget: tc.failTarget}
+
+			driver := initTestDriver(t)
+			driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+
+			ns := newNodeServer(driver, mounter).(*nodeServer)
+
+			normalizedVC := make(map[string]string)
+			for k, v := range tc.vc {
+				normalizedVC[normalize(k)] = v
+			}
+
+			err := ns.publishIAMVolume(testVolumeID, testTargetPath, tc.targetMounted, normalizedVC, []string{"bind"}, testVolumeCapability)
+			if (err != nil) != tc.expectErr {
+				t.Fatalf("Test %q: expected error %v, got %v", tc.name, tc.expectErr, err)
+			}
+
+			if !tc.expectErr {
+				validateMountPoint(t, tc.name, fm, tc.expectedMounts...)
+
+				// Verify token file on disk
+				content, err := os.ReadFile(testTokenPath)
+				if err != nil {
+					t.Fatalf("Failed to read token file: %v", err)
+				}
+				if string(content) != tc.expectToken {
+					t.Errorf("Expected token %q, got %q", tc.expectToken, string(content))
+				}
+
+				// Verify pod reference on disk
+				refContent, err := os.ReadFile(testRefPath)
+				if err != nil {
+					t.Fatalf("Failed to read pod reference file: %v", err)
+				}
+				if string(refContent) != testVolumeID {
+					t.Errorf("Expected ref content %q, got %q", testVolumeID, string(refContent))
+				}
+			}
+		})
+	}
+}
+
+func TestParseToken(t *testing.T) {
+	t.Parallel()
+
+	validJSON := `{"test-project.svc.id.goog":{"token":"test-token","expirationTimestamp":"2099-01-01T00:00:00Z"}}`
+
+	cases := []struct {
+		name        string
+		tokenJSON   string
+		audience    string
+		expectToken string
+		expectErr   bool
+	}{
+		{
+			name:        "valid token parsed",
+			tokenJSON:   validJSON,
+			audience:    "test-project.svc.id.goog",
+			expectToken: "test-token",
+			expectErr:   false,
+		},
+		{
+			name:        "audience not found",
+			tokenJSON:   validJSON,
+			audience:    "other-project.svc.id.goog",
+			expectToken: "",
+			expectErr:   true,
+		},
+		{
+			name:        "invalid json",
+			tokenJSON:   `{malformed-json`,
+			audience:    "test-project.svc.id.goog",
+			expectToken: "",
+			expectErr:   true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			token, err := parseToken(tc.tokenJSON, tc.audience)
+			if (err != nil) != tc.expectErr {
+				t.Fatalf("Test %q: expected error %v, got %v", tc.name, tc.expectErr, err)
+			}
+			if token != tc.expectToken {
+				t.Fatalf("Test %q: expected token %q, got %q", tc.name, tc.expectToken, token)
+			}
+		})
+	}
+}
+
+func TestUpdateTokenFile(t *testing.T) {
+	oldRoot := GlobalMountRoot
+	defer func() { GlobalMountRoot = oldRoot }()
+	GlobalMountRoot = t.TempDir()
+
+	testKey := "test-hash-key"
+	testToken := "secure-jwt-token"
+
+	// Create global layout
+	if err := makeGlobalDirs(testKey); err != nil {
+		t.Fatalf("Failed to create global layout: %v", err)
+	}
+
+	if err := updateTokenFile(testKey, testToken); err != nil {
+		t.Fatalf("updateTokenFile failed: %v", err)
+	}
+
+	tokenPath := filepath.Join(GlobalMountRoot, testKey, "token")
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatalf("Failed to stat token file: %v", err)
+	}
+
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("Expected token file permission 0600, got %o", info.Mode().Perm())
+	}
+
+	content, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("Failed to read token file: %v", err)
+	}
+
+	if string(content) != testToken {
+		t.Fatalf("Expected token content %q, got %q", testToken, string(content))
+	}
+}
+
+func TestMountGlobalIAM(t *testing.T) {
+	// Do not use t.Parallel() because we modify GlobalMountRoot
+	oldRoot := GlobalMountRoot
+	defer func() { GlobalMountRoot = oldRoot }()
+	GlobalMountRoot = t.TempDir()
+
+	testVolumeID := "test-vol-iam"
+	testPrincipal := "test-ns/test-sa"
+	testKey := "test-hash-key"
+	testGlobalMountPath := filepath.Join(GlobalMountRoot, testKey, "mount")
+
+	cases := []struct {
+		name          string
+		vc            map[string]string
+		volCap        *csi.VolumeCapability
+		mountErr      error
+		expectedMount *mount.MountPoint
+		expectErr     bool
+	}{
+		{
+			name: "valid direct IP and FSName",
+			vc: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+			},
+			volCap: testVolumeCapability,
+			expectedMount: &mount.MountPoint{
+				Device: testIP + "@tcp:/" + testFilesystem,
+				Path:   testGlobalMountPath,
+				Type:   "lustre",
+				Opts:   []string{"user=gke-wi://test-ns/test-sa+test-hash-key"},
+			},
+			expectErr: false,
+		},
+		{
+			name: "valid mountPoint parse",
+			vc: map[string]string{
+				keyMountPoint: "10.0.0.1@tcp:/customfs",
+			},
+			volCap: testVolumeCapability,
+			expectedMount: &mount.MountPoint{
+				Device: "10.0.0.1@tcp:/customfs",
+				Path:   testGlobalMountPath,
+				Type:   "lustre",
+				Opts:   []string{"user=gke-wi://test-ns/test-sa+test-hash-key"},
+			},
+			expectErr: false,
+		},
+		{
+			name: "valid with additional mount flags",
+			vc: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+			},
+			volCap: &csi.VolumeCapability{
+				AccessType: &csi.VolumeCapability_Mount{
+					Mount: &csi.VolumeCapability_MountVolume{
+						MountFlags: []string{"foo", "bar"},
+					},
+				},
+				AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+			},
+			expectedMount: &mount.MountPoint{
+				Device: testIP + "@tcp:/" + testFilesystem,
+				Path:   testGlobalMountPath,
+				Type:   "lustre",
+				Opts:   []string{"user=gke-wi://test-ns/test-sa+test-hash-key", "foo", "bar"},
+			},
+			expectErr: false,
+		},
+		{
+			name: "missing IP",
+			vc: map[string]string{
+				keyFilesystem: testFilesystem,
+			},
+			expectErr: true,
+		},
+		{
+			name: "missing FSName",
+			vc: map[string]string{
+				keyInstanceIP: testIP,
+			},
+			expectErr: true,
+		},
+		{
+			name: "invalid mountPoint format",
+			vc: map[string]string{
+				keyMountPoint: "invalid-spec-without-at-sign",
+			},
+			expectErr: true,
+		},
+		{
+			name: "mount failure returns error",
+			vc: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+			},
+			volCap:    testVolumeCapability,
+			mountErr:  fmt.Errorf("simulated kernel mount error"),
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			fm := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+			mounter := &fakeMounter{FakeMounter: fm, mountErr: tc.mountErr}
+
+			driver := initTestDriver(t)
+			driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+
+			ns := newNodeServer(driver, mounter).(*nodeServer)
+
+			err := ns.mountGlobalIAM(testVolumeID, testGlobalMountPath, testPrincipal, testKey, tc.vc, tc.volCap)
+			if tc.expectErr && err == nil {
+				t.Fatalf("Test %q: expected an error but got none", tc.name)
+			}
+			if !tc.expectErr && err != nil {
+				t.Fatalf("Test %q: unexpected error: %v", tc.name, err)
+			}
+			if !tc.expectErr {
+				validateMountPoint(t, tc.name, fm, tc.expectedMount)
+			}
+		})
+	}
 }

@@ -18,8 +18,10 @@ package driver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -41,7 +43,18 @@ const (
 	initialRouteTableID = 100
 )
 
-var mountPointRegex = regexp.MustCompile(`^(.+)@tcp:/([^/]+)$`)
+const (
+	keyServiceAccount = "csi.storage.k8s.io/serviceAccount.name"
+	keyPodName        = "csi.storage.k8s.io/pod.name"
+	keyPodNamespace   = "csi.storage.k8s.io/pod.namespace"
+	keyServiceToken   = "csi.storage.k8s.io/serviceAccount.tokens"
+	keyPodUID         = "csi.storage.k8s.io/pod.uid"
+)
+
+var (
+	GlobalMountRoot = "/var/lib/lustre/mounts"
+	mountPointRegex = regexp.MustCompile(`^(.+)@tcp:/([^/]+)$`)
+)
 
 type nodeServer struct {
 	// Embed UnimplementedIdentityServer to ensure the driver returns Unimplemented for any
@@ -125,7 +138,7 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 	}
 
 	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, status.Errorf(codes.InvalidArgument, "Volume capability validation failed: %v", err)
 	}
 
 	if acquired := s.volumeLocks.TryAcquire(target); !acquired {
@@ -164,30 +177,9 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 		return nil, status.Errorf(codes.AlreadyExists, "A mountpoint with the same lustre filesystem name %q already exists on node %s. Please mount different lustre filesystems", fsname, nodeName)
 	}
 
-	// Check if multi-nic is enabled by checking if there are additional NICs.
-	if len(s.driver.config.AdditionalNics) > 0 {
-		netlinker := network.NewNetlink()
-		nodeClient := network.NewK8sClient()
-		networkIntf := network.Manager(netlinker, nodeClient, s.driver.config.MetadataService)
-		klog.V(4).Infof("Multi Nic feature is enabled and will configure route for Lustre instance: %v, IP: %v", volumeID, source)
-		nics := s.driver.config.AdditionalNics
-		for _, nicName := range nics {
-			// Get NIC IP Addr
-			nicIPAddr, err := networkIntf.GetNICIPAddr(nicName)
-			if err != nil {
-				return nil, status.Errorf(codes.Internal, "Could not get NIC IP address: %v", err)
-			}
-			// Find Table ID for NIC
-			tableID, err := networkIntf.FindNextFreeTableID(initialRouteTableID, nicIPAddr)
-			if err != nil {
-				return nil, status.Errorf(codes.Internal, "Error trying to find a free Table ID: %v", err)
-			}
-			// Configure route for NIC & Lustre instance.
-			err = networkIntf.ConfigureRoute(nicName, ip, tableID)
-			if err != nil {
-				return nil, status.Errorf(codes.Internal, "Route configuration for Multi-NIC failed: %v", err)
-			}
-		}
+	// Setup Multi-NIC routing
+	if err := s.setUpMultiNIC(volumeID, ip); err != nil {
+		return nil, err
 	}
 
 	klog.V(5).Infof("NodeStageVolume creating dir %s on node %s", target, nodeName)
@@ -274,6 +266,13 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	vc, err := normalizeVolumeContext(req.GetVolumeContext())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	isIAM := strings.EqualFold(vc[normalize(keyIAMAccessControlEnabled)], "true")
+
 	if acquired := s.volumeLocks.TryAcquire(targetPath); !acquired {
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, targetPath)
 	}
@@ -298,44 +297,34 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 		}
 	}
 
+	podName := vc[normalize(keyPodName)]
+	podNamespace := vc[normalize(keyPodNamespace)]
 	nodeName := s.driver.config.NodeID
 
-	mounted, err := s.isMounted(targetPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if mounted {
-		if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
-			klog.Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
-			if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-				klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
-			}
-
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-
-		return &csi.NodePublishVolumeResponse{}, nil
-	}
-
-	klog.V(5).Infof("NodePublishVolume creating dir %s on node %s", targetPath, nodeName)
+	klog.V(5).Infof("NodePublishVolume creating target dir %s on node %s for pod %s/%s", targetPath, nodeName, podNamespace, podName)
 	if err := makeDir(targetPath); err != nil {
 		return nil, status.Errorf(codes.Internal, "Could not create dir %q on node %s: %v", targetPath, nodeName, err)
 	}
 
-	if err := s.mounter.MountSensitiveWithoutSystemd(stagingTargetPath, targetPath, "lustre", mountOptions, nil); err != nil {
-		klog.Errorf("Mount %q failed on node %s, cleaning up", targetPath, nodeName)
-		if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
-		}
-
-		return nil, status.Errorf(codes.Internal, "mount %q failed on node %s: %v", targetPath, nodeName, err.Error())
+	targetMounted, err := s.isMounted(targetPath)
+	if err != nil {
+		return nil, err
 	}
 
-	klog.V(4).Infof("NodePublishVolume successfully mounted %s on node %s", targetPath, nodeName)
+	if isIAM {
+		if err := s.publishIAMVolume(volumeID, targetPath, targetMounted, vc, mountOptions, volCap); err != nil {
+			return nil, err
+		}
+	} else if !targetMounted {
+		// For non-IAM volumes, perform a bind mount from staging path to target path.
+		klog.V(5).Infof("NodePublishVolume: bind mounting staging path %s to target path %s", stagingTargetPath, targetPath)
+		if err := s.mounter.MountSensitiveWithoutSystemd(stagingTargetPath, targetPath, "lustre", mountOptions, nil); err != nil {
+			return nil, status.Errorf(codes.Internal, "Legacy bind mount failed: %v", err)
+		}
+	}
 
 	if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
-		klog.Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
+		klog.V(5).Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
 		if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
 		}
@@ -344,6 +333,153 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 	}
 
 	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+// publishIAMVolume manages the global mount, token lifecycle, reference counting,
+// and bind mounting for IAM-enabled volumes.
+func (s *nodeServer) publishIAMVolume(volumeID, targetPath string, targetMounted bool, vc map[string]string, mountOptions []string, volCap *csi.VolumeCapability) error {
+	podUID := vc[normalize(keyPodUID)]
+	namespace := vc[normalize(keyPodNamespace)]
+	saName := vc[normalize(keyServiceAccount)]
+
+	if len(podUID) == 0 {
+		return status.Errorf(codes.InvalidArgument, "Pod UID not provided for %s", volumeID)
+	}
+
+	if len(namespace) == 0 {
+		return status.Errorf(codes.InvalidArgument, "Pod namespace not provided for %s", volumeID)
+	}
+	if len(saName) == 0 {
+		return status.Errorf(codes.InvalidArgument, "Service account name not provided for %s", volumeID)
+	}
+
+	principal := fmt.Sprintf("%s/%s", namespace, saName)
+	key := computeHash(volumeID + principal)
+	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
+
+	// Acquire lock on the global key to serialize mounting for the same IAM role.
+	if acquired := s.volumeLocks.TryAcquire(key); !acquired {
+		return status.Errorf(codes.Aborted, "Operation exists for key %s", key)
+	}
+	defer s.volumeLocks.Release(key)
+
+	klog.V(5).Infof("publishIAMVolume: Workload Identity principal %q (hash key %q)", principal, key)
+
+	if err := makeGlobalDirs(key); err != nil {
+		return status.Errorf(codes.Internal, "Failed to make global directories for key %s: %v", key, err)
+	}
+	klog.V(5).Infof("publishIAMVolume: Verified global directory under %s", filepath.Join(GlobalMountRoot, key))
+
+	// Parse and update the service token file for Lustre client authentication.
+	projectID := s.driver.config.MetadataService.GetProject()
+	audience := fmt.Sprintf("%s.svc.id.goog", projectID)
+
+	tokenJSON, ok := vc[normalize(keyServiceToken)]
+	if !ok {
+		return status.Errorf(codes.InvalidArgument, "token not found for IAM volume %s", volumeID)
+	}
+
+	token, err := parseToken(tokenJSON, audience)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "failed to parse token for key %s: %v", key, err)
+	}
+
+	if err := updateTokenFile(key, token); err != nil {
+		klog.Errorf("Failed to update token file for key %s: %v", key, err)
+		return status.Errorf(codes.Internal, "failed to update token file: %v", err)
+	}
+	klog.V(4).Infof("publishIAMVolume: Successfully parsed and updated token file at %s", filepath.Join(GlobalMountRoot, key, "token"))
+
+	// Mount the global path if not already mounted.
+	globalMounted, err := s.isMounted(globalMountPath)
+	if err != nil {
+		return err
+	}
+
+	if !globalMounted {
+		if err := s.mountGlobalIAM(volumeID, globalMountPath, principal, key, vc, volCap); err != nil {
+			return err
+		}
+	}
+
+	// Record pod reference per volume to safely manage unmounting during teardown.
+	if err := addPodReference(key, podUID, volumeID); err != nil {
+		return status.Errorf(codes.Internal, "Failed to add pod reference: %v", err)
+	}
+
+	if !targetMounted {
+		klog.Infof("Bind mounting %s to %s", globalMountPath, targetPath)
+		if err := s.mounter.MountSensitiveWithoutSystemd(globalMountPath, targetPath, "lustre", mountOptions, nil); err != nil {
+			// Clean up the pod reference if the bind mount fails to prevent stale references.
+			if err := removePodReference(key, podUID); err != nil {
+				klog.Errorf("Failed to clean up pod reference for pod %s, volume %s: %v", podUID, volumeID, err)
+			}
+			if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+				klog.Errorf("Failed to clean up target mount point %q: %v", targetPath, unmntErr)
+			}
+			return status.Errorf(codes.Internal, "Bind mount failed for volume %q to target path %q: %v", volumeID, targetPath, err)
+		}
+	}
+
+	return nil
+}
+
+// mountGlobalIAM parses target storage endpoints, configures multi-NIC routing,
+// and mounts the Lustre instance to the per-principal global mount path.
+func (s *nodeServer) mountGlobalIAM(volumeID, globalMountPath, principal, key string, vc map[string]string, volCap *csi.VolumeCapability) error {
+	ip := vc[normalize(keyInstanceIP)]
+	fsname := vc[normalize(keyFilesystem)]
+	mountPoint := vc[normalize(keyMountPoint)]
+
+	if len(mountPoint) != 0 {
+		var err error
+		ip, fsname, err = parseMountPoint(mountPoint)
+		if err != nil {
+			return status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
+
+	if len(ip) == 0 {
+		return status.Error(codes.InvalidArgument, "Lustre instance IP is not provided")
+	}
+
+	if len(fsname) == 0 {
+		return status.Error(codes.InvalidArgument, "Lustre filesystem name is not provided")
+	}
+
+	nodeName := s.driver.config.NodeID
+
+	// Configure multi-NIC routing for IAM volumes since NodeStageVolume is bypassed.
+	if err := s.setUpMultiNIC(volumeID, ip); err != nil {
+		return err
+	}
+
+	// Perform secure mount with Workload Identity user credentials.
+	source := fmt.Sprintf("%s@tcp:/%s", ip, fsname)
+	userOpt := fmt.Sprintf("user=gke-wi://%s+%s", principal, key)
+	iamMountOptions := []string{userOpt}
+
+	if m := volCap.GetMount(); m != nil {
+		for _, f := range m.GetMountFlags() {
+			if !hasOption(iamMountOptions, f) {
+				iamMountOptions = append(iamMountOptions, f)
+			}
+		}
+	}
+
+	klog.V(5).Infof("mountGlobalIAM mounting volume %s to path %s on node %s with mountOptions %v", volumeID, globalMountPath, nodeName, iamMountOptions)
+	if err := s.mounter.MountSensitiveWithoutSystemd(source, globalMountPath, "lustre", iamMountOptions, nil); err != nil {
+		klog.Errorf("Mount %q failed on node %s for principal %s, cleaning up", globalMountPath, nodeName, principal)
+		if unmntErr := mount.CleanupMountPoint(globalMountPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+			klog.Errorf("Unmount %q failed on node %s for principal %s: %v", globalMountPath, nodeName, principal, unmntErr.Error())
+		}
+
+		return status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, globalMountPath, nodeName, err)
+	}
+
+	klog.V(4).Infof("mountGlobalIAM successfully mounted volume %v for principal %s to path %s on node %s", volumeID, principal, globalMountPath, nodeName)
+
+	return nil
 }
 
 func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
@@ -378,6 +514,33 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
+}
+
+func (s *nodeServer) setUpMultiNIC(volumeID, ip string) error {
+	if len(s.driver.config.AdditionalNics) == 0 {
+		return nil
+	}
+
+	netlinker := network.NewNetlink()
+	nodeClient := network.NewK8sClient()
+	networkIntf := network.Manager(netlinker, nodeClient, s.driver.config.MetadataService)
+	klog.V(4).Infof("Multi Nic feature is enabled and will configure route for Lustre instance: %s, IP: %s", volumeID, ip)
+	nics := s.driver.config.AdditionalNics
+	for _, nicName := range nics {
+		nicIPAddr, err := networkIntf.GetNICIPAddr(nicName)
+		if err != nil {
+			return status.Errorf(codes.Internal, "Could not get NIC IP address: %v", err)
+		}
+		tableID, err := networkIntf.FindNextFreeTableID(initialRouteTableID, nicIPAddr)
+		if err != nil {
+			return status.Errorf(codes.Internal, "Error trying to find a free Table ID: %v", err)
+		}
+		err = networkIntf.ConfigureRoute(nicName, ip, tableID)
+		if err != nil {
+			return status.Errorf(codes.Internal, "Route configuration for Multi-NIC failed: %v", err)
+		}
+	}
+	return nil
 }
 
 func (s *nodeServer) NodeGetVolumeStats(_ context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
@@ -617,5 +780,66 @@ func setVolumeOwnershipTopLevel(volumeID, dir, fsGroup string, readOnly bool) er
 	}
 	klog.InfoS("NodePublishVolume successfully changed ownership and permissions of top-level directory", "volume", volumeID, "path", dir, "fsGroup", fsGroup)
 
+	return nil
+}
+
+// Global Mount Helpers
+
+func makeGlobalDirs(key string) error {
+	mountPath := filepath.Join(GlobalMountRoot, key, "mount")
+	refsPath := filepath.Join(GlobalMountRoot, key, "refs")
+	if err := makeDir(mountPath); err != nil {
+		return err
+	}
+	if err := makeDir(refsPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func updateTokenFile(key, token string) error {
+	tokenPath := filepath.Join(GlobalMountRoot, key, "token")
+	tmpPath := tokenPath + ".tmp"
+	// Write to a temporary file first to ensure atomic update and avoid race conditions with the upcall binary.
+	if err := os.WriteFile(tmpPath, []byte(token), 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, tokenPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func parseToken(tokenJSON, audience string) (string, error) {
+	// Format: {"audience": {"token": "...", "expirationTimestamp": "..."}}
+	var tokens map[string]struct {
+		Token               string `json:"token"`
+		ExpirationTimestamp string `json:"expirationTimestamp"`
+	}
+	if err := json.Unmarshal([]byte(tokenJSON), &tokens); err != nil {
+		return "", err
+	}
+	if t, ok := tokens[audience]; ok {
+		return t.Token, nil
+	}
+	return "", fmt.Errorf("token for audience %q not found", audience)
+}
+
+func addPodReference(key, podUID, volumeID string) error {
+	refPath := filepath.Join(GlobalMountRoot, key, "refs", podUID)
+	if exists, err := pathExists(refPath); err == nil && exists {
+		return nil
+	}
+	// Write volumeID to the ref file to verify ownership during unpublish
+	klog.V(4).Infof("Adding pod reference for pod UID %s, volume %s at %s", podUID, volumeID, refPath)
+	return os.WriteFile(refPath, []byte(volumeID), 0644)
+}
+
+func removePodReference(key, podUID string) error {
+	refPath := filepath.Join(GlobalMountRoot, key, "refs", podUID)
+	if err := os.Remove(refPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove reference file %q: %w", refPath, err)
+	}
 	return nil
 }
