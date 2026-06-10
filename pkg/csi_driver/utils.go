@@ -18,6 +18,8 @@ package driver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -143,4 +145,11 @@ func normalize(input string) string {
 	normalized = strings.ToLower(normalized)
 
 	return normalized
+}
+
+// computeHash computes the SHA-256 hash of a string and returns it as a hex-encoded string.
+func computeHash(s string) string {
+	h := sha256.New()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
 }
