@@ -47903,7 +47903,7 @@
       }
     }
   },
-  "revision": "20260520",
+  "revision": "20260612",
   "rootUrl": "https://compute.googleapis.com/",
   "schemas": {
     "AWSV4Signature": {
@@ -67213,14 +67213,14 @@
       "id": "InstanceGroupManagerInstanceLifecyclePolicy",
       "properties": {
         "defaultActionOnFailure": {
-          "description": "The action that a MIG performs on a failed or an unhealthy VM.\nA VM is marked as unhealthy when the application running on that\nVM fails a health check.\nValid values are \n   \n   - REPAIR (default): MIG automatically repairs a failed or\n   an unhealthy VM by recreating it. For more information, see About\n   repairing VMs in a MIG.\n   - DO_NOTHING: MIG does not repair a failed or an unhealthy\n   VM.",
+          "description": "The action that a MIG performs on a failed VM. If the value of the\nonFailedHealthCheck field is `DEFAULT_ACTION`, then the same action also\napplies to the VMs on which your application fails a health check.\nValid values are \n   \n   - REPAIR (default): MIG automatically repairs a failed VM\n   by recreating it. For more information, see About\n   repairing VMs in a MIG.\n   - DO_NOTHING: MIG does not repair a failed VM.",
           "enum": [
             "DO_NOTHING",
             "REPAIR"
           ],
           "enumDescriptions": [
-            "MIG does not repair a failed or an unhealthy VM.",
-            "(Default) MIG automatically repairs a failed or an unhealthy\nVM by recreating it. For more information, see About\nrepairing VMs in a MIG."
+            "MIG does not repair a failed VM.",
+            "(default): MIG automatically repairs a failed VM by recreating it.\nFor more information, see About\nrepairing VMs in a MIG."
           ],
           "type": "string"
         },
@@ -67247,6 +67247,29 @@
             "(Default) MIG uses the same action configured for\ninstanceLifecyclePolicy.defaultActionOnFailure field.",
             "MIG doesn't repair an unhealthy VM.",
             "MIG automatically repairs an unhealthy VM by recreating it."
+          ],
+          "type": "string"
+        },
+        "onRepair": {
+          "$ref": "InstanceGroupManagerInstanceLifecyclePolicyOnRepair",
+          "description": "Configuration for VM repairs in the MIG."
+        }
+      },
+      "type": "object"
+    },
+    "InstanceGroupManagerInstanceLifecyclePolicyOnRepair": {
+      "description": "Configuration for VM repairs in the MIG.",
+      "id": "InstanceGroupManagerInstanceLifecyclePolicyOnRepair",
+      "properties": {
+        "allowChangingZone": {
+          "description": "Specifies whether the MIG can change a VM's zone during a repair.\nValid values are:\n   \n   - NO (default): MIG cannot change a VM's zone during a\n   repair.\n   - YES: MIG can select a different zone for the VM during\n   a repair.",
+          "enum": [
+            "NO",
+            "YES"
+          ],
+          "enumDescriptions": [
+            "[Default] MIG cannot change a VM's zone during a repair.",
+            "MIG can select a different zone for the VM during a repair."
           ],
           "type": "string"
         }
@@ -71669,6 +71692,11 @@
         },
         "description": {
           "description": "An optional description of this resource. Provide this property when you\ncreate the resource.",
+          "type": "string"
+        },
+        "effectiveLocation": {
+          "description": "Output only. URL of the InterconnectLocation object that represents where\nthis connection is to be provisioned. By default it will be the same as the\nlocation field.",
+          "readOnly": true,
           "type": "string"
         },
         "expectedOutages": {
@@ -79694,6 +79722,13 @@
         },
         "aliasIpRanges": {
           "description": "An array of alias IP ranges for this network interface.\nYou can only specify this field for network interfaces in VPC networks.",
+          "items": {
+            "$ref": "AliasIpRange"
+          },
+          "type": "array"
+        },
+        "aliasIpv6Ranges": {
+          "description": "An array of alias IPv6 ranges for this network interface.\nYou can only specify this field for network interfaces in VPC networks.",
           "items": {
             "$ref": "AliasIpRange"
           },
@@ -90131,6 +90166,11 @@
       "description": "Represents a reservation block resource.",
       "id": "ReservationBlock",
       "properties": {
+        "blockHealthInfo": {
+          "$ref": "ReservationBlockHealthInfo",
+          "description": "Output only. [Output Only] Health information for the reservation block.",
+          "readOnly": true
+        },
         "count": {
           "description": "Output only. [Output Only] The number of resources that are allocated in this\nreservation block.",
           "format": "int32",
@@ -90141,11 +90181,6 @@
           "description": "Output only. [Output Only] Creation timestamp inRFC3339 text format.",
           "readOnly": true,
           "type": "string"
-        },
-        "healthInfo": {
-          "$ref": "ReservationBlockHealthInfo",
-          "description": "Output only. [Output Only] Health information for the reservation block.",
-          "readOnly": true
         },
         "id": {
           "description": "Output only. [Output Only] The unique identifier for the resource. This identifier is\ndefined by the server.",
@@ -90991,11 +91026,6 @@
           "readOnly": true,
           "type": "string"
         },
-        "healthInfo": {
-          "$ref": "ReservationSubBlockHealthInfo",
-          "description": "Output only. [Output Only] Health information for the reservation subBlock.",
-          "readOnly": true
-        },
         "id": {
           "description": "Output only. [Output Only] The unique identifier for the resource. This identifier is\ndefined by the server.",
           "format": "uint64",
@@ -91061,6 +91091,11 @@
           ],
           "readOnly": true,
           "type": "string"
+        },
+        "subBlockHealthInfo": {
+          "$ref": "ReservationSubBlockHealthInfo",
+          "description": "Output only. [Output Only] Health information for the reservation subBlock.",
+          "readOnly": true
         },
         "zone": {
           "description": "Output only. [Output Only] Zone in which the reservation subBlock resides.",
@@ -94893,6 +94928,12 @@
           },
           "type": "array"
         },
+        "effectiveTcpTimeWaitTimeoutSec": {
+          "description": "Output only. Effective timeout (in seconds) for TCP connections that are in TIME_WAIT\nstate. This value is equal to tcp_time_wait_timeout_sec.\nIf tcp_time_wait_timeout_sec isn't set, the effective timeout is 30s or\n120s. The field is output only.",
+          "format": "int32",
+          "readOnly": true,
+          "type": "integer"
+        },
         "enableDynamicPortAllocation": {
           "description": "Enable Dynamic Port Allocation.\n\n\nIf not specified, it is disabled by default.\n\n\nIf set to true,\n   \n   - Dynamic Port Allocation will be enabled on this NAT\n   config.\n   - enableEndpointIndependentMapping cannot be set to true.\n   - If minPorts is set, minPortsPerVm must be set to a\n   power of two greater than or equal to 32. If minPortsPerVm is not set, a\n   minimum of 32 ports will be allocated to a VM from this NAT\n   config.",
           "type": "boolean"
@@ -97041,6 +97082,35 @@
     "SecurityPolicyDdosProtectionConfig": {
       "id": "SecurityPolicyDdosProtectionConfig",
       "properties": {
+        "ddosAdaptiveProtection": {
+          "enum": [
+            "DDOS_ADAPTIVE_PROTECTION_UNSPECIFIED",
+            "DISABLED",
+            "ENABLED",
+            "PREVIEW",
+            "UNSPECIFIED_ADAPTIVE_PROTECTION"
+          ],
+          "enumDeprecated": [
+            false,
+            false,
+            false,
+            false,
+            true
+          ],
+          "enumDescriptions": [
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          "type": "string"
+        },
+        "ddosImpactedBaselineThreshold": {
+          "description": "DDoS Protection for Network Load Balancers (and VMs with public IPs)\nbuilds DDoS mitigations that minimize collateral damage. It quantifies\nthis as the fraction of a non-abuse baseline that's inadvertently\nblocked.\n\nRules whose collateral damage exceeds ddosImpactedBaselineThreshold will\nnot be deployed. Using a lower value will prioritize keeping collateral\ndamage low, possibly at the cost of its effectiveness in rate limiting\nsome or all of the attack. It should typically be unset, so Advanced DDoS\n(and Adaptive Protection) uses the best mitigation it can find. Setting\nthe threshold is advised if there are logs for false positive detections\nwith high collateral damage, and will cause Advanced DDoS to attempt to\nfind a less aggressive rule that satisfies the constraint. If a suitable\nrule cannot be found, the system falls back to either no mitigation for\nsmaller attacks or broader network throttles for larger ones.",
+          "format": "float",
+          "type": "number"
+        },
         "ddosProtection": {
           "enum": [
             "ADVANCED",
@@ -97921,6 +97991,11 @@
           "description": "Name of the resource. Provided by the client when the resource is created.\nThe name must be 1-63 characters long, and comply withRFC1035.\nSpecifically, the name must be 1-63 characters long and match the regular\nexpression `[a-z]([-a-z0-9]*[a-z0-9])?` which means the first\ncharacter must be a lowercase letter, and all following characters must\nbe a dash, lowercase letter, or digit, except the last character, which\ncannot be a dash.",
           "pattern": "[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?",
           "type": "string"
+        },
+        "natIpsPerEndpoint": {
+          "description": "The number of NAT IP addresses to be allocated per connected endpoint.\nIf not specified, the default value is 1.",
+          "format": "uint32",
+          "type": "integer"
         },
         "natSubnets": {
           "description": "An array of URLs where each entry is the URL of a subnet provided\nby the service producer to use for NAT in this service attachment.",
@@ -98924,7 +98999,7 @@
           "type": "string"
         },
         "storageBytesStatus": {
-          "description": "Output only. [Output Only] An indicator whether storageBytes is in a\nstable state or it is being adjusted as a result of shared storage\nreallocation. This status can either be UPDATING, meaning\nthe size of the snapshot is being updated, or UP_TO_DATE,\nmeaning the size of the snapshot is up-to-date.",
+          "description": "Output only. [Deprecated] Instead, check the storageBytes field. After\nsnapshot creation, the storageBytesStatus field is alwaysUP_TO_DATE.\n[Output Only] An indicator whether storageBytes is in a\nstable state or it is being adjusted as a result of shared storage\nreallocation. This status can either be unset, meaning the snapshot is\nbeing created, or UP_TO_DATE, meaning the size of the snapshot\nis up-to-date.",
           "enum": [
             "UPDATING",
             "UP_TO_DATE"
@@ -106286,6 +106361,22 @@
           "default": "compute#targetTcpProxy",
           "description": "Output only. [Output Only] Type of the resource. Alwayscompute#targetTcpProxy for target TCP proxies.",
           "readOnly": true,
+          "type": "string"
+        },
+        "loadBalancingScheme": {
+          "description": "Specifies the type of load balancing scheme used by this target proxy.",
+          "enum": [
+            "EXTERNAL",
+            "EXTERNAL_MANAGED",
+            "INTERNAL_MANAGED",
+            "LOAD_BALANCING_SCHEME_UNSPECIFIED"
+          ],
+          "enumDescriptions": [
+            "",
+            "",
+            "",
+            ""
+          ],
           "type": "string"
         },
         "name": {
