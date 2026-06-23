@@ -39,59 +39,41 @@ spec:
           type: RuntimeDefault
       priorityClassName: csi-lustre-node
       serviceAccount: lustre-csi-node-sa
-      nodeSelector:
-        kubernetes.io/os: linux
-        cloud.google.com/gke-os-distribution: cos
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+                  - key: cloud.google.com/gke-os-distribution
+                    operator: In
+                    values:
+                      - cos
+                      - ubuntu
       initContainers:
-      - name: disable-loadpin
-        image: gcr.io/cos-cloud/cos-dkms
-        securityContext:
-          privileged: true
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            # Disable LoadPin if it's not already disabled
-            if cat /proc/cmdline | grep "loadpin"; then
-              echo "LoadPin has already been disabled. Move to kmod installation."
-            else
-              echo "Sleep 60s until the node is ready"
-              sleep 60
-              echo "LoadPin is not disabled. Disabling LoadPin now."
-              mkdir -p /mnt/disks
-              mount /dev/disk/by-label/EFI-SYSTEM /mnt/disks
-              sed -i -e 's|module.sig_enforce=0|module.sig_enforce=0 loadpin.enforce=0|g' /mnt/disks/efi/boot/grub.cfg
-              umount /mnt/disks
-              echo 1 > /proc/sys/kernel/sysrq
-              echo b > /proc/sysrq-trigger
-            fi
-        volumeMounts:
-        - name: dev
-          mountPath: /dev
-      - name: install-lustre-mods
-        image: gcr.io/cos-cloud/cos-dkms
-        securityContext:
-         privileged: true
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            # Install the Lustre client drivers.
-            #
-            # --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
-            # --module-version: Sets the lustre client driver version.
-            # --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
-            # --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
-            # --insert-on-install: Inserts the module into the kernel after installation.
-            # --module-arg lnet.accept_port=6988: This is crucial for setting the LNET port.
-            #                                     Lustre uses LNET for network communication, and this
-            #                                     parameter configures the port LNET will use. This is
-            #                                     essential for proper communication between Lustre clients
-            #                                     and servers. In this case, we're setting it to 6988.
-            /usr/bin/cos-dkms install lustre-client-drivers --gcs-bucket=cos-default --latest -w 0 --kernelmodulestree=/host_modules --module-arg=lnet.accept_port=6988 --lsb-release-path=/host_etc/lsb-release --insert-on-install --logtostderr
-        volumeMounts:
-        - name: host-etc
-          mountPath: /host_etc/lsb-release
-        - name: host-modules
-          mountPath: /host_modules
+        - name: lustre-kmod-installer
+          securityContext:
+            privileged: true
+          image: gke.gcr.io/lustre-kmod-installer
+          imagePullPolicy: Always
+          args:
+            - --v=5
+            - --nodeid=$(KUBE_NODE_NAME)
+            - --disable-multi-nic=false
+            - --enable-legacy-lustre-port=false
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: host-etc
+              mountPath: /host_etc/lsb-release
+            - name: host-modules
+              mountPath: /host_modules
       containers:
         - name: lustre-csi-driver
           securityContext:
@@ -122,6 +104,10 @@ spec:
               mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
+            - name: host-udev
+              mountPath: /host_etc_udev
+            - name: dev
+              mountPath: /dev
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -166,12 +152,18 @@ spec:
         - name: host-etc
           hostPath:
             path: /etc/lsb-release
+            type: File
         - name: host-modules
           hostPath:
             path: /lib/modules
+        - name: host-udev
+          hostPath:
+            path: /etc/udev
+            type: Directory
         - name: dev
           hostPath:
             path: /dev
+            type: Directory
       # https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
       # See "special case". This will tolerate everything. Node component should
       # be scheduled on all nodes.
