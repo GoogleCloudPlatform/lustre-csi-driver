@@ -20,12 +20,14 @@
 image:
   lustre:
     repository: "us.gcr.io/gke-release/lustre-csi-driver"
-    tag: v0.4.12-gke.0
+    tag: v0.6.9-gke.4
     pullPolicy: Always
   kmod:
     repository: "us.gcr.io/gke-release/lustre-kmod-installer"
-    tag: v0.4.12-gke.0
+    tag: v0.6.9-gke.4
     pullPolicy: Always
+    enableLegacyLustrePort: false
+    disableMultiNic: false
 
 sidecars:
   image:
