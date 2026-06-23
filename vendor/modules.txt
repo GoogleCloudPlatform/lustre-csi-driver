@@ -280,7 +280,7 @@ github.com/onsi/gomega/matchers/support/goraph/edge
 github.com/onsi/gomega/matchers/support/goraph/node
 github.com/onsi/gomega/matchers/support/goraph/util
 github.com/onsi/gomega/types
-# github.com/opencontainers/runc v1.3.3
+# github.com/opencontainers/runc v1.3.6
 ## explicit; go 1.23.0
 github.com/opencontainers/runc/libcontainer/userns
 # github.com/pelletier/go-toml/v2 v2.4.1
