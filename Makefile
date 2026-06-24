@@ -126,14 +126,10 @@ generate-spec-yaml:
 		echo "  template:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
 		echo "    spec:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
 		echo "      initContainers:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
-		echo "      - name: disable-loadpin" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
-		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
-		echo "      - name: install-lustre-mods" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
+		echo "      - name: lustre-kmod-installer" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
 		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
 		echo "      volumes:" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
 		echo "      - name: host-modules" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
-		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
-		echo "      - name: dev" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
 		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
 		echo "      - name: host-etc" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \
 		echo "        \$$patch: delete" >> ./deploy/overlays/${OVERLAY}/patch-remove-kmod.yaml; \

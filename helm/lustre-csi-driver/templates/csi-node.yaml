@@ -44,16 +44,20 @@ spec:
       initContainers:
       - name: lustre-kmod-installer
         image: "{{ .Values.image.kmod.repository }}:{{ .Values.image.kmod.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.kmod.pullPolicy | default "Always" }}
         securityContext:
-         privileged: true
+          privileged: true
+        args:
+          - --v=5
+          - --nodeid=$(KUBE_NODE_NAME)
+          - --enable-legacy-lustre-port={{ .Values.image.kmod.enableLegacyLustrePort }}
+          - --disable-multi-nic={{ .Values.image.kmod.disableMultiNic }}
         env:
-        - name: ENABLE_LEGACY_LUSTRE_PORT
-          value: "true"
-        - name: CHECK_LOADPIN
-          value: "true"
+          - name: KUBE_NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
         volumeMounts:
-        - name: dev
-          mountPath: /dev
         - name: host-etc
           mountPath: /host_etc/lsb-release
         - name: host-modules
@@ -88,6 +92,10 @@ spec:
               mountPropagation: "Bidirectional"
             - name: socket-dir
               mountPath: /csi
+            - name: host-udev
+              mountPath: /host_etc_udev
+            - name: dev
+              mountPath: /dev
         - name: csi-driver-registrar
           securityContext:
             readOnlyRootFilesystem: true
@@ -136,8 +144,13 @@ spec:
         - name: host-modules
           hostPath:
             path: /lib/modules
+        - name: host-udev
+          hostPath:
+            path: /etc/udev
+            type: Directory
         - name: dev
           hostPath:
             path: /dev
+            type: Directory
       tolerations:
         - operator: Exists
