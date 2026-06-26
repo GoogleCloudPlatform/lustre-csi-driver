@@ -40,7 +40,7 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dea
     echo "deb [signed-by=/usr/share/keyrings/lustre-client.gpg] ar+https://us-apt.pkg.dev/projects/lustre-client-binaries lustre-client-ubuntu-noble main" | tee -a /etc/apt/sources.list.d/artifact-registry.list && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.12 /usr/bin/cos-dkms /usr/bin/cos-dkms
+COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.14 /usr/bin/cos-dkms /usr/bin/cos-dkms
 COPY --from=builder /bin/lustre-kmod-installer /usr/bin/lustre-kmod-installer
 
 ENTRYPOINT ["/usr/bin/lustre-kmod-installer"]
