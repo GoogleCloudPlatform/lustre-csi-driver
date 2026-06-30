@@ -19,12 +19,14 @@ package driver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
@@ -52,8 +54,10 @@ const (
 )
 
 var (
-	GlobalMountRoot = "/var/lib/lustre/mounts"
-	mountPointRegex = regexp.MustCompile(`^(.+)@tcp:/([^/]+)$`)
+	GlobalMountRoot    = "/var/lib/lustre/mounts"
+	mountPointRegex    = regexp.MustCompile(`^(.+)@tcp:/([^/]+)$`)
+	iamKeyExtractRegex = regexp.MustCompile(`[/\\]([^/\\]+)[/\\]refs[/\\][^/\\]+$`)
+	podUIDRegex        = regexp.MustCompile(`/pods/([^/]+)/volumes`)
 )
 
 type nodeServer struct {
@@ -513,6 +517,10 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	if err := s.cleanUpIAMReference(targetPath); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to clean up IAM reference directories: %v", err)
+	}
+
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
@@ -841,5 +849,112 @@ func removePodReference(key, podUID string) error {
 	if err := os.Remove(refPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove reference file %q: %w", refPath, err)
 	}
+	return nil
+}
+
+func getPodUIDFromTargetPath(path string) (string, error) {
+	// Path: /var/lib/kubelet/pods/<podUID>/volumes/kubernetes.io~csi/<pvName>/mount
+	matches := podUIDRegex.FindStringSubmatch(path)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("could not extract pod UID from path %s", path)
+	}
+	return matches[1], nil
+}
+
+func (s *nodeServer) cleanUpIAMReference(targetPath string) error {
+	podUID, err := getPodUIDFromTargetPath(targetPath)
+	if err != nil {
+		klog.V(5).Infof("Failed to extract pod UID from target path %q (likely non-IAM volume): %v", targetPath, err)
+		return nil
+	}
+
+	// Find all instances of this podUID across all keys using a targeted glob pattern.
+	// This lets the filesystem optimize the search rather than doing nested Go loops.
+	pattern := filepath.Join(GlobalMountRoot, "*", "refs", podUID)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("failed to glob pod references: %w", err)
+	}
+
+	var errs []error
+	for _, refPath := range matches {
+		klog.Infof("Found IAM pod reference at %s, cleaning up", refPath)
+
+		// Extract the volume key from the matched path using regex
+		match := iamKeyExtractRegex.FindStringSubmatch(refPath)
+		if len(match) < 2 {
+			klog.Errorf("Path %q does not match expected format", refPath)
+			continue
+		}
+		key := match[1]
+
+		// Locks must be released per iteration. Since defer is function-scoped, delegate to a helper method.
+		if err := s.cleanUpIAMReferenceForKey(key, refPath); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+
+	return nil
+}
+
+func (s *nodeServer) cleanUpIAMReferenceForKey(key, refPath string) error {
+	// Acquire a lock to prevent races with concurrent mounts.
+	if acquired := s.volumeLocks.TryAcquire(key); !acquired {
+		return fmt.Errorf("could not acquire lock for key %s; operation in progress", key)
+	}
+	defer s.volumeLocks.Release(key)
+
+	// Delete the pod-specific marker file.
+	if err := os.Remove(refPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove pod reference %q: %w", refPath, err)
+	}
+
+	// Attempt to remove the 'refs' directory.
+	// If os.Remove succeeds, this was the last pod using this shared mount key.
+	refsDir := filepath.Join(GlobalMountRoot, key, "refs")
+	var pathErr *os.PathError
+	if err := os.Remove(refsDir); err != nil {
+		// Outcome 1: The directory doesn't exist because another thread already deleted it.
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+
+		// Outcome 2: The directory is still there. This could be syscall.ENOTEMPTY, or a permission/I/O issue.
+		// NOTE: This is Linux-specific. Adjust if Windows support is needed.
+		if errors.As(err, &pathErr) && pathErr.Err == syscall.ENOTEMPTY {
+			klog.V(5).Infof("Global mount for key %s is still shared by other pods", key)
+			return nil
+		}
+
+		return fmt.Errorf("unexpected error checking refs directory %q: %w", refsDir, err)
+	}
+
+	// Outcome 3: If we successfully removed refsDir, this is the last pod. Cleanup the global mount.
+	klog.Infof("No more pod references for key %s. Unmounting global path.", key)
+	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
+
+	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(globalMountPath); !notMnt {
+		// Manual unmount to clear transport-shutdown or corrupted states.
+		klog.V(4).Infof("Performing explicit unmount of global path %q", globalMountPath)
+		if err := s.mounter.Unmount(globalMountPath); err != nil {
+			return fmt.Errorf("failed robust unmount of global path %q: %w", globalMountPath, err)
+		}
+	}
+
+	// Cleanup to verify unmount and remove the 'mount' directory.
+	if err := mount.CleanupMountPoint(globalMountPath, s.mounter, false /* extensiveMountPointCheck */); err != nil {
+		return fmt.Errorf("failed standard cleanup for global mount point %q: %w", globalMountPath, err)
+	}
+
+	// Clean up the entire key folder
+	keyDir := filepath.Join(GlobalMountRoot, key)
+	if err := os.RemoveAll(keyDir); err != nil {
+		return fmt.Errorf("failed to clean up global directories for key %s: %v", key, err)
+	}
+
 	return nil
 }
