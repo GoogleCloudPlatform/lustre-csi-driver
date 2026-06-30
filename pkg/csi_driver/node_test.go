@@ -652,6 +652,187 @@ func TestNodeUnpublishVolume(t *testing.T) {
 	}
 }
 
+func TestNodeUnpublishVolume_IAM(t *testing.T) {
+	// Reassign GlobalMountRoot to t.TempDir() for isolation.
+	origGlobalMountRoot := GlobalMountRoot
+	GlobalMountRoot = t.TempDir()
+	defer func() { GlobalMountRoot = origGlobalMountRoot }()
+
+	defaultPerm := os.FileMode(0o750) + os.ModeDir
+	testKey := "71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"
+
+	basePath := t.TempDir()
+	stagingTargetPath := filepath.Join(basePath, "staging")
+	_ = stagingTargetPath
+
+	podUID1 := "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
+	podUID2 := "b2c3d4e5-f6a7-8b9c-0d1e-2f3a4b5c6d7e"
+
+	targetPath1 := filepath.Join(basePath, "pods", podUID1, "volumes", "kubernetes.io~csi", "vol-a", "mount")
+	targetPath2 := filepath.Join(basePath, "pods", podUID2, "volumes", "kubernetes.io~csi", "vol-b", "mount")
+
+	cases := []struct {
+		name                string
+		targetPath          string
+		targetPodUID        string
+		targetVolumeID      string
+		setupRefs           []string
+		setupGlobalMounted  bool
+		expectGlobalUnmount bool
+		expectKeyDirDeleted bool
+		expectRemainingRefs []string
+		expectErr           bool
+	}{
+		{
+			name:                "successful unpublish with other active pod references remaining",
+			targetPath:          targetPath1,
+			targetPodUID:        podUID1,
+			targetVolumeID:      "vol-a",
+			setupRefs:           []string{podUID1, podUID2},
+			setupGlobalMounted:  true,
+			expectGlobalUnmount: false,
+			expectKeyDirDeleted: false,
+			expectRemainingRefs: []string{podUID2},
+		},
+		{
+			name:                "successful unpublish of last remaining pod (triggers global teardown)",
+			targetPath:          targetPath2,
+			targetPodUID:        podUID2,
+			targetVolumeID:      "vol-b",
+			setupRefs:           []string{podUID2},
+			setupGlobalMounted:  true,
+			expectGlobalUnmount: true,
+			expectKeyDirDeleted: true,
+			expectRemainingRefs: []string{},
+		},
+		{
+			name:                "unpublish non-IAM volume is skipped or handled gracefully",
+			targetPath:          filepath.Join(basePath, "legacy-mount"),
+			targetPodUID:        "",
+			targetVolumeID:      "vol-legacy",
+			setupRefs:           []string{},
+			expectGlobalUnmount: false,
+			expectKeyDirDeleted: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			keyDir := filepath.Join(GlobalMountRoot, testKey)
+			// Make sure to teardown the directory to handle cases where a subtest fails mid run
+			t.Cleanup(func() { _ = os.RemoveAll(keyDir) })
+			if err := os.RemoveAll(keyDir); err != nil {
+				t.Fatalf("failed to clean up key dir: %v", err)
+			}
+
+			// Build existingMounts dynamically using the temporary paths
+			var existingMounts []mount.MountPoint
+			if tc.setupGlobalMounted {
+				existingMounts = append(existingMounts, mount.MountPoint{
+					Device: "10.0.0.1@tcp:/iamfs",
+					Path:   filepath.Join(keyDir, "mount"),
+					Type:   "lustre",
+				})
+			}
+			existingMounts = append(existingMounts, mount.MountPoint{
+				Device: filepath.Join(keyDir, "mount"),
+				Path:   tc.targetPath,
+				Type:   "lustre",
+			})
+
+			if len(tc.setupRefs) > 0 {
+				refsDir := filepath.Join(keyDir, "refs")
+				if err := os.MkdirAll(refsDir, defaultPerm); err != nil {
+					t.Fatalf("Failed to create refs dir: %v", err)
+				}
+				for _, uid := range tc.setupRefs {
+					refPath := filepath.Join(refsDir, uid)
+					if err := os.WriteFile(refPath, []byte(tc.targetVolumeID), 0644); err != nil {
+						t.Fatalf("Failed to write ref file %q: %v", refPath, err)
+					}
+				}
+				globalMntPath := filepath.Join(keyDir, "mount")
+				if err := os.MkdirAll(globalMntPath, defaultPerm); err != nil {
+					t.Fatalf("Failed to create global mount dir: %v", err)
+				}
+			}
+
+			testEnv := initTestNodeServer(t)
+			testEnv.fm.MountPoints = existingMounts
+
+			// Ensure the target path folder itself exists on disk so isMounted and cleanup checks pass
+			if err := os.MkdirAll(tc.targetPath, defaultPerm); err != nil {
+				t.Fatalf("Failed to create target path directory: %v", err)
+			}
+
+			req := &csi.NodeUnpublishVolumeRequest{
+				VolumeId:   tc.targetVolumeID,
+				TargetPath: tc.targetPath,
+			}
+
+			_, err := testEnv.ns.NodeUnpublishVolume(t.Context(), req)
+			if (err != nil) != tc.expectErr {
+				t.Fatalf("NodeUnpublishVolume returned unexpected error: %v", err)
+			}
+
+			// 1. Verify target path is unmounted
+			for _, m := range testEnv.fm.MountPoints {
+				if m.Path == tc.targetPath {
+					t.Errorf("Target path %q was not unmounted", tc.targetPath)
+				}
+			}
+
+			// 2. Verify remaining reference files
+			if !tc.expectKeyDirDeleted {
+				for _, expectedRef := range tc.expectRemainingRefs {
+					refPath := filepath.Join(keyDir, "refs", expectedRef)
+					exists, err := pathExists(refPath)
+					if err != nil || !exists {
+						t.Errorf("Expected reference file %q to remain, but it was missing", refPath)
+					}
+				}
+
+				// Check that deleted references are actually gone
+				if tc.targetPodUID != "" {
+					deletedRefPath := filepath.Join(keyDir, "refs", tc.targetPodUID)
+					exists, err := pathExists(deletedRefPath)
+					if err == nil && exists {
+						t.Errorf("Expected reference file %q to be deleted, but it still exists", deletedRefPath)
+					}
+				}
+			}
+
+			// 3. Verify global mount unmount action
+			globalMntPath := filepath.Join(keyDir, "mount")
+			isGlobalMntActive := false
+			for _, m := range testEnv.fm.MountPoints {
+				if m.Path == globalMntPath {
+					isGlobalMntActive = true
+					break
+				}
+			}
+			if tc.expectGlobalUnmount && isGlobalMntActive {
+				t.Errorf("Expected global mount path %q to be unmounted, but it was still active", globalMntPath)
+			}
+			if !tc.expectGlobalUnmount && tc.setupGlobalMounted && !isGlobalMntActive {
+				t.Errorf("Expected global mount path %q to remain mounted, but it was unmounted", globalMntPath)
+			}
+
+			// 4. Verify state directories cleanup
+			keyDirExists, err := pathExists(keyDir)
+			if err != nil {
+				t.Fatalf("Failed to check if key dir exists: %v", err)
+			}
+			if tc.expectKeyDirDeleted && keyDirExists {
+				t.Errorf("Expected global directory %q to be deleted, but it still exists", keyDir)
+			}
+			if !tc.expectKeyDirDeleted && len(tc.setupRefs) > 0 && !keyDirExists {
+				t.Errorf("Expected global directory %q to remain, but it was deleted", keyDir)
+			}
+		})
+	}
+}
+
 func validateMountPoint(t *testing.T, name string, fm *mount.FakeMounter, expectedMounts ...*mount.MountPoint) {
 	t.Helper()
 	var validExpected []*mount.MountPoint
@@ -1188,7 +1369,7 @@ func TestUpdateTokenFile(t *testing.T) {
 	defer func() { GlobalMountRoot = oldRoot }()
 	GlobalMountRoot = t.TempDir()
 
-	testKey := "test-hash-key"
+	testKey := "71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"
 	testToken := "secure-jwt-token"
 
 	// Create global layout
@@ -1228,7 +1409,7 @@ func TestMountGlobalIAM(t *testing.T) {
 
 	testVolumeID := "test-vol-iam"
 	testPrincipal := "test-ns/test-sa"
-	testKey := "test-hash-key"
+	testKey := "71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"
 	testGlobalMountPath := filepath.Join(GlobalMountRoot, testKey, "mount")
 
 	cases := []struct {
@@ -1250,7 +1431,7 @@ func TestMountGlobalIAM(t *testing.T) {
 				Device: testIP + "@tcp:/" + testFilesystem,
 				Path:   testGlobalMountPath,
 				Type:   "lustre",
-				Opts:   []string{"user=gke-wi://test-ns/test-sa+test-hash-key"},
+				Opts:   []string{"user=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"},
 			},
 			expectErr: false,
 		},
@@ -1264,7 +1445,7 @@ func TestMountGlobalIAM(t *testing.T) {
 				Device: "10.0.0.1@tcp:/customfs",
 				Path:   testGlobalMountPath,
 				Type:   "lustre",
-				Opts:   []string{"user=gke-wi://test-ns/test-sa+test-hash-key"},
+				Opts:   []string{"user=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"},
 			},
 			expectErr: false,
 		},
@@ -1286,7 +1467,7 @@ func TestMountGlobalIAM(t *testing.T) {
 				Device: testIP + "@tcp:/" + testFilesystem,
 				Path:   testGlobalMountPath,
 				Type:   "lustre",
-				Opts:   []string{"user=gke-wi://test-ns/test-sa+test-hash-key", "foo", "bar"},
+				Opts:   []string{"user=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e", "foo", "bar"},
 			},
 			expectErr: false,
 		},
