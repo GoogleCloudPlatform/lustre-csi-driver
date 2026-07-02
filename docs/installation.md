@@ -40,7 +40,7 @@ limitations under the License.
 
   > Ensure that your cluster's node pool version is at least `1.31.5-gke.1299000` or `1.32.1-gke.1673000`.
   >
-  > - **For GKE version `1.34.1-gke.236400` or later**: You can use the [Container-Optimized OS with Secure Modules](https://cloud.google.com/kubernetes-engine/security/secure-modules-cos) node image. This image supports installing the Lustre kernel module without needing to disable LoadPin or reboot the node.
+  > - **For GKE version `1.34.1-gke.2364000` or later**: You can use the [Container-Optimized OS with Secure Modules](https://cloud.google.com/kubernetes-engine/security/secure-modules-cos) node image. This image supports installing the Lustre kernel module without needing to disable LoadPin or reboot the node.
   > - **For older versions**: Ensure the node image is **Container-Optimized OS with containerd** (`cos_containerd`). Additionally, verify that [Secure Boot](https://cloud.google.com/kubernetes-engine/docs/how-to/shielded-gke-nodes#secure_boot) is disabled in your node pool (it is disabled by default in standard GKE clusters).
   > > [!IMPORTANT]
   > > To install the unmanaged Lustre CSI driver, your node pool must be created with [Secure Kernel Module Loading](https://cloud.google.com/kubernetes-engine/security/secure-modules-cos) enabled on non-GPU nodes. This is required because the driver loads Lustre kernel modules dynamically, which COS blocks by default unless Secure Kernel Module Loading is enabled or LoadPin is disabled manually on the node.
