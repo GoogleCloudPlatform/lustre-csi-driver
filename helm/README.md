@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
     - Run the [gsa_setup script](../deploy/base/setup/gsa_setup.sh) to configure the service account:
 
     ```sh
-    ../deploy/base/setup/gsa_setup.sh
+    ./deploy/base/setup/gsa_setup.sh
     ```
 
     - Create a Kubernetes secret from the service account key:
@@ -66,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
 3. Install the csi driver using helm
 
     ```sh
-    helm upgrade -i lustre-csi-driver lustre-csi-driver \
+    helm upgrade -i lustre-csi-driver ./helm/lustre-csi-driver \
       --namespace ${NAMESPACE} \
       --set image.lustre.tag="$VERSION"
     ```
