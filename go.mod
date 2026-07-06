@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	cloud.google.com/go/compute/metadata v0.9.0
-	cloud.google.com/go/longrunning v1.0.0
+	cloud.google.com/go/longrunning v1.1.0
 	cloud.google.com/go/lustre v1.0.0
 	github.com/container-storage-interface/spec v1.12.0
 	github.com/go-logr/logr v1.4.3
@@ -117,7 +117,7 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.5.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260615183401-62b3387ff324 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260622175928-b703f567277d // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
