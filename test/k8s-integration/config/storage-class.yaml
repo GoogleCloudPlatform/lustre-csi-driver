@@ -24,6 +24,16 @@ allowedTopologies:
     - key: "topology.gke.io/zone"
       values:
         - us-central1-a
+        - us-central1-b
+        - us-central1-c
+        - us-central1-f
+        - us-east4-a
+        - us-east4-b
+        - us-east4-c
+        - us-east5-b
+        - us-south1-b
+        - us-west1-b
+        - us-west1-c
 parameters:
   network: lustre-network
   perUnitStorageThroughput: "1000"
