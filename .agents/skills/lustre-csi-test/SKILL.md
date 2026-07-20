@@ -19,7 +19,7 @@ name: lustre-csi-test
 description: >-
   Guides local build, unit/sanity testing, and live GKE integration testing (static or dynamic provisioning)
   of the Lustre CSI Driver on Google Kubernetes Engine (GKE) nodes running Ubuntu or Container-Optimized OS (COS).
-  Use when testing local code changes or validating CSI driver builds on a GKE cluster.
+  Helps developers perform local validation, verify kernel module installation, test volume mounts, and execute simple I/O to ensure local changes conform to minimum quality standards.
 ---
 
 # Lustre CSI Driver Testing Workflow
