@@ -122,7 +122,7 @@ Uses `examples/pre-prov/preprov-pvc-pv.yaml` and `examples/pre-prov/preprov-pod.
        examples/pre-prov/preprov-pvc-pv.yaml | kubectl apply -f -
    kubectl apply -f examples/pre-prov/preprov-pod.yaml
    ```
-   - Expected Pod Name: `preprov-pod`
+   - Expected Pod Name: `lustre-pod`
 
 ### Mode B: Dynamic Provisioning Test
 Uses `examples/dynamic-prov/dynamic-pvc.yaml` and `examples/dynamic-prov/dynamic-pod.yaml`.
@@ -136,7 +136,7 @@ Uses `examples/dynamic-prov/dynamic-pvc.yaml` and `examples/dynamic-prov/dynamic
 ---
 
 ## Phase 4: 30-Second Pod Readiness & Deep Debugging Escalation
-1. Monitor the target test pod (`preprov-pod` for static, `lustre-pod` for dynamic).
+1. Monitor the target test pod (`lustre-pod`).
 2. **30-Second Timeout Rule:** If the pod does not reach `Running` within **30 seconds**, assume mounting failed:
    - First inspect CSI node driver logs:
      ```bash
@@ -148,12 +148,12 @@ Uses `examples/dynamic-prov/dynamic-pvc.yaml` and `examples/dynamic-prov/dynamic
 ---
 
 ## Phase 5: Active End-to-End I/O Verification & Clean Teardown
-1. Once the test pod enters `Running`, execute an interactive I/O check inside the pod (`preprov-pod` or `lustre-pod`):
+1. Once the test pod (`lustre-pod`) enters `Running`, execute an interactive I/O check inside the pod:
    ```bash
-   kubectl exec -it <pod-name> -- /bin/sh -c '
-     echo "lustre-test-data-$(date +%s)" > /mnt/lustre_volume/testfile && \
-     cat /mnt/lustre_volume/testfile && \
-     rm /mnt/lustre_volume/testfile
+   kubectl exec -it lustre-pod -- /bin/sh -c '
+     echo "lustre-test-data-$(date +%s)" > /lustre_volume/testfile && \
+     cat /lustre_volume/testfile && \
+     rm /lustre_volume/testfile
    '
    ```
    Confirm file write, read, and delete succeed without errors.
