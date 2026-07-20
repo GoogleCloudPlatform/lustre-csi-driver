@@ -60,4 +60,4 @@ When triggered, the agent will guide you through three interactive steps:
 2. **Builds & Pushes Staging Image:** Pauses for your approval, then builds and pushes a traceable staging image (`STAGINGVERSION=dev-<sha>-<timestamp>`).
 3. **Replaces Driver on GKE:** Uninstalls existing driver pods (`make uninstall`) and deploys your staging build (`make install`), monitoring `lustre-csi-node` (defined in `deploy/base/node/node.yaml` with init container `lustre-kmod-installer` and main container `lustre-csi-driver`).
 4. **Automated Deep Troubleshooting:** If any pod fails to start within **30 seconds**, the agent automatically inspects container logs (`lustre-kmod-installer` / `lustre-csi-driver`) and SSHes into the GKE node, running `lsmod | grep lustre` to verify kernel module loading before executing `dmesg`.
-5. **Verifies Active I/O:** Executes file write/read/delete tests inside the mounted Lustre volume and cleans up test workloads automatically.
+5. **Verifies Active I/O:** Executes file write/read/delete tests inside `/lustre_volume` on `lustre-pod` and cleans up test workloads automatically.
