@@ -40,7 +40,7 @@ const (
 	configFile         = "test-config.yaml"
 
 	// configurable timeouts for the k8s e2e testsuites.
-	podStartTimeout       = "600s"
+	podStartTimeout       = "1800s"
 	claimProvisionTimeout = "3600s"
 	pvDeleteTimeout       = "3600s"
 
@@ -86,26 +86,14 @@ func generateDriverConfigFile(testParams *testParameters, storageClassFile strin
 		pvDeleteTimeoutKey:       pvDeleteTimeout,
 	}
 
-	minVolumeSize := "1Ti"
-	if testParams.gkeManagedDriver {
-		minSupportedVersion := "1.34.1"
-		clusterVer, err := parseVersion(testParams.clusterVersion)
-		if err != nil {
-			return "", err
-		}
-		ver, _ := parseVersion(minSupportedVersion)
-		if !clusterVer.lessThan(ver) {
-			minVolumeSize = "9000Gi"
-		} else {
-			minVolumeSize = "18000Gi"
-		}
-	}
+	// thinInstanceMinSize represents the size for thin client Lustre instances.
+	thinInstanceMinSize := "1024Gi"
 
 	params := driverConfig{
 		StorageClassFile:  filepath.Join(testParams.pkgDir, testConfigDir, storageClassFile),
 		StorageClass:      storageClassFile[:strings.LastIndex(storageClassFile, ".")],
 		Capabilities:      caps,
-		MinimumVolumeSize: minVolumeSize,
+		MinimumVolumeSize: thinInstanceMinSize,
 		Timeouts:          timeouts,
 	}
 
