@@ -27,7 +27,6 @@ allowedTopologies:
         # We will add more zones that has `CreateInstanceOverrides` support overtime.
         - us-central1-a
         - us-central1-c
-        - us-west2-a
 parameters:
   network: lustre-network
   perUnitStorageThroughput: "1000"
