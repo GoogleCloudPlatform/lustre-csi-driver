@@ -28,6 +28,9 @@ image:
     pullPolicy: Always
     enableLegacyLustrePort: false
     disableMultiNic: false
+    # TODO: Update minVersion to "2.16.0" and maxVersion to "2.16.9999" once IAM release is cut.
+    minVersion: ""
+    maxVersion: "2.14.9999"
 
 sidecars:
   image:
