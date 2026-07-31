@@ -31,4 +31,4 @@ parameters:
   network: lustre-network
   perUnitStorageThroughput: "1000"
   labels: "gke-testing-project=prow"
-  description: 'CreateInstanceOverrides={"CalculatorType": "C4_THIN"}'
+  description: 'CreateInstanceOverrides={"CalculatorType": "THIN_CLUSTER"}'
