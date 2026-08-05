@@ -59,6 +59,19 @@ func TestValidateCommand(t *testing.T) {
 			wantErr: true,
 			errSub:  "unauthorized binary path execution request",
 		},
+		{
+			name:    "Unauthorized lctl parameter key unlisted",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "mdt.*.identity_upcall=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Valid lctl set_param with option flag and jobid_var",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "-n", "jobid_var=procname_uid"},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
