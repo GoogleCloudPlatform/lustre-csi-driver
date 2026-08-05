@@ -185,12 +185,12 @@ func executeCommand(ctx context.Context, req Request) Response {
 
 var allowedLustreParams = map[string]bool{
 	"osc.*.max_dirty_mb":        true,
-	"osc.*.max_rpcs_in_flight":   true,
+	"osc.*.max_rpcs_in_flight":  true,
 	"osc.*.max_pages_per_rpc":   true,
 	"osc.*.checksums":           true,
-	"llite.*.max_read_ahead_mb":  true,
+	"llite.*.max_read_ahead_mb": true,
 	"llite.*.read_ahead_mb":     true,
-	"llite.*.statahead_max":      true,
+	"llite.*.statahead_max":     true,
 	"jobid_var":                 true,
 	"debug":                     true,
 }
