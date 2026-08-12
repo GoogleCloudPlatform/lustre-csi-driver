@@ -85,10 +85,21 @@ func (s *nodeServer) execUmount(ctx context.Context, args ...string) ([]byte, er
 }
 
 // unmountPath unmounts the target path using a cascading fallback strategy:
-// 1. Standard umount (DefaultUnmountTimeout)
-// 2. Force umount -f (DefaultForceUnmountTimeout) if standard umount times out or fails
-// 3. Lazy umount -l (DefaultLazyUnmountTimeout) if force umount times out or fails
+// 1. Standard umount (DefaultUnmountTimeout = 15s)
+// 2. Force umount -f (DefaultForceUnmountTimeout = 10s) if standard umount times out or fails
+// 3. Lazy umount -l (DefaultLazyUnmountTimeout = 5s) if force umount times out or fails
 // After successfully detaching the mount, the directory is deleted.
+//
+// NOTE on Context Handling:
+// unmountPath intentionally does NOT accept or derive from the caller's gRPC context.
+// Instead, it manages its own internal timeouts using context.Background().
+// Rationale: If a caller's request context was cancelled or timed out (e.g. Kubelet 2-minute deadline
+// or client disconnect), deriving from that cancelled context would cause all three unmount phases
+// to abort immediately without actually executing umount -f or umount -l.
+// Because unmounting is a critical cleanup operation, it must run to completion to prevent leaked
+// mount points and wedged kernel/lock states. The total execution time is strictly bounded by
+// DefaultUnmountTimeout + DefaultForceUnmountTimeout + DefaultLazyUnmountTimeout (<= 30s), which is
+// well within Kubelet's retry timeout.
 func (s *nodeServer) unmountPath(target string) error {
 	notMnt, err := s.mounter.IsLikelyNotMountPoint(target)
 	if err != nil && !os.IsNotExist(err) {
