@@ -67,6 +67,7 @@ type nodeServer struct {
 	driver      *LustreDriver
 	mounter     mount.Interface
 	volumeLocks *util.VolumeLocks
+	unmountExec unmountExecFunc
 }
 
 func newNodeServer(driver *LustreDriver, mounter mount.Interface) csi.NodeServer {
@@ -92,7 +93,7 @@ func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 	}, nil
 }
 
-func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
@@ -194,7 +195,7 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 	klog.V(4).Infof("NodeStageVolume mounting volume %s to path %s on node %s with mountOptions %v", volumeID, target, nodeName, mountOptions)
 	if err := s.mounter.MountSensitiveWithoutSystemd(source, target, "lustre", mountOptions, nil); err != nil {
 		klog.Errorf("Mount %q failed on node %s, cleaning up", target, nodeName)
-		if unmntErr := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+		if unmntErr := s.unmountPath(ctx, target); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr.Error())
 		}
 
@@ -206,7 +207,7 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
@@ -222,22 +223,9 @@ func (s *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVo
 	}
 	defer s.volumeLocks.Release(target)
 
-	// Check if the target path is mounted before unmounting.
-	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(target); notMnt {
-		klog.V(5).InfoS("NodeUnstageVolume: staging target path not mounted, skipping unmount", "staging target", target)
-
-		return &csi.NodeUnstageVolumeResponse{}, nil
-	}
-	// Always unmount the target path regardless of the detected mount state.
-	// In cases where Lustre was force-unmounted, CleanupMountPoint may fail
-	// to detect the state and error out with "cannot send after transport endpoint shutdown".
 	klog.V(5).InfoS("NodeUnstageVolume attempting to unmount", "staging target", target)
-	if err := s.mounter.Unmount(target); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to unmount staging target %q: %v", target, err)
-	}
-
-	if err := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	if err := s.unmountPath(ctx, target); err != nil {
+		return nil, err
 	}
 
 	klog.V(4).Infof("NodeUnstageVolume succeeded on volume %v from staging target path %s on node %s", volumeID, target, s.driver.config.NodeID)
@@ -245,7 +233,7 @@ func (s *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVo
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
@@ -316,7 +304,7 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 	}
 
 	if isIAM {
-		if err := s.publishIAMVolume(volumeID, targetPath, targetMounted, vc, mountOptions, volCap); err != nil {
+		if err := s.publishIAMVolume(ctx, volumeID, targetPath, targetMounted, vc, mountOptions, volCap); err != nil {
 			return nil, err
 		}
 	} else if !targetMounted {
@@ -329,7 +317,7 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 
 	if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
 		klog.V(5).Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
-		if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+		if unmntErr := s.unmountPath(ctx, targetPath); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
 		}
 
@@ -341,7 +329,7 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 
 // publishIAMVolume manages the global mount, token lifecycle, reference counting,
 // and bind mounting for IAM-enabled volumes.
-func (s *nodeServer) publishIAMVolume(volumeID, targetPath string, targetMounted bool, vc map[string]string, mountOptions []string, volCap *csi.VolumeCapability) error {
+func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath string, targetMounted bool, vc map[string]string, mountOptions []string, volCap *csi.VolumeCapability) error {
 	podUID := vc[normalize(keyPodUID)]
 	namespace := vc[normalize(keyPodNamespace)]
 	saName := vc[normalize(keyServiceAccount)]
@@ -401,7 +389,7 @@ func (s *nodeServer) publishIAMVolume(volumeID, targetPath string, targetMounted
 	}
 
 	if !globalMounted {
-		if err := s.mountGlobalIAM(volumeID, globalMountPath, principal, key, vc, volCap); err != nil {
+		if err := s.mountGlobalIAM(ctx, volumeID, globalMountPath, principal, key, vc, volCap); err != nil {
 			return err
 		}
 	}
@@ -418,7 +406,7 @@ func (s *nodeServer) publishIAMVolume(volumeID, targetPath string, targetMounted
 			if err := removePodReference(key, podUID); err != nil {
 				klog.Errorf("Failed to clean up pod reference for pod %s, volume %s: %v", podUID, volumeID, err)
 			}
-			if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+			if unmntErr := s.unmountPath(ctx, targetPath); unmntErr != nil {
 				klog.Errorf("Failed to clean up target mount point %q: %v", targetPath, unmntErr)
 			}
 			return status.Errorf(codes.Internal, "Bind mount failed for volume %q to target path %q: %v", volumeID, targetPath, err)
@@ -430,7 +418,7 @@ func (s *nodeServer) publishIAMVolume(volumeID, targetPath string, targetMounted
 
 // mountGlobalIAM parses target storage endpoints, configures multi-NIC routing,
 // and mounts the Lustre instance to the per-principal global mount path.
-func (s *nodeServer) mountGlobalIAM(volumeID, globalMountPath, principal, key string, vc map[string]string, volCap *csi.VolumeCapability) error {
+func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPath, principal, key string, vc map[string]string, volCap *csi.VolumeCapability) error {
 	ip := vc[normalize(keyInstanceIP)]
 	fsname := vc[normalize(keyFilesystem)]
 	mountPoint := vc[normalize(keyMountPoint)]
@@ -474,7 +462,7 @@ func (s *nodeServer) mountGlobalIAM(volumeID, globalMountPath, principal, key st
 	klog.V(5).Infof("mountGlobalIAM mounting volume %s to path %s on node %s with mountOptions %v", volumeID, globalMountPath, nodeName, iamMountOptions)
 	if err := s.mounter.MountSensitiveWithoutSystemd(source, globalMountPath, "lustre", iamMountOptions, nil); err != nil {
 		klog.Errorf("Mount %q failed on node %s for principal %s, cleaning up", globalMountPath, nodeName, principal)
-		if unmntErr := mount.CleanupMountPoint(globalMountPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
+		if unmntErr := s.unmountPath(ctx, globalMountPath); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s for principal %s: %v", globalMountPath, nodeName, principal, unmntErr.Error())
 		}
 
@@ -486,7 +474,7 @@ func (s *nodeServer) mountGlobalIAM(volumeID, globalMountPath, principal, key st
 	return nil
 }
 
-func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	// Validate arguments.
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
@@ -499,25 +487,12 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	}
 	defer s.volumeLocks.Release(targetPath)
 
-	// Check if the target path is mounted before unmounting.
-	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(targetPath); notMnt {
-		klog.V(5).InfoS("NodeUnpublishVolume: target path not mounted, skipping unmount", "target", targetPath)
-
-		return &csi.NodeUnpublishVolumeResponse{}, nil
-	}
-	// Always unmount the target path regardless of the detected mount state.
-	// In cases where Lustre was force-unmounted, CleanupMountPoint may fail
-	// to detect the state and error out with "cannot send after transport endpoint shutdown".
 	klog.V(5).InfoS("NodeUnpublishVolume attempting to unmount", "target", targetPath)
-	if err := s.mounter.Unmount(targetPath); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to unmount target %q: %v", targetPath, err)
+	if err := s.unmountPath(ctx, targetPath); err != nil {
+		return nil, err
 	}
 
-	if err := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	if err := s.cleanUpIAMReference(targetPath); err != nil {
+	if err := s.cleanUpIAMReference(ctx, targetPath); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to clean up IAM reference directories: %v", err)
 	}
 
@@ -861,7 +836,7 @@ func getPodUIDFromTargetPath(path string) (string, error) {
 	return matches[1], nil
 }
 
-func (s *nodeServer) cleanUpIAMReference(targetPath string) error {
+func (s *nodeServer) cleanUpIAMReference(ctx context.Context, targetPath string) error {
 	podUID, err := getPodUIDFromTargetPath(targetPath)
 	if err != nil {
 		klog.V(5).Infof("Failed to extract pod UID from target path %q (likely non-IAM volume): %v", targetPath, err)
@@ -889,7 +864,7 @@ func (s *nodeServer) cleanUpIAMReference(targetPath string) error {
 		key := match[1]
 
 		// Locks must be released per iteration. Since defer is function-scoped, delegate to a helper method.
-		if err := s.cleanUpIAMReferenceForKey(key, refPath); err != nil {
+		if err := s.cleanUpIAMReferenceForKey(ctx, key, refPath); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -901,7 +876,7 @@ func (s *nodeServer) cleanUpIAMReference(targetPath string) error {
 	return nil
 }
 
-func (s *nodeServer) cleanUpIAMReferenceForKey(key, refPath string) error {
+func (s *nodeServer) cleanUpIAMReferenceForKey(ctx context.Context, key, refPath string) error {
 	// Acquire a lock to prevent races with concurrent mounts.
 	if acquired := s.volumeLocks.TryAcquire(key); !acquired {
 		return fmt.Errorf("could not acquire lock for key %s; operation in progress", key)
@@ -937,17 +912,8 @@ func (s *nodeServer) cleanUpIAMReferenceForKey(key, refPath string) error {
 	klog.Infof("No more pod references for key %s. Unmounting global path.", key)
 	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
 
-	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(globalMountPath); !notMnt {
-		// Manual unmount to clear transport-shutdown or corrupted states.
-		klog.V(4).Infof("Performing explicit unmount of global path %q", globalMountPath)
-		if err := s.mounter.Unmount(globalMountPath); err != nil {
-			return fmt.Errorf("failed robust unmount of global path %q: %w", globalMountPath, err)
-		}
-	}
-
-	// Cleanup to verify unmount and remove the 'mount' directory.
-	if err := mount.CleanupMountPoint(globalMountPath, s.mounter, false /* extensiveMountPointCheck */); err != nil {
-		return fmt.Errorf("failed standard cleanup for global mount point %q: %w", globalMountPath, err)
+	if err := s.unmountPath(ctx, globalMountPath); err != nil {
+		return fmt.Errorf("failed to unmount global path %q: %w", globalMountPath, err)
 	}
 
 	// Clean up the entire key folder
