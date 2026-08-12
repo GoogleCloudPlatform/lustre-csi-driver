@@ -1284,7 +1284,7 @@ func TestPublishIAMVolume(t *testing.T) {
 				normalizedVC[normalize(k)] = v
 			}
 
-			err := ns.publishIAMVolume(testVolumeID, testTargetPath, tc.targetMounted, normalizedVC, []string{"bind"}, testVolumeCapability)
+			err := ns.publishIAMVolume(t.Context(), testVolumeID, testTargetPath, tc.targetMounted, normalizedVC, []string{"bind"}, testVolumeCapability)
 			if (err != nil) != tc.expectErr {
 				t.Fatalf("Test %q: expected error %v, got %v", tc.name, tc.expectErr, err)
 			}
@@ -1515,7 +1515,7 @@ func TestMountGlobalIAM(t *testing.T) {
 
 			ns := newNodeServer(driver, mounter).(*nodeServer)
 
-			err := ns.mountGlobalIAM(testVolumeID, testGlobalMountPath, testPrincipal, testKey, tc.vc, tc.volCap)
+			err := ns.mountGlobalIAM(t.Context(), testVolumeID, testGlobalMountPath, testPrincipal, testKey, tc.vc, tc.volCap)
 			if tc.expectErr && err == nil {
 				t.Fatalf("Test %q: expected an error but got none", tc.name)
 			}
