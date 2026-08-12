@@ -49,6 +49,7 @@ type nodeServer struct {
 	driver      *LustreDriver
 	mounter     mount.Interface
 	volumeLocks *util.VolumeLocks
+	unmountExec unmountExecFunc
 }
 
 func newNodeServer(driver *LustreDriver, mounter mount.Interface) csi.NodeServer {
@@ -74,7 +75,7 @@ func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 	}, nil
 }
 
-func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
@@ -190,8 +191,8 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 	klog.V(4).Infof("NodeStageVolume mounting volume %s to path %s on node %s with mountOptions %v", volumeID, target, nodeName, mountOptions)
 	if err := s.mounter.MountSensitiveWithoutSystemd(source, target, "lustre", mountOptions, nil); err != nil {
 		klog.Errorf("Mount %q failed on node %s, cleaning up", target, nodeName)
-		if unmntErr := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr.Error())
+		if unmntErr := s.unmountPath(target); unmntErr != nil {
+			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr)
 		}
 
 		return nil, status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, target, nodeName, err)
@@ -202,7 +203,7 @@ func (s *nodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolume
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
@@ -218,22 +219,9 @@ func (s *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVo
 	}
 	defer s.volumeLocks.Release(target)
 
-	// Check if the target path is mounted before unmounting.
-	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(target); notMnt {
-		klog.V(5).InfoS("NodeUnstageVolume: staging target path not mounted, skipping unmount", "staging target", target)
-
-		return &csi.NodeUnstageVolumeResponse{}, nil
-	}
-	// Always unmount the target path regardless of the detected mount state.
-	// In cases where Lustre was force-unmounted, CleanupMountPoint may fail
-	// to detect the state and error out with "cannot send after transport endpoint shutdown".
 	klog.V(5).InfoS("NodeUnstageVolume attempting to unmount", "staging target", target)
-	if err := s.mounter.Unmount(target); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to unmount staging target %q: %v", target, err)
-	}
-
-	if err := mount.CleanupMountPoint(target, s.mounter, false /* extensiveMountPointCheck */); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	if err := s.unmountPath(target); err != nil {
+		return nil, err
 	}
 
 	klog.V(4).Infof("NodeUnstageVolume succeeded on volume %v from staging target path %s on node %s", volumeID, target, s.driver.config.NodeID)
@@ -241,7 +229,7 @@ func (s *nodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVo
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	if len(volumeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
@@ -299,9 +287,9 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 
 	if mounted {
 		if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
-			klog.Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
-			if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-				klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
+			klog.V(5).Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
+			if unmntErr := s.unmountPath(targetPath); unmntErr != nil {
+				klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr)
 			}
 
 			return nil, status.Error(codes.Internal, err.Error())
@@ -327,9 +315,9 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 	klog.V(4).Infof("NodePublishVolume successfully mounted %s on node %s", targetPath, nodeName)
 
 	if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
-		klog.Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
-		if unmntErr := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
+		klog.V(5).Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
+		if unmntErr := s.unmountPath(targetPath); unmntErr != nil {
+			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr)
 		}
 
 		return nil, status.Error(codes.Internal, err.Error())
@@ -338,7 +326,7 @@ func (s *nodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVo
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	// Validate arguments.
 	targetPath := req.GetTargetPath()
 	if len(targetPath) == 0 {
@@ -351,22 +339,9 @@ func (s *nodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpubli
 	}
 	defer s.volumeLocks.Release(targetPath)
 
-	// Check if the target path is mounted before unmounting.
-	if notMnt, _ := s.mounter.IsLikelyNotMountPoint(targetPath); notMnt {
-		klog.V(5).InfoS("NodeUnpublishVolume: target path not mounted, skipping unmount", "target", targetPath)
-
-		return &csi.NodeUnpublishVolumeResponse{}, nil
-	}
-	// Always unmount the target path regardless of the detected mount state.
-	// In cases where Lustre was force-unmounted, CleanupMountPoint may fail
-	// to detect the state and error out with "cannot send after transport endpoint shutdown".
 	klog.V(5).InfoS("NodeUnpublishVolume attempting to unmount", "target", targetPath)
-	if err := s.mounter.Unmount(targetPath); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to unmount target %q: %v", targetPath, err)
-	}
-
-	if err := mount.CleanupMountPoint(targetPath, s.mounter, false /* extensiveMountPointCheck */); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	if err := s.unmountPath(targetPath); err != nil {
+		return nil, err
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
