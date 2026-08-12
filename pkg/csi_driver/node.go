@@ -196,7 +196,7 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	if err := s.mounter.MountSensitiveWithoutSystemd(source, target, "lustre", mountOptions, nil); err != nil {
 		klog.Errorf("Mount %q failed on node %s, cleaning up", target, nodeName)
 		if unmntErr := s.unmountPath(target); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr.Error())
+			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr)
 		}
 
 		return nil, status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, target, nodeName, err)
@@ -318,7 +318,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
 		klog.V(5).Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
 		if unmntErr := s.unmountPath(targetPath); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
+			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr)
 		}
 
 		return nil, status.Error(codes.Internal, err.Error())
@@ -463,7 +463,7 @@ func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPa
 	if err := s.mounter.MountSensitiveWithoutSystemd(source, globalMountPath, "lustre", iamMountOptions, nil); err != nil {
 		klog.Errorf("Mount %q failed on node %s for principal %s, cleaning up", globalMountPath, nodeName, principal)
 		if unmntErr := s.unmountPath(globalMountPath); unmntErr != nil {
-			klog.Errorf("Unmount %q failed on node %s for principal %s: %v", globalMountPath, nodeName, principal, unmntErr.Error())
+			klog.Errorf("Unmount %q failed on node %s for principal %s: %v", globalMountPath, nodeName, principal, unmntErr)
 		}
 
 		return status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, globalMountPath, nodeName, err)

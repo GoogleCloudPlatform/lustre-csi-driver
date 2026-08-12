@@ -21,6 +21,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"time"
 
@@ -50,7 +51,7 @@ func (s *nodeServer) execUmount(ctx context.Context, args ...string) ([]byte, er
 	}
 
 	// In test environments using FakeMounter, delegate to FakeMounter.Unmount if no custom unmountExec is set.
-	if fm, ok := s.mounter.(*mount.FakeMounter); ok {
+	if fm := extractFakeMounter(s.mounter); fm != nil {
 		var target string
 		if len(args) > 0 {
 			target = args[len(args)-1]
@@ -153,13 +154,36 @@ func (s *nodeServer) unmountPath(target string) error {
 }
 
 func isNotMounted(err error, output []byte) bool {
-	if err != nil && strings.Contains(err.Error(), errNotMounted) {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), errNotMounted) {
 		return true
 	}
-	if strings.Contains(string(output), errNotMounted) {
+	if strings.Contains(strings.ToLower(string(output)), errNotMounted) {
 		return true
 	}
 	return false
+}
+
+func extractFakeMounter(m mount.Interface) *mount.FakeMounter {
+	if m == nil {
+		return nil
+	}
+	if fm, ok := m.(*mount.FakeMounter); ok {
+		return fm
+	}
+	// Check if the mounter embeds *mount.FakeMounter (e.g. fakeMounter in tests)
+	val := reflect.ValueOf(m)
+	if val.Kind() == reflect.Ptr && !val.IsNil() {
+		val = val.Elem()
+	}
+	if val.Kind() == reflect.Struct {
+		field := val.FieldByName("FakeMounter")
+		if field.IsValid() {
+			if fm, ok := field.Interface().(*mount.FakeMounter); ok {
+				return fm
+			}
+		}
+	}
+	return nil
 }
 
 func removeDir(target string) error {
