@@ -51,7 +51,10 @@ func (s *nodeServer) execUmount(ctx context.Context, args ...string) ([]byte, er
 
 	// In test environments using FakeMounter, delegate to FakeMounter.Unmount if no custom unmountExec is set.
 	if fm, ok := s.mounter.(*mount.FakeMounter); ok {
-		target := args[len(args)-1]
+		var target string
+		if len(args) > 0 {
+			target = args[len(args)-1]
+		}
 		err := fm.Unmount(target)
 		return nil, err
 	}
@@ -86,7 +89,7 @@ func (s *nodeServer) execUmount(ctx context.Context, args ...string) ([]byte, er
 // 2. Force umount -f (DefaultForceUnmountTimeout) if standard umount times out or fails
 // 3. Lazy umount -l (DefaultLazyUnmountTimeout) if force umount times out or fails
 // After successfully detaching the mount, the directory is deleted.
-func (s *nodeServer) unmountPath(ctx context.Context, target string) error {
+func (s *nodeServer) unmountPath(target string) error {
 	notMnt, err := s.mounter.IsLikelyNotMountPoint(target)
 	if err != nil && !os.IsNotExist(err) {
 		if isCorruptedMnt(err) {
@@ -104,7 +107,7 @@ func (s *nodeServer) unmountPath(ctx context.Context, target string) error {
 
 	// Phase 1: Standard unmount with bounded timeout
 	klog.V(4).Infof("unmountPath: attempting standard unmount on %s", target)
-	ctxStandard, cancelStandard := context.WithTimeout(ctx, DefaultUnmountTimeout)
+	ctxStandard, cancelStandard := context.WithTimeout(context.Background(), DefaultUnmountTimeout)
 	out, err := s.execUmount(ctxStandard, target)
 	cancelStandard()
 
@@ -115,7 +118,7 @@ func (s *nodeServer) unmountPath(ctx context.Context, target string) error {
 
 	// Phase 2: Force unmount (-f) with bounded timeout
 	klog.Warningf("unmountPath: standard unmount failed or timed out on %s (err: %v, out: %s). Attempting force unmount (umount -f)...", target, err, string(out))
-	ctxForce, cancelForce := context.WithTimeout(ctx, DefaultForceUnmountTimeout)
+	ctxForce, cancelForce := context.WithTimeout(context.Background(), DefaultForceUnmountTimeout)
 	out, err = s.execUmount(ctxForce, "-f", target)
 	cancelForce()
 
@@ -126,7 +129,7 @@ func (s *nodeServer) unmountPath(ctx context.Context, target string) error {
 
 	// Phase 3: Lazy unmount (-l / MNT_DETACH) as ultimate fallback to avoid wedging the node
 	klog.Warningf("unmountPath: force unmount failed or timed out on %s (err: %v, out: %s). Falling back to lazy unmount (umount -l)...", target, err, string(out))
-	ctxLazy, cancelLazy := context.WithTimeout(ctx, DefaultLazyUnmountTimeout)
+	ctxLazy, cancelLazy := context.WithTimeout(context.Background(), DefaultLazyUnmountTimeout)
 	out, err = s.execUmount(ctxLazy, "-l", target)
 	cancelLazy()
 

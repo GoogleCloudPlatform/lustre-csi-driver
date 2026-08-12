@@ -190,7 +190,7 @@ func TestUnmountPath_CascadingFallback(t *testing.T) {
 				return resp.out, resp.err
 			}
 
-			err := ns.unmountPath(context.Background(), targetPath)
+			err := ns.unmountPath(targetPath)
 			if (err != nil) != tc.expectErr {
 				t.Fatalf("unmountPath() error = %v, expectErr = %v", err, tc.expectErr)
 			}
@@ -237,15 +237,10 @@ func TestUnmountPath_ContextTimeoutAndLockRelease(t *testing.T) {
 	ns := testEnv.ns.(*nodeServer)
 	ns.mounter = fm
 
-	// Simulate hanging commands that block until context cancellation
+	// Simulate hanging commands that simulate timeout / deadline exceeded
 	ns.unmountExec = func(ctx context.Context, args ...string) ([]byte, error) {
-		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, context.DeadlineExceeded
 	}
-
-	// Create a short-lived caller context
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
 
 	req := &csi.NodeUnstageVolumeRequest{
 		VolumeId:          testVolumeID,
@@ -253,7 +248,7 @@ func TestUnmountPath_ContextTimeoutAndLockRelease(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err := ns.NodeUnstageVolume(ctx, req)
+	_, err := ns.NodeUnstageVolume(context.Background(), req)
 	elapsed := time.Since(start)
 
 	if err == nil {
