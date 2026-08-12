@@ -17,6 +17,7 @@ limitations under the License.
 package driver
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -42,7 +43,7 @@ const (
 
 type unmountExecFunc func(ctx context.Context, args ...string) ([]byte, error)
 
-// execUmount executes umount with given arguments and context.
+// execUmount executes umount with given arguments and context without blocking on D-state tasks.
 func (s *nodeServer) execUmount(ctx context.Context, args ...string) ([]byte, error) {
 	if s.unmountExec != nil {
 		return s.unmountExec(ctx, args...)
@@ -55,8 +56,29 @@ func (s *nodeServer) execUmount(ctx context.Context, args ...string) ([]byte, er
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, "umount", args...)
-	return cmd.CombinedOutput()
+	cmd := exec.Command("umount", args...)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		return buf.Bytes(), err
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return nil, ctx.Err()
+	}
 }
 
 // unmountPath unmounts the target path using a cascading fallback strategy:
@@ -69,10 +91,10 @@ func (s *nodeServer) unmountPath(ctx context.Context, target string) error {
 	if err != nil && !os.IsNotExist(err) {
 		if isCorruptedMnt(err) {
 			klog.V(4).Infof("unmountPath: target %q is corrupted mount, proceeding with unmount", target)
-			notMnt = false
 		} else {
-			klog.Warningf("unmountPath: error checking if %q is a mount point: %v", target, err)
+			klog.Warningf("unmountPath: error checking if %q is a mount point: %v, proceeding with unmount", target, err)
 		}
+		notMnt = false
 	}
 
 	if notMnt {

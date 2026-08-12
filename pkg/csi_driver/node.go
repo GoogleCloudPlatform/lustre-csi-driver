@@ -195,7 +195,7 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	klog.V(4).Infof("NodeStageVolume mounting volume %s to path %s on node %s with mountOptions %v", volumeID, target, nodeName, mountOptions)
 	if err := s.mounter.MountSensitiveWithoutSystemd(source, target, "lustre", mountOptions, nil); err != nil {
 		klog.Errorf("Mount %q failed on node %s, cleaning up", target, nodeName)
-		if unmntErr := s.unmountPath(ctx, target); unmntErr != nil {
+		if unmntErr := s.unmountPath(context.Background(), target); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr.Error())
 		}
 
@@ -317,7 +317,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 
 	if err := setVolumeOwnershipTopLevel(volumeID, targetPath, fsGroup, ro); err != nil {
 		klog.V(5).Infof("setVolumeOwnershipTopLevel failed for volume %q, path %q, fsGroup %q, cleaning up mount point on node %s", volumeID, targetPath, fsGroup, nodeName)
-		if unmntErr := s.unmountPath(ctx, targetPath); unmntErr != nil {
+		if unmntErr := s.unmountPath(context.Background(), targetPath); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s: %v", targetPath, nodeName, unmntErr.Error())
 		}
 
@@ -406,7 +406,7 @@ func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath 
 			if err := removePodReference(key, podUID); err != nil {
 				klog.Errorf("Failed to clean up pod reference for pod %s, volume %s: %v", podUID, volumeID, err)
 			}
-			if unmntErr := s.unmountPath(ctx, targetPath); unmntErr != nil {
+			if unmntErr := s.unmountPath(context.Background(), targetPath); unmntErr != nil {
 				klog.Errorf("Failed to clean up target mount point %q: %v", targetPath, unmntErr)
 			}
 			return status.Errorf(codes.Internal, "Bind mount failed for volume %q to target path %q: %v", volumeID, targetPath, err)
@@ -462,7 +462,7 @@ func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPa
 	klog.V(5).Infof("mountGlobalIAM mounting volume %s to path %s on node %s with mountOptions %v", volumeID, globalMountPath, nodeName, iamMountOptions)
 	if err := s.mounter.MountSensitiveWithoutSystemd(source, globalMountPath, "lustre", iamMountOptions, nil); err != nil {
 		klog.Errorf("Mount %q failed on node %s for principal %s, cleaning up", globalMountPath, nodeName, principal)
-		if unmntErr := s.unmountPath(ctx, globalMountPath); unmntErr != nil {
+		if unmntErr := s.unmountPath(context.Background(), globalMountPath); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s for principal %s: %v", globalMountPath, nodeName, principal, unmntErr.Error())
 		}
 
