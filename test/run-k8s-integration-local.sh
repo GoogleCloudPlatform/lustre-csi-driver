@@ -26,5 +26,5 @@ multivolume_fs_test_focus="External.*Storage.*filesystem.*multiVolume"
 # E.g. run command: test/run-k8s-integration-local.sh | tee log
 "${PKGDIR}"/bin/k8s-integration-test --run-in-prow=false --pkg-dir="${PKGDIR}" \
 --bringup-cluster=true --test-focus="${all_external_tests_focus}" --do-network-setup=true \
---do-driver-build=true --gce-zone="us-central1-c" --use-gke-driver=false \
---num-nodes="${NUM_NODES:-1}" --multi-nic-num-nodes="${MULTI_NIC_NUM_NODES:-1}" --parallel=1 -test-version=1.32 --gke-cluster-version=1.32 --image-type="${IMAGE_TYPE:-cos_containerd}"
+--do-driver-build=true --gce-zone="us-central1-a" --use-gke-driver=false \
+--num-nodes="${NUM_NODES:-1}" --multi-nic-num-nodes="${MULTI_NIC_NUM_NODES:-1}" --parallel=1 --test-version=1.36 --gke-cluster-version=1.36 --image-type="${IMAGE_TYPE:-cos_containerd}"

@@ -23,8 +23,12 @@ allowedTopologies:
   - matchLabelExpressions:
     - key: "topology.gke.io/zone"
       values:
+        # These zones are known to support 'CreateInstanceOverrides' lustre backend operation.
+        # We will add more zones that has `CreateInstanceOverrides` support overtime.
         - us-central1-a
+        - us-central1-c
 parameters:
   network: lustre-network
   perUnitStorageThroughput: "1000"
   labels: "gke-testing-project=prow"
+  description: 'CreateInstanceOverrides={"CalculatorType": "THIN_CLUSTER"}'
