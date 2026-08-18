@@ -183,11 +183,44 @@ func executeCommand(ctx context.Context, req Request) Response {
 	}
 }
 
+var allowedLustreParams = map[string]bool{
+	"osc.*.max_dirty_mb":        true,
+	"osc.*.max_rpcs_in_flight":  true,
+	"osc.*.max_pages_per_rpc":   true,
+	"osc.*.checksums":           true,
+	"llite.*.max_read_ahead_mb": true,
+	"llite.*.read_ahead_mb":     true,
+	"llite.*.statahead_max":     true,
+	"jobid_var":                 true,
+	"debug":                     true,
+}
+
+var allowedLustreFlags = map[string]bool{
+	"-n": true,
+	"-P": true,
+	"-d": true,
+}
+
 func validateCommand(binary string, args []string) error {
 	switch binary {
 	case lctlPath:
 		if len(args) < 2 || args[0] != "set_param" {
 			return fmt.Errorf("unauthorized lctl subcommand or arguments: %v", args)
+		}
+		for _, arg := range args[1:] {
+			if strings.HasPrefix(arg, "-") {
+				if !allowedLustreFlags[arg] {
+					return fmt.Errorf("unauthorized lctl option/flag: %s", arg)
+				}
+				continue
+			}
+			key := arg
+			if idx := strings.Index(arg, "="); idx != -1 {
+				key = arg[:idx]
+			}
+			if !isAllowedParam(key) {
+				return fmt.Errorf("unauthorized lctl parameter key: %s", key)
+			}
 		}
 		return nil
 	case iamUpcallPath:
@@ -196,6 +229,20 @@ func validateCommand(binary string, args []string) error {
 	default:
 		return fmt.Errorf("unauthorized binary path execution request: %s", binary)
 	}
+}
+
+func isAllowedParam(key string) bool {
+	if allowedLustreParams[key] {
+		return true
+	}
+	parts := strings.Split(key, ".")
+	if len(parts) == 3 {
+		pattern := parts[0] + ".*." + parts[2]
+		if allowedLustreParams[pattern] {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeEnv(env []string) []string {
