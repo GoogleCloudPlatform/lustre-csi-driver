@@ -25,9 +25,9 @@ allowedTopologies:
       values:
         # These zones are known to support 'CreateInstanceOverrides' lustre backend operation.
         # We will add more zones that has `CreateInstanceOverrides` support overtime.
-        - us-west1-c
+        - us-east4-a
+        - us-east4-b
         - us-west1-b
-        - us-south1-b
 parameters:
   network: lustre-network
   perUnitStorageThroughput: "1000"
