@@ -18,7 +18,7 @@ require (
 	golang.org/x/sys v0.47.0
 	google.golang.org/api v0.293.0
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7
-	google.golang.org/grpc v1.83.0
+	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/gcfg.v1 v1.2.3
 	k8s.io/api v0.34.1
