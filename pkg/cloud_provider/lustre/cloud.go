@@ -116,7 +116,7 @@ func maybeReadConfig(configPath string) (*ConfigFile, error) {
 	if err := gcfg.FatalOnly(gcfg.ReadInto(cfg, reader)); err != nil {
 		return nil, fmt.Errorf("couldn't read cloud provider configuration at %s: %w", configPath, err)
 	}
-	klog.Infof("Config file read %#v", cfg)
+	klog.Infof("Config file read successfully for project %s, zone %s", cfg.Global.ProjectID, cfg.Global.Zone)
 
 	return cfg, nil
 }
