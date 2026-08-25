@@ -28,7 +28,6 @@ allowedTopologies:
         - us-west2-a
         - us-west2-b
         - us-west2-c
-        - us-east4-a
 parameters:
   network: lustre-network
   perUnitStorageThroughput: "1000"
