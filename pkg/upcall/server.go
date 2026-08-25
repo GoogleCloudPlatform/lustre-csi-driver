@@ -221,6 +221,15 @@ func isAllowedParam(key string) bool {
 	if strings.Contains(strings.ToLower(key), "upcall") {
 		return false
 	}
+	// Prevent wildcard and escape bypasses in the parameter name (the last component).
+	idx := strings.LastIndex(key, ".")
+	if idx == -1 {
+		return false
+	}
+	lastComponent := key[idx+1:]
+	if len(lastComponent) == 0 || strings.ContainsAny(lastComponent, "*?[]\\") {
+		return false
+	}
 	for _, prefix := range allowedLustrePrefixes {
 		if strings.HasPrefix(key, prefix) && len(key) > len(prefix) {
 			return true
