@@ -23,12 +23,8 @@ echo "PKGDIR is $PKGDIR"
 
 readonly boskos_resource_type="${BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
 readonly do_driver_build="${DO_DRIVER_BUILD:-false}"
-readonly lustre_endpoint="${LUSTRE_ENDPOINT:-staging}"
-if [[ "$lustre_endpoint" == "prod" ]]; then
-  readonly gce_zone="us-west2-a"
-else
-  readonly gce_zone="${GCE_CLUSTER_ZONE:-us-central1-a}"
-fi
+readonly gce_zone=${GCE_CLUSTER_ZONE:-us-central1-a}
+readonly lustre_endpoint="${LUSTRE_ENDPOINT:-prod}"
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly gce_region=${GCE_CLUSTER_REGION:-}
@@ -38,6 +34,8 @@ readonly test_focus=${TEST_FOCUS:-}
 readonly test_version=${TEST_VERSION:-1.32}
 readonly enable_legacy_lustre_port=${ENABLE_LEGACY_LUSTRE_PORT:-true}
 readonly image_type="${IMAGE_TYPE:-cos_containerd}"
+
+echo "lustre_endpoint is $lustre_endpoint"
 
 make -C "${PKGDIR}" test-k8s-integration
 
