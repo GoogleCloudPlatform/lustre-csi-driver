@@ -96,6 +96,12 @@ func main() {
 	}
 	flag.Parse()
 
+	if *storageClassFiles == "storage-class.yaml" {
+		if *lustreEndpoint == "staging" {
+			*storageClassFiles = "storage-class-staging.yaml"
+		}
+	}
+
 	if *inProw {
 		*doNetworkSetup = true
 		*bringupCluster = true

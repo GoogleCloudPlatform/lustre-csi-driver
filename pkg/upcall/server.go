@@ -174,16 +174,56 @@ func executeCommand(ctx context.Context, req Request) Response {
 	}
 }
 
+var allowedLustrePrefixes = []string{
+	"osc.",
+	"mdc.",
+	"llite.",
+	"ldlm.",
+}
+
 func validateCommand(binary string, args []string) error {
 	switch binary {
 	case "/usr/sbin/lctl":
 		if len(args) < 2 || args[0] != "set_param" {
 			return fmt.Errorf("unauthorized lctl subcommand or arguments: %v", args)
 		}
+		for _, arg := range args[1:] {
+			if strings.HasPrefix(arg, "-") {
+				return fmt.Errorf("unauthorized lctl option/flag: %s", arg)
+			}
+			key := arg
+			if idx := strings.Index(arg, "="); idx != -1 {
+				key = arg[:idx]
+			}
+			if !isAllowedParam(key) {
+				return fmt.Errorf("unauthorized lctl parameter key: %s", key)
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("unauthorized binary path execution request: %s", binary)
 	}
+}
+
+func isAllowedParam(key string) bool {
+	if strings.Contains(strings.ToLower(key), "upcall") {
+		return false
+	}
+	// Prevent wildcard and escape bypasses in the parameter name (the last component).
+	idx := strings.LastIndex(key, ".")
+	if idx == -1 {
+		return false
+	}
+	lastComponent := key[idx+1:]
+	if len(lastComponent) == 0 || strings.ContainsAny(lastComponent, "*?[]\\") {
+		return false
+	}
+	for _, prefix := range allowedLustrePrefixes {
+		if strings.HasPrefix(key, prefix) && len(key) > len(prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeEnv(env []string) []string {

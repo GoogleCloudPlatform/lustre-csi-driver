@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM --platform=$BUILDPLATFORM google-go.pkg.dev/golang:1.26.2@sha256:1bee769a7a50eea7730ac31f75182ae2614f50a70902407312db390a7c7cb2ff AS driverbuilder
+FROM --platform=$BUILDPLATFORM google-go.pkg.dev/golang:1.27.0@sha256:0d91230d0055891ae3a35f0678f925850688772c633260e29f19aff14deb3ae5 AS driverbuilder
 
 ARG STAGINGVERSION
 ARG TARGETARCH
