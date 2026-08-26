@@ -21,6 +21,9 @@ readonly SCRIPTDIR="$( realpath -s "$(dirname "$BASH_SOURCE"[0])" )"
 readonly PKGDIR="$( realpath -s "$(dirname "$SCRIPTDIR")" )"
 echo "PKGDIR is $PKGDIR"
 
+readonly lustre_endpoint="${LUSTRE_ENDPOINT:-prod}"
+echo "lustre_endpoint is $lustre_endpoint"
+
 readonly boskos_resource_type="${BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
 readonly do_driver_build="${DO_DRIVER_BUILD:-false}"
 readonly gce_zone=${GCE_CLUSTER_ZONE:-us-central1-a}
@@ -49,7 +52,8 @@ base_cmd="${PKGDIR}/bin/k8s-integration-test \
             --do-driver-build=${do_driver_build} --boskos-resource-type=${boskos_resource_type} \
             --test-version=${test_version} --num-nodes=1 --multi-nic-num-nodes=1 --pkg-dir=${PKGDIR} \
             --use-gke-driver=${use_gke_driver} --gke-cluster-version=${gke_cluster_version} \
-            --enable-legacy-lustre-port=${enable_legacy_lustre_port} --image-type=${image_type}"
+            --enable-legacy-lustre-port=${enable_legacy_lustre_port} --image-type=${image_type} \
+            --lustre-endpoint=${lustre_endpoint}"
 
 if [ -n "$gke_node_version" ]; then
   base_cmd="${base_cmd} --gke-node-version=${gke_node_version}"
