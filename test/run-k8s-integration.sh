@@ -23,7 +23,12 @@ echo "PKGDIR is $PKGDIR"
 
 readonly boskos_resource_type="${BOSKOS_RESOURCE_TYPE:-gke-internal-project}"
 readonly do_driver_build="${DO_DRIVER_BUILD:-false}"
-readonly gce_zone=${GCE_CLUSTER_ZONE:-us-central1-a}
+readonly lustre_endpoint="${LUSTRE_ENDPOINT:-staging}"
+if [[ "$lustre_endpoint" == "prod" ]]; then
+  readonly gce_zone="us-west2-a"
+else
+  readonly gce_zone="${GCE_CLUSTER_ZONE:-us-central1-a}"
+fi
 readonly gke_cluster_version=${GKE_CLUSTER_VERSION:-latest}
 readonly gke_node_version=${GKE_NODE_VERSION:-}
 readonly gce_region=${GCE_CLUSTER_REGION:-}
@@ -49,7 +54,8 @@ base_cmd="${PKGDIR}/bin/k8s-integration-test \
             --do-driver-build=${do_driver_build} --boskos-resource-type=${boskos_resource_type} \
             --test-version=${test_version} --num-nodes=1 --multi-nic-num-nodes=1 --pkg-dir=${PKGDIR} \
             --use-gke-driver=${use_gke_driver} --gke-cluster-version=${gke_cluster_version} \
-            --enable-legacy-lustre-port=${enable_legacy_lustre_port} --image-type=${image_type}"
+            --enable-legacy-lustre-port=${enable_legacy_lustre_port} --image-type=${image_type} \
+            --lustre-endpoint=${lustre_endpoint}"
 
 if [ -n "$gke_node_version" ]; then
   base_cmd="${base_cmd} --gke-node-version=${gke_node_version}"

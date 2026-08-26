@@ -18,6 +18,13 @@ readonly SCRIPTDIR="$( realpath -s "$(dirname "$BASH_SOURCE"[0])" )"
 readonly PKGDIR="$( realpath -s "$(dirname "$SCRIPTDIR")" )"
 echo "PKGDIR is $PKGDIR"
 
+readonly lustre_endpoint="${LUSTRE_ENDPOINT:-staging}"
+if [[ "$lustre_endpoint" == "prod" ]]; then
+  readonly gce_zone="us-west2-a"
+else
+  readonly gce_zone="${GCE_CLUSTER_ZONE:-us-central1-a}"
+fi
+
 # Some commonly run subset of tests focus strings.
 all_external_tests_focus="External.*Storage"
 subpath_test_focus="External.*Storage.*default.*fs.*subPath"
@@ -26,5 +33,7 @@ multivolume_fs_test_focus="External.*Storage.*filesystem.*multiVolume"
 # E.g. run command: test/run-k8s-integration-local.sh | tee log
 "${PKGDIR}"/bin/k8s-integration-test --run-in-prow=false --pkg-dir="${PKGDIR}" \
 --bringup-cluster=true --test-focus="${all_external_tests_focus}" --do-network-setup=true \
---do-driver-build=true --gce-zone="us-central1-a" --use-gke-driver=false \
---num-nodes="${NUM_NODES:-1}" --multi-nic-num-nodes="${MULTI_NIC_NUM_NODES:-1}" --parallel=1 --test-version=1.36 --gke-cluster-version=1.36 --image-type="${IMAGE_TYPE:-cos_containerd}"
+--do-driver-build=true --gce-zone="${gce_zone}" --use-gke-driver=false \
+--num-nodes="${NUM_NODES:-1}" --multi-nic-num-nodes="${MULTI_NIC_NUM_NODES:-1}" --parallel=1 \
+--test-version=1.36 --gke-cluster-version=1.36 --image-type="${IMAGE_TYPE:-cos_containerd}" \
+--lustre-endpoint="${lustre_endpoint}"
