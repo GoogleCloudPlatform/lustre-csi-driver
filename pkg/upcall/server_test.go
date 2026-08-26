@@ -34,9 +34,45 @@ func TestValidateCommand(t *testing.T) {
 		errSub  string
 	}{
 		{
-			name:    "Valid lctl set_param",
+			name:    "Valid lctl set_param osc wildcard param",
 			binary:  "/usr/sbin/lctl",
 			args:    []string{"set_param", "osc.*.max_dirty_mb=32"},
+			wantErr: false,
+		},
+		{
+			name:    "Valid lctl set_param osc dynamic import target",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.lustre-OST0000-osc-ffff8801.import=connection=10.0.0.1@tcp::1"},
+			wantErr: false,
+		},
+		{
+			name:    "Valid lctl set_param mdc wildcard param",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "mdc.*.max_rpcs_in_flight=16"},
+			wantErr: false,
+		},
+		{
+			name:    "Valid lctl set_param mdc dynamic import target",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "mdc.lustre-MDT0000-mdc-ffff8801.import=connection=10.0.0.1@tcp::1"},
+			wantErr: false,
+		},
+		{
+			name:    "Valid lctl set_param llite wildcard param",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "llite.*.max_read_ahead_mb=256"},
+			wantErr: false,
+		},
+		{
+			name:    "Valid lctl set_param ldlm namespace param",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "ldlm.namespaces.*.lru_size=2000"},
+			wantErr: false,
+		},
+		{
+			name:    "Valid lctl set_param multiple allowed params",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.*.max_dirty_mb=32", "llite.*.max_read_ahead_mb=256"},
 			wantErr: false,
 		},
 		{
@@ -53,11 +89,116 @@ func TestValidateCommand(t *testing.T) {
 			errSub:  "unauthorized lctl subcommand",
 		},
 		{
+			name:    "Empty lctl arguments",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param"},
+			wantErr: true,
+			errSub:  "unauthorized lctl subcommand or arguments",
+		},
+		{
 			name:    "Unauthorized binary",
 			binary:  "/bin/rm",
 			args:    []string{"-rf", "/"},
 			wantErr: true,
 			errSub:  "unauthorized binary path execution request",
+		},
+		{
+			name:    "Unauthorized lctl option flag -n",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "-n", "osc.*.max_dirty_mb=32"},
+			wantErr: true,
+			errSub:  "unauthorized lctl option/flag",
+		},
+		{
+			name:    "Unauthorized lctl option flag -P",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "-P", "osc.*.max_dirty_mb=32"},
+			wantErr: true,
+			errSub:  "unauthorized lctl option/flag",
+		},
+		{
+			name:    "Unauthorized lctl parameter key mdt",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "mdt.*.identity_upcall=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key ptlrpc",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "ptlrpc.lsvcgss.upcall=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key unlisted generic",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "debug=0"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key jobid_var",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "jobid_var=procname_uid"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key with upcall keyword in osc",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.*.upcall=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key with wildcard bypass in osc",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.*.up*all=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key with question mark wildcard bypass in osc",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.*.up?all=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key with character class wildcard bypass in osc",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.*.up[c]all=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key with wildcard in parameter name",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.*.*=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key with backslash in parameter name",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.*.up\\call=/tmp/evil"},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key prefix only",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc."},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
+		},
+		{
+			name:    "Unauthorized lctl parameter key with empty leaf component",
+			binary:  "/usr/sbin/lctl",
+			args:    []string{"set_param", "osc.*."},
+			wantErr: true,
+			errSub:  "unauthorized lctl parameter key",
 		},
 	}
 
@@ -128,7 +269,7 @@ func TestServerEndToEndMock(t *testing.T) {
 	}
 
 	req2 := Request{
-		Args: []string{"/usr/sbin/lctl", "set_param", "debug=0"},
+		Args: []string{"/usr/sbin/lctl", "set_param", "osc.*.max_dirty_mb=32"},
 		Env:  os.Environ(),
 	}
 	_ = json.NewEncoder(clientConn2).Encode(req2)
