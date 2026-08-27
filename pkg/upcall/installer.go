@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"k8s.io/klog/v2"
@@ -56,7 +57,25 @@ func SetupHostArtifacts() error {
 	}
 	klog.Infof("Successfully installed host proxy binary at %s", hostProxyPath)
 
-	// 4. Ensure rules.d directory exists on host.
+	// 4. Create symbolic link on host pointing to the proxy: /etc/udev/l_gssiam_upcall -> /etc/udev/lustre-host-proxy
+	hostSymlinkPath := filepath.Join(hostUdevDir, "l_gssiam_upcall")
+	if err := os.Remove(hostSymlinkPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove existing symlink at %s: %w", hostSymlinkPath, err)
+	}
+	if err := os.Symlink("/etc/udev/lustre-host-proxy", hostSymlinkPath); err != nil {
+		return fmt.Errorf("failed to create upcall symlink at %s: %w", hostSymlinkPath, err)
+	}
+	klog.Infof("Successfully created host upcall symlink at %s -> /etc/udev/lustre-host-proxy", hostSymlinkPath)
+
+	// 5. Configure kernel tunable sptlrpc.gssiam.gssiam_upcall directly to the symlink.
+	cmd := exec.Command("/usr/sbin/lctl", "set_param", "sptlrpc.gssiam.gssiam_upcall=/etc/udev/l_gssiam_upcall")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		klog.Errorf("Failed to set kernel tunable sptlrpc.gssiam.gssiam_upcall: %v, output: %s", err, string(output))
+	} else {
+		klog.Infof("Successfully set kernel tunable sptlrpc.gssiam.gssiam_upcall=/etc/udev/l_gssiam_upcall, output: %s", string(output))
+	}
+
+	// 6. Ensure rules.d directory exists on host.
 	rulesDir := filepath.Dir(hostRulesPath)
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create host rules directory %s: %w", rulesDir, err)
