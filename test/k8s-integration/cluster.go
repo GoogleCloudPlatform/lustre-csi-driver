@@ -167,7 +167,10 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 
 	if isVariableSet(gkeClusterVersion) {
 		cmdParams = append(cmdParams, "--cluster-version", *gkeClusterVersion)
-		cmdParams = append(cmdParams, "--release-channel", "rapid")
+	}
+
+	if isVariableSet(gkeReleaseChannel) {
+		cmdParams = append(cmdParams, "--release-channel", *gkeReleaseChannel)
 	}
 
 	if isVariableSet(gkeNodeVersion) {

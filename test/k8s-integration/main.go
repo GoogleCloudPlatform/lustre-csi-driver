@@ -63,6 +63,7 @@ var (
 	gkeClusterVersion      = flag.String("gke-cluster-version", "", "version of k8s master and node for GKE cluster")
 	gkeNodeVersion         = flag.String("gke-node-version", "", "GKE cluster worker node version")
 	gkeTestClusterName     = flag.String("gke-cluster-name", "", "GKE cluster name")
+	gkeReleaseChannel      = flag.String("gke-release-channel", "rapid", "GKE release channel")
 	gceZone                = flag.String("gce-zone", "", "zone that the gke zonal cluster is created/found in")
 	gceRegion              = flag.String("gce-region", "", "region that the gke regional cluster should be created in")
 	clusterNetwork         = flag.String("cluster-network", "lustre-network", "the VPC network to be used by the GKE cluster")

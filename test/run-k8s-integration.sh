@@ -35,6 +35,7 @@ readonly parallel_run=${PARALLEL:-}
 readonly test_focus=${TEST_FOCUS:-}
 readonly test_version=${TEST_VERSION:-1.32}
 readonly enable_legacy_lustre_port=${ENABLE_LEGACY_LUSTRE_PORT:-true}
+readonly gke_release_channel=${GKE_RELEASE_CHANNEL:-rapid}
 readonly image_type="${IMAGE_TYPE:-cos_containerd}"
 
 make -C "${PKGDIR}" test-k8s-integration
@@ -52,6 +53,7 @@ base_cmd="${PKGDIR}/bin/k8s-integration-test \
             --do-driver-build=${do_driver_build} --boskos-resource-type=${boskos_resource_type} \
             --test-version=${test_version} --num-nodes=1 --multi-nic-num-nodes=1 --pkg-dir=${PKGDIR} \
             --use-gke-driver=${use_gke_driver} --gke-cluster-version=${gke_cluster_version} \
+            --gke-release-channel=${gke_release_channel} \
             --enable-legacy-lustre-port=${enable_legacy_lustre_port} --image-type=${image_type} \
             --lustre-endpoint=${lustre_endpoint}"
 
