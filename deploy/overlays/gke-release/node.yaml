@@ -64,6 +64,8 @@ spec:
             - --nodeid=$(KUBE_NODE_NAME)
             - --disable-multi-nic=false
             - --enable-legacy-lustre-port=false
+            # TODO: Update min-version to 2.16.0 and max-version to 2.16.9999 once IAM release is cut.
+            - --max-version=2.14.9999
           env:
             - name: KUBE_NODE_NAME
               valueFrom:

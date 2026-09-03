@@ -32,6 +32,8 @@ var (
 	nodeID                 = flag.String("nodeid", "", "Node ID")
 	enableLegacyLustrePort = flag.Bool("enable-legacy-lustre-port", false, "If set to true, configure the legacy Lustre LNet port")
 	disableMultiNIC        = flag.Bool("disable-multi-nic", false, "If set to true, multi-NIC support is disabled and the driver will only use the default NIC (eth0)")
+	minVersion             = flag.String("min-version", "", "Minimum driver version for cos-dkms install")
+	maxVersion             = flag.String("max-version", "", "Maximum driver version for cos-dkms install")
 
 	// customModuleArgs contains custom module-args arguments for cos-dkms installation provided by user.
 	customModuleArgs stringSlice
@@ -115,7 +117,7 @@ func main() {
 
 	switch hostOS {
 	case "cos":
-		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic)
+		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, *minVersion, *maxVersion)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
 		}
