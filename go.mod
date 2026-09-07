@@ -1,6 +1,6 @@
 module github.com/GoogleCloudPlatform/lustre-csi-driver
 
-go 1.25.8
+go 1.26.0
 
 require (
 	cloud.google.com/go/compute/metadata v0.9.0
@@ -16,7 +16,7 @@ require (
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.47.0
-	google.golang.org/api v0.295.0
+	google.golang.org/api v0.297.0
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
