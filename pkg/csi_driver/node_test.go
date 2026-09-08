@@ -479,7 +479,7 @@ func TestNodePublishVolume(t *testing.T) {
 			},
 			actions: []mount.FakeAction{{Action: mount.FakeActionMount}, {Action: mount.FakeActionMount}}, // Global + Bind
 			expectedMounts: []*mount.MountPoint{
-				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user=gke-wi://test-ns/test-sa+" + key}},
+				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user_principal=gke-wi://test-ns/test-sa+" + key}},
 				{Device: testDevice, Path: testTargetPath, Type: "lustre", Opts: []string{"bind"}},
 			},
 		},
@@ -503,14 +503,14 @@ func TestNodePublishVolume(t *testing.T) {
 			},
 			actions: []mount.FakeAction{{Action: mount.FakeActionMount}, {Action: mount.FakeActionMount}}, // Global + Bind
 			expectedMounts: []*mount.MountPoint{
-				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user=gke-wi://test-ns/test-sa+" + key, "flock", "noatime"}},
+				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user_principal=gke-wi://test-ns/test-sa+" + key, "flock", "noatime"}},
 				{Device: testDevice, Path: testTargetPath, Type: "lustre", Opts: []string{"bind", "flock", "noatime"}},
 			},
 		},
 		{
 			name: "valid request IAM (Token Refresh)",
 			mounts: []mount.MountPoint{
-				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user=gke-wi://test-ns/test-sa+" + key}},
+				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user_principal=gke-wi://test-ns/test-sa+" + key}},
 				{Device: testDevice, Path: testTargetPath, Type: "lustre", Opts: []string{"bind"}},
 			},
 			req: &csi.NodePublishVolumeRequest{
@@ -522,7 +522,7 @@ func TestNodePublishVolume(t *testing.T) {
 			},
 			actions: []mount.FakeAction{},
 			expectedMounts: []*mount.MountPoint{
-				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user=gke-wi://test-ns/test-sa+" + key}},
+				{Device: testDevice, Path: globalMountPath, Type: "lustre", Opts: []string{"user_principal=gke-wi://test-ns/test-sa+" + key}},
 				{Device: testDevice, Path: testTargetPath, Type: "lustre", Opts: []string{"bind"}},
 			},
 		},
@@ -1173,7 +1173,7 @@ func TestPublishIAMVolume(t *testing.T) {
 					Device: testIP + "@tcp:/" + testFilesystem,
 					Path:   testGlobalMountPath,
 					Type:   "lustre",
-					Opts:   []string{"user=gke-wi://default/lustre-client-sa+" + testKey},
+					Opts:   []string{"user_principal=gke-wi://default/lustre-client-sa+" + testKey},
 				},
 				{
 					Device: testIP + "@tcp:/" + testFilesystem, // FakeMounter resolves bind mount source to underlying device
@@ -1431,7 +1431,7 @@ func TestMountGlobalIAM(t *testing.T) {
 				Device: testIP + "@tcp:/" + testFilesystem,
 				Path:   testGlobalMountPath,
 				Type:   "lustre",
-				Opts:   []string{"user=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"},
+				Opts:   []string{"user_principal=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"},
 			},
 			expectErr: false,
 		},
@@ -1445,7 +1445,7 @@ func TestMountGlobalIAM(t *testing.T) {
 				Device: "10.0.0.1@tcp:/customfs",
 				Path:   testGlobalMountPath,
 				Type:   "lustre",
-				Opts:   []string{"user=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"},
+				Opts:   []string{"user_principal=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e"},
 			},
 			expectErr: false,
 		},
@@ -1467,7 +1467,7 @@ func TestMountGlobalIAM(t *testing.T) {
 				Device: testIP + "@tcp:/" + testFilesystem,
 				Path:   testGlobalMountPath,
 				Type:   "lustre",
-				Opts:   []string{"user=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e", "foo", "bar"},
+				Opts:   []string{"user_principal=gke-wi://test-ns/test-sa+71ac09669e8a14e7dca05e1bb9ef37802de0448c37bb195c6c1b68a5ff3f2c2e", "foo", "bar"},
 			},
 			expectErr: false,
 		},
