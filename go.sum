@@ -174,8 +174,8 @@ github.com/googleapis/enterprise-certificate-proxy v0.3.21 h1:OFdQ3tnCX/zaQ0Cedu
 github.com/googleapis/enterprise-certificate-proxy v0.3.21/go.mod h1:L3D/IQExI6LqEjBdXcZQ1WluSgigQmSwBboFstVPM4w=
 github.com/googleapis/gax-go/v2 v2.0.4/go.mod h1:0Wqv26UfaUD9n4G6kQubkQ+KchISgw+vpHVxEJEs9eg=
 github.com/googleapis/gax-go/v2 v2.0.5/go.mod h1:DWXyrwAJ9X0FpwwEdw+IPEYBICEFu5mhpdKc/us6bOk=
-github.com/googleapis/gax-go/v2 v2.24.0 h1:myMaPYyF9MecEmvQqMqomIwn9t/4KCZN9qnwsS76wlg=
-github.com/googleapis/gax-go/v2 v2.24.0/go.mod h1:IaTHBDd7NHxSCiu0vEs8pQZu4dGZrWwuSoxCnk16OFM=
+github.com/googleapis/gax-go/v2 v2.24.1 h1:AtqTN21IXMMWo99LiEVAiBfNNQmO40d8xUfZI640mc0=
+github.com/googleapis/gax-go/v2 v2.24.1/go.mod h1:bWeBei0NVwaNZKb2y1HUBS7gLXIF3/Tu3pq7j8D2Tb0=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
 github.com/hashicorp/errwrap v1.1.0 h1:OxrOeh75EUXMY8TBjag2fzXGZ40LB6IKw45YeGUDY2I=
 github.com/hashicorp/errwrap v1.1.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
