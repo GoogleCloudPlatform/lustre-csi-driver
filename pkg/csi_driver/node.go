@@ -448,7 +448,7 @@ func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPa
 
 	// Perform secure mount with Workload Identity user credentials.
 	source := fmt.Sprintf("%s@tcp:/%s", ip, fsname)
-	userOpt := fmt.Sprintf("user=gke-wi://%s+%s", principal, key)
+	userOpt := fmt.Sprintf("user_principal=gke-wi://%s+%s", principal, key)
 	iamMountOptions := []string{userOpt}
 
 	if m := volCap.GetMount(); m != nil {
