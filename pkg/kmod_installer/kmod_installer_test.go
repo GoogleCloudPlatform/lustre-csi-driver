@@ -354,3 +354,92 @@ func TestBuildLnetNetworkString(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildCosDkmsArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		enableLegacyPort bool
+		customModuleArgs []string
+		expectedNetwork  string
+		minVersion       string
+		maxVersion       string
+		want             []string
+	}{
+		{
+			name:             "default without min/max version",
+			enableLegacyPort: false,
+			customModuleArgs: nil,
+			expectedNetwork:  "tcp0(eth0)",
+			minVersion:       "",
+			maxVersion:       "",
+			want: []string{
+				"install", "lustre-client-drivers",
+				"--gcs-bucket=cos-default",
+				"--latest",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+			},
+		},
+		{
+			name:             "2.14 driver version constraint (max-version only)",
+			enableLegacyPort: false,
+			customModuleArgs: nil,
+			expectedNetwork:  "tcp0(eth0)",
+			minVersion:       "",
+			maxVersion:       "2.14.9999",
+			want: []string{
+				"install", "lustre-client-drivers",
+				"--gcs-bucket=cos-default",
+				"--latest",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				"--max-version=2.14.9999",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+			},
+		},
+		{
+			name:             "2.16 driver version range (min-version and max-version for IAM)",
+			enableLegacyPort: false,
+			customModuleArgs: []string{"lnet.log_level=debug"},
+			expectedNetwork:  "tcp0(eth0,eth1)",
+			minVersion:       "2.16.0",
+			maxVersion:       "2.16.9999",
+			want: []string{
+				"install", "lustre-client-drivers",
+				"--gcs-bucket=cos-default",
+				"--latest",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				"--min-version=2.16.0",
+				"--max-version=2.16.9999",
+				`--module-arg=lnet.networks="tcp0(eth0,eth1)"`,
+				"--module-arg=lnet.log_level=debug",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := BuildCosDkmsArgs(tc.enableLegacyPort, tc.customModuleArgs, tc.expectedNetwork, tc.minVersion, tc.maxVersion)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("BuildCosDkmsArgs() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

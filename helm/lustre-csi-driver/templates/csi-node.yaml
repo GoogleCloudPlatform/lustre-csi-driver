@@ -52,6 +52,12 @@ spec:
           - --nodeid=$(KUBE_NODE_NAME)
           - --enable-legacy-lustre-port={{ .Values.image.kmod.enableLegacyLustrePort }}
           - --disable-multi-nic={{ .Values.image.kmod.disableMultiNic }}
+          {{- if .Values.image.kmod.minVersion }}
+          - --min-version={{ .Values.image.kmod.minVersion }}
+          {{- end }}
+          {{- if .Values.image.kmod.maxVersion }}
+          - --max-version={{ .Values.image.kmod.maxVersion }}
+          {{- end }}
         env:
           - name: KUBE_NODE_NAME
             valueFrom:

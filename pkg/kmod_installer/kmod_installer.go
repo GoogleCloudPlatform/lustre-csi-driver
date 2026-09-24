@@ -135,14 +135,9 @@ func readLnetConfig(path, defaultNic string) (string, error) {
 	return currNetworkNics, nil
 }
 
-// InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
-// It proceeds with the installation using the provided NICs.
-func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic string) error {
+// BuildCosDkmsArgs constructs the command-line arguments for cos-dkms install.
+func BuildCosDkmsArgs(enableLegacyPort bool, customModuleArgs []string, expectedNetwork string, minVersion string, maxVersion string) []string {
 	lnetPort := lnetPort(enableLegacyPort)
-	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
-
-	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
-	defer cancel()
 
 	// --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
 	// --latest: Installs the latest available driver version that is compatible with the kernel version running on the current node.
@@ -169,11 +164,31 @@ func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customMo
 		"--module-arg=lnet.accept_port="+strconv.Itoa(lnetPort),
 	)
 
+	if minVersion != "" {
+		args = append(args, "--min-version="+minVersion)
+	}
+	if maxVersion != "" {
+		args = append(args, "--max-version="+maxVersion)
+	}
+
 	args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
 
 	for _, arg := range customModuleArgs {
 		args = append(args, "--module-arg="+arg)
 	}
+
+	return args
+}
+
+// InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
+// It proceeds with the installation using the provided NICs.
+func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic string, minVersion string, maxVersion string) error {
+	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
+
+	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
+	defer cancel()
+
+	args := BuildCosDkmsArgs(enableLegacyPort, customModuleArgs, expectedNetwork, minVersion, maxVersion)
 	cmd := exec.CommandContext(cmdCtx, "/usr/bin/cos-dkms", args...)
 	// TODO(samhalim): Add latency/success rate metrics for kmod cos-dkms install.
 
