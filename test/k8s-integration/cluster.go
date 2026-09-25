@@ -163,6 +163,10 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 		locationArg, locationVal, "--num-nodes", strconv.Itoa(numNodes),
 		"--quiet", "--machine-type", "n1-standard-2", "--image-type", imageType, "--network", *clusterNetwork,
 		"--workload-pool", project + ".svc.id.goog",
+		// The pre-existing VPC network may be in custom subnet mode with no subnets,
+		// so let GKE create a dedicated subnet (auto-picked name and range) for the
+		// cluster. GKE deletes this subnet when the cluster is deleted.
+		"--create-subnetwork", "",
 	}
 
 	if isVariableSet(gkeClusterVersion) {

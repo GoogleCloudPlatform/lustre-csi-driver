@@ -43,7 +43,9 @@ func setupNetwork(project string) error {
 	cmd = exec.Command("gcloud", "compute", "networks", "describe", *clusterNetwork, "--project="+project)
 	if err := runCommand("Checking if VPC network exists", cmd); err != nil {
 		klog.Infof("VPC network %q not found, creating it.", *clusterNetwork)
-		cmd = exec.Command("gcloud", "compute", "networks", "create", *clusterNetwork, "--subnet-mode=auto", "--mtu=8896", "--project="+project)
+		// Use custom subnet mode (as recommended by the Lustre docs). The GKE cluster
+		// gets its own subnet via --create-subnetwork in clusterUpGKE.
+		cmd = exec.Command("gcloud", "compute", "networks", "create", *clusterNetwork, "--subnet-mode=custom", "--mtu=8896", "--project="+project)
 		if err := runCommand("Creating VPC network", cmd); err != nil {
 			return fmt.Errorf("failed to create VPC network: %w", err)
 		}
