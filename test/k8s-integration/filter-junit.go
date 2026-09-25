@@ -46,8 +46,42 @@ type TestCase struct {
 	Name      string     `xml:"name,attr"`
 	Time      string     `xml:"time,attr"`
 	SystemOut string     `xml:"system-out,omitempty"`
-	Failure   string     `xml:"failure,omitempty"`
+	SystemErr string     `xml:"system-err,omitempty"`
+	Failure   *Failure   `xml:"failure,omitempty"`
 	Skipped   SkipReason `xml:"skipped,omitempty"`
+}
+
+// Failure keeps the message attribute as well as the body, because TestGrid
+// reads the message attribute first when it is present.
+type Failure struct {
+	Message string `xml:"message,attr,omitempty"`
+	Type    string `xml:"type,attr,omitempty"`
+	Text    string `xml:",chardata"`
+}
+
+// stockoutMarker is prepended to the failure of a test that hit a Lustre
+// stockout. The TestGrid config for the Lustre CSI dashboards matches this
+// prefix and shows those failures as CATEGORIZED_ABORT so they do not alert.
+const stockoutMarker = "[Infrastructure Failure] Lustre stockout: "
+
+// stockoutRE matches the Lustre API stockout message on its own rather than
+// the full error string, because the driver and the API wrap it in several
+// layers whose text can change. The ResourceExhausted code alone is not
+// matched, because quota errors and HTTP 429 use it too and should still alert.
+var stockoutRE = regexp.MustCompile(`not enough resources available to fulfill the request`)
+
+// markStockoutFailure prefixes the failure with stockoutMarker if the test
+// output shows a Lustre stockout. Ginkgo writes the framework log, which
+// includes the namespace event dump, to system-err.
+func markStockoutFailure(tc *TestCase) {
+	if tc.Failure == nil || strings.HasPrefix(tc.Failure.Message, stockoutMarker) {
+		return
+	}
+	if !stockoutRE.MatchString(tc.SystemErr) && !stockoutRE.MatchString(tc.SystemOut) && !stockoutRE.MatchString(tc.Failure.Text) {
+		return
+	}
+	tc.Failure.Message = stockoutMarker + tc.Failure.Message
+	tc.Failure.Text = stockoutMarker + tc.Failure.Text
 }
 
 // SkipReason deals with the special <skipped></skipped>:
@@ -123,6 +157,7 @@ func MergeJUnit(testFilter string, sourceDirectories []string, destination strin
 	var junit TestSuite
 	junit.TestCases = nil
 	for _, testcase := range filtered {
+		markStockoutFailure(&testcase)
 		junit.TestCases = append(junit.TestCases, testcase)
 	}
 
