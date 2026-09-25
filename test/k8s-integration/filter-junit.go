@@ -64,11 +64,11 @@ type Failure struct {
 // prefix and shows those failures as CATEGORIZED_ABORT so they do not alert.
 const stockoutMarker = "[Infrastructure Failure] Lustre stockout: "
 
-// stockoutRE matches the Lustre API stockout message on its own rather than
-// the full error string, because the driver and the API wrap it in several
-// layers whose text can change. The ResourceExhausted code alone is not
-// matched, because quota errors and HTTP 429 use it too and should still alert.
-var stockoutRE = regexp.MustCompile(`not enough resources available to fulfill the request`)
+// stockoutMessage is the Lustre API stockout message. It is matched on its own
+// rather than as the full error string, because the driver and the API wrap it
+// in several layers whose text can change. The ResourceExhausted code alone is
+// not matched, because quota errors and HTTP 429 use it too and should still alert.
+const stockoutMessage = "not enough resources available to fulfill the request"
 
 // markStockoutFailure prefixes the failure with stockoutMarker if the test
 // output shows a Lustre stockout. Ginkgo writes the framework log, which
@@ -77,7 +77,7 @@ func markStockoutFailure(tc *TestCase) {
 	if tc.Failure == nil || strings.HasPrefix(tc.Failure.Message, stockoutMarker) {
 		return
 	}
-	if !stockoutRE.MatchString(tc.SystemErr) && !stockoutRE.MatchString(tc.SystemOut) && !stockoutRE.MatchString(tc.Failure.Text) {
+	if !strings.Contains(tc.SystemErr, stockoutMessage) && !strings.Contains(tc.SystemOut, stockoutMessage) && !strings.Contains(tc.Failure.Text, stockoutMessage) {
 		return
 	}
 	tc.Failure.Message = stockoutMarker + tc.Failure.Message
