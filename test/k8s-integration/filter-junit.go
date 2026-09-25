@@ -46,8 +46,96 @@ type TestCase struct {
 	Name      string     `xml:"name,attr"`
 	Time      string     `xml:"time,attr"`
 	SystemOut string     `xml:"system-out,omitempty"`
-	Failure   string     `xml:"failure,omitempty"`
+	SystemErr string     `xml:"system-err,omitempty"`
+	Failure   *Failure   `xml:"failure,omitempty"`
+	Error     *Failure   `xml:"error,omitempty"`
 	Skipped   SkipReason `xml:"skipped,omitempty"`
+}
+
+// Failure keeps the message attribute as well as the body, because TestGrid
+// reads the message attribute first when it is present.
+type Failure struct {
+	Message string `xml:"message,attr,omitempty"`
+	Type    string `xml:"type,attr,omitempty"`
+	Text    string `xml:",chardata"`
+}
+
+// stockoutMarker is prepended to the failure of a test that hit a Lustre
+// stockout. The TestGrid config for the Lustre CSI dashboards matches this
+// prefix and shows those failures as CATEGORIZED_ABORT so they do not alert.
+const stockoutMarker = "[Infrastructure Failure] Lustre stockout: "
+
+// stockoutMessage is the Lustre API stockout message. It is matched on its own
+// rather than as the full error string, because the driver and the API wrap it
+// in several layers whose text can change. The ResourceExhausted code alone is
+// not matched, because quota errors and HTTP 429 use it too and should still alert.
+const stockoutMessage = "not enough resources available to fulfill the request"
+
+// isStockout reports whether the test output shows a Lustre stockout. Ginkgo
+// writes the framework log, which includes the namespace event dump, to
+// system-err.
+func isStockout(tc *TestCase) bool {
+	return strings.Contains(tc.SystemErr, stockoutMessage) ||
+		strings.Contains(tc.SystemOut, stockoutMessage) ||
+		(tc.Failure != nil && (strings.Contains(tc.Failure.Text, stockoutMessage) || strings.Contains(tc.Failure.Message, stockoutMessage)))
+}
+
+// markStockoutFailure prefixes the failure with stockoutMarker if the test hit
+// a Lustre stockout.
+func markStockoutFailure(tc *TestCase) {
+	if tc.Failure == nil || strings.HasPrefix(tc.Failure.Message, stockoutMarker) || !isStockout(tc) {
+		return
+	}
+	tc.Failure.Message = stockoutMarker + tc.Failure.Message
+	tc.Failure.Text = stockoutMarker + tc.Failure.Text
+}
+
+// onlyStockoutFailures reports whether the Ginkgo JUnit files in dir have at
+// least one failed test and every failed test hit a Lustre stockout.
+// Interrupted and panicked tests never count as stockouts. It returns false if
+// the files cannot be read.
+func onlyStockoutFailures(dir string) bool {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		klog.Errorf("Failed to read junit directory %s: %v", dir, err)
+
+		return false
+	}
+	stockouts := 0
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".xml") || file.Name() == "junit_runner.xml" {
+			continue
+		}
+		fullFilename := filepath.Join(dir, file.Name())
+		data, err := os.ReadFile(fullFilename)
+		if err != nil {
+			klog.Errorf("Failed to read %s: %v", fullFilename, err)
+
+			return false
+		}
+		var results TestSuites
+		if err := xml.Unmarshal(data, &results); err != nil {
+			klog.Errorf("Failed to unmarshal XML file %s: %v", fullFilename, err)
+
+			return false
+		}
+		for _, suite := range results.TestSuite {
+			for _, tc := range suite.TestCases {
+				if tc.Error != nil {
+					return false
+				}
+				if tc.Failure == nil {
+					continue
+				}
+				if !isStockout(&tc) {
+					return false
+				}
+				stockouts++
+			}
+		}
+	}
+
+	return stockouts > 0
 }
 
 // SkipReason deals with the special <skipped></skipped>:
@@ -123,6 +211,7 @@ func MergeJUnit(testFilter string, sourceDirectories []string, destination strin
 	var junit TestSuite
 	junit.TestCases = nil
 	for _, testcase := range filtered {
+		markStockoutFailure(&testcase)
 		junit.TestCases = append(junit.TestCases, testcase)
 	}
 
