@@ -48,6 +48,7 @@ type TestCase struct {
 	SystemOut string     `xml:"system-out,omitempty"`
 	SystemErr string     `xml:"system-err,omitempty"`
 	Failure   *Failure   `xml:"failure,omitempty"`
+	Error     *Failure   `xml:"error,omitempty"`
 	Skipped   SkipReason `xml:"skipped,omitempty"`
 }
 
@@ -76,7 +77,7 @@ const stockoutMessage = "not enough resources available to fulfill the request"
 func isStockout(tc *TestCase) bool {
 	return strings.Contains(tc.SystemErr, stockoutMessage) ||
 		strings.Contains(tc.SystemOut, stockoutMessage) ||
-		(tc.Failure != nil && strings.Contains(tc.Failure.Text, stockoutMessage))
+		(tc.Failure != nil && (strings.Contains(tc.Failure.Text, stockoutMessage) || strings.Contains(tc.Failure.Message, stockoutMessage)))
 }
 
 // markStockoutFailure prefixes the failure with stockoutMarker if the test hit
@@ -87,20 +88,6 @@ func markStockoutFailure(tc *TestCase) {
 	}
 	tc.Failure.Message = stockoutMarker + tc.Failure.Message
 	tc.Failure.Text = stockoutMarker + tc.Failure.Text
-}
-
-// resultCase is a test case as read by onlyStockoutFailures. Unlike TestCase,
-// it keeps <error>, which Ginkgo writes for interrupted and panicked tests.
-type resultCase struct {
-	TestCase
-	Error *Failure `xml:"error"`
-}
-
-type resultSuites struct {
-	XMLName   string `xml:"testsuites"`
-	TestSuite []struct {
-		TestCases []resultCase `xml:"testcase"`
-	} `xml:"testsuite"`
 }
 
 // onlyStockoutFailures reports whether the Ginkgo JUnit files in dir have at
@@ -126,7 +113,7 @@ func onlyStockoutFailures(dir string) bool {
 
 			return false
 		}
-		var results resultSuites
+		var results TestSuites
 		if err := xml.Unmarshal(data, &results); err != nil {
 			klog.Errorf("Failed to unmarshal XML file %s: %v", fullFilename, err)
 
@@ -140,7 +127,7 @@ func onlyStockoutFailures(dir string) bool {
 				if tc.Failure == nil {
 					continue
 				}
-				if !isStockout(&tc.TestCase) {
+				if !isStockout(&tc) {
 					return false
 				}
 				stockouts++

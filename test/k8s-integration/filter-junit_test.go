@@ -49,6 +49,13 @@ func TestMarkStockoutFailure(t *testing.T) {
 			wantMark: true,
 		},
 		{
+			name: "stockout message in failure message attribute",
+			tc: TestCase{
+				Failure: &Failure{Message: stockoutEvent, Text: "[FAILED] PVC not bound"},
+			},
+			wantMark: true,
+		},
+		{
 			name: "ResourceExhausted without the stockout message is not tagged",
 			tc: TestCase{
 				SystemErr: "rpc error: code = ResourceExhausted desc = googleapi: Error 429: Too Many Requests",
@@ -113,7 +120,8 @@ func TestMarkStockoutFailure(t *testing.T) {
 }
 
 // TestMergeJUnitStockout checks that MergeJUnit keeps the failure message
-// attribute and system-err from Ginkgo output, and marks the stockout failure.
+// attribute, error element, and system-err from Ginkgo output, and marks the
+// stockout failure.
 func TestMergeJUnitStockout(t *testing.T) {
 	src := t.TempDir()
 	input := `<?xml version="1.0" encoding="UTF-8"?>
@@ -126,6 +134,10 @@ func TestMergeJUnitStockout(t *testing.T) {
     <testcase name="External Storage [Driver: lustre] real failure" classname="Kubernetes e2e suite" status="failed" time="10">
       <failure message="unexpected error" type="failed">[FAILED] unexpected error</failure>
       <system-err>nothing interesting</system-err>
+    </testcase>
+    <testcase name="External Storage [Driver: lustre] interrupted test" classname="Kubernetes e2e suite" status="interrupted" time="60">
+      <error message="interrupted by timeout" type="interrupted">[INTERRUPTED] interrupted by timeout</error>
+      <system-err>` + stockoutEvent + `</system-err>
     </testcase>
     <testcase name="External Storage [Driver: lustre] passing test" classname="Kubernetes e2e suite" status="passed" time="5"></testcase>
   </testsuite>
@@ -162,6 +174,14 @@ func TestMergeJUnitStockout(t *testing.T) {
 	real := got["External Storage [Driver: lustre] real failure"]
 	if real.Failure == nil || real.Failure.Message != "unexpected error" {
 		t.Errorf("real failure should keep its original message, got %+v", real.Failure)
+	}
+
+	interrupted := got["External Storage [Driver: lustre] interrupted test"]
+	if interrupted.Error == nil || interrupted.Error.Message != "interrupted by timeout" || interrupted.Error.Type != "interrupted" {
+		t.Errorf("interrupted test should keep its error element, got %+v", interrupted.Error)
+	}
+	if interrupted.Failure != nil {
+		t.Errorf("interrupted test should have no failure element, got %+v", interrupted.Failure)
 	}
 
 	if passing := got["External Storage [Driver: lustre] passing test"]; passing.Failure != nil {
