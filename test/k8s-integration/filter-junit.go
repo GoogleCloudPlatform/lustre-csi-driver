@@ -70,18 +70,85 @@ const stockoutMarker = "[Infrastructure Failure] Lustre stockout: "
 // not matched, because quota errors and HTTP 429 use it too and should still alert.
 const stockoutMessage = "not enough resources available to fulfill the request"
 
-// markStockoutFailure prefixes the failure with stockoutMarker if the test
-// output shows a Lustre stockout. Ginkgo writes the framework log, which
-// includes the namespace event dump, to system-err.
+// isStockout reports whether the test output shows a Lustre stockout. Ginkgo
+// writes the framework log, which includes the namespace event dump, to
+// system-err.
+func isStockout(tc *TestCase) bool {
+	return strings.Contains(tc.SystemErr, stockoutMessage) ||
+		strings.Contains(tc.SystemOut, stockoutMessage) ||
+		(tc.Failure != nil && strings.Contains(tc.Failure.Text, stockoutMessage))
+}
+
+// markStockoutFailure prefixes the failure with stockoutMarker if the test hit
+// a Lustre stockout.
 func markStockoutFailure(tc *TestCase) {
-	if tc.Failure == nil || strings.HasPrefix(tc.Failure.Message, stockoutMarker) {
-		return
-	}
-	if !strings.Contains(tc.SystemErr, stockoutMessage) && !strings.Contains(tc.SystemOut, stockoutMessage) && !strings.Contains(tc.Failure.Text, stockoutMessage) {
+	if tc.Failure == nil || strings.HasPrefix(tc.Failure.Message, stockoutMarker) || !isStockout(tc) {
 		return
 	}
 	tc.Failure.Message = stockoutMarker + tc.Failure.Message
 	tc.Failure.Text = stockoutMarker + tc.Failure.Text
+}
+
+// resultCase is a test case as read by onlyStockoutFailures. Unlike TestCase,
+// it keeps <error>, which Ginkgo writes for interrupted and panicked tests.
+type resultCase struct {
+	TestCase
+	Error *Failure `xml:"error"`
+}
+
+type resultSuites struct {
+	XMLName   string `xml:"testsuites"`
+	TestSuite []struct {
+		TestCases []resultCase `xml:"testcase"`
+	} `xml:"testsuite"`
+}
+
+// onlyStockoutFailures reports whether the Ginkgo JUnit files in dir have at
+// least one failed test and every failed test hit a Lustre stockout.
+// Interrupted and panicked tests never count as stockouts. It returns false if
+// the files cannot be read.
+func onlyStockoutFailures(dir string) bool {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		klog.Errorf("Failed to read junit directory %s: %v", dir, err)
+
+		return false
+	}
+	stockouts := 0
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".xml") || file.Name() == "junit_runner.xml" {
+			continue
+		}
+		fullFilename := filepath.Join(dir, file.Name())
+		data, err := os.ReadFile(fullFilename)
+		if err != nil {
+			klog.Errorf("Failed to read %s: %v", fullFilename, err)
+
+			return false
+		}
+		var results resultSuites
+		if err := xml.Unmarshal(data, &results); err != nil {
+			klog.Errorf("Failed to unmarshal XML file %s: %v", fullFilename, err)
+
+			return false
+		}
+		for _, suite := range results.TestSuite {
+			for _, tc := range suite.TestCases {
+				if tc.Error != nil {
+					return false
+				}
+				if tc.Failure == nil {
+					continue
+				}
+				if !isStockout(&tc.TestCase) {
+					return false
+				}
+				stockouts++
+			}
+		}
+	}
+
+	return stockouts > 0
 }
 
 // SkipReason deals with the special <skipped></skipped>:

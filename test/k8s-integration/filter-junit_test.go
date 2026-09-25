@@ -168,3 +168,122 @@ func TestMergeJUnitStockout(t *testing.T) {
 		t.Errorf("passing test should have no failure, got %+v", passing.Failure)
 	}
 }
+
+// ginkgoJUnit wraps test cases in the envelope that Ginkgo writes.
+func ginkgoJUnit(testcases ...string) string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="Kubernetes e2e suite">
+` + strings.Join(testcases, "\n") + `
+  </testsuite>
+</testsuites>`
+}
+
+const (
+	stockoutCase = `<testcase name="External Storage [Driver: lustre] stockout test">
+      <failure message="PVC not bound" type="failed">[FAILED] PVC not bound</failure>
+      <system-err>` + stockoutEvent + `</system-err>
+    </testcase>`
+	realFailureCase = `<testcase name="External Storage [Driver: lustre] real failure">
+      <failure message="unexpected error" type="failed">[FAILED] unexpected error</failure>
+    </testcase>`
+	passingCase     = `<testcase name="External Storage [Driver: lustre] passing test"></testcase>`
+	interruptedCase = `<testcase name="External Storage [Driver: lustre] interrupted test">
+      <error message="interrupted by timeout" type="interrupted">[INTERRUPTED] interrupted by timeout</error>
+      <system-err>` + stockoutEvent + `</system-err>
+    </testcase>`
+	beforeSuiteCase = `<testcase name="[SynchronizedBeforeSuite]">
+      <failure message="setup failed" type="failed">[FAILED] setup failed</failure>
+    </testcase>`
+	// kubetest2 writes junit_runner.xml with a single testsuite root.
+	kubetest2Runner = `<testsuite name="kubetest2"><testcase name="Test" classname="kubetest2">
+      <failure message="exit status 255" type="">exit status 255</failure>
+    </testcase></testsuite>`
+)
+
+func TestOnlyStockoutFailures(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  bool
+	}{
+		{
+			name:  "only stockout failures",
+			files: map[string]string{"junit_01.xml": ginkgoJUnit(stockoutCase, passingCase)},
+			want:  true,
+		},
+		{
+			name: "stockout failures in several files",
+			files: map[string]string{
+				"junit_01.xml": ginkgoJUnit(stockoutCase),
+				"junit_02.xml": ginkgoJUnit(stockoutCase, passingCase),
+			},
+			want: true,
+		},
+		{
+			name: "failing kubetest2 runner result is ignored",
+			files: map[string]string{
+				"junit_01.xml":     ginkgoJUnit(stockoutCase),
+				"junit_runner.xml": kubetest2Runner,
+			},
+			want: true,
+		},
+		{
+			name:  "stockout and a real failure",
+			files: map[string]string{"junit_01.xml": ginkgoJUnit(stockoutCase, realFailureCase)},
+			want:  false,
+		},
+		{
+			name: "real failure in another file",
+			files: map[string]string{
+				"junit_01.xml": ginkgoJUnit(stockoutCase),
+				"junit_02.xml": ginkgoJUnit(realFailureCase),
+			},
+			want: false,
+		},
+		{
+			name:  "interrupted test with a stockout event",
+			files: map[string]string{"junit_01.xml": ginkgoJUnit(stockoutCase, interruptedCase)},
+			want:  false,
+		},
+		{
+			name:  "failed suite node",
+			files: map[string]string{"junit_01.xml": ginkgoJUnit(stockoutCase, beforeSuiteCase)},
+			want:  false,
+		},
+		{
+			name:  "no failures",
+			files: map[string]string{"junit_01.xml": ginkgoJUnit(passingCase)},
+			want:  false,
+		},
+		{
+			name:  "no ginkgo results",
+			files: map[string]string{"junit_runner.xml": kubetest2Runner},
+			want:  false,
+		},
+		{
+			name:  "malformed junit",
+			files: map[string]string{"junit_01.xml": "not xml"},
+			want:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := onlyStockoutFailures(dir); got != tt.want {
+				t.Errorf("onlyStockoutFailures() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("missing directory", func(t *testing.T) {
+		if onlyStockoutFailures(filepath.Join(t.TempDir(), "missing")) {
+			t.Errorf("onlyStockoutFailures() = true for a missing directory, want false")
+		}
+	})
+}

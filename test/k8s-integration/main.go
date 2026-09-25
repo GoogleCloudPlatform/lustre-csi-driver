@@ -302,10 +302,19 @@ func handle() error {
 		}
 		var ginkgoErrors []string
 		var testOutputDirs []string
+		artifactsDir, haveArtifacts := os.LookupEnv("ARTIFACTS")
 		for _, scFile := range applicableStorageClassFiles {
 			outputDir := strings.TrimSuffix(scFile, ".yaml")
 			testOutputDirs = append(testOutputDirs, outputDir)
 			if err = runCSITests(testParams, scFile, outputDir); err != nil {
+				// Do not fail the job when every failed test hit a Lustre stockout.
+				// TestGrid shows the job result as the Overall row, and its rules
+				// cannot recategorize that row, so a failed job would still alert.
+				if haveArtifacts && onlyStockoutFailures(filepath.Join(artifactsDir, outputDir)) {
+					klog.Warningf("Not failing the job for %s because every failed test hit a Lustre stockout: %v", scFile, err)
+
+					continue
+				}
 				ginkgoErrors = append(ginkgoErrors, err.Error())
 			}
 		}
