@@ -29,8 +29,8 @@ cloud.google.com/go/auth/oauth2adapt
 # cloud.google.com/go/compute/metadata v0.10.0
 ## explicit; go 1.26.0
 cloud.google.com/go/compute/metadata
-# cloud.google.com/go/longrunning v1.2.0
-## explicit; go 1.25.0
+# cloud.google.com/go/longrunning v1.3.0
+## explicit; go 1.26.0
 cloud.google.com/go/longrunning
 cloud.google.com/go/longrunning/autogen
 cloud.google.com/go/longrunning/autogen/longrunningpb
