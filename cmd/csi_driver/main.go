@@ -84,9 +84,12 @@ func main() {
 
 		netlinker := network.NewNetlink()
 		nodeClient := network.NewK8sClient()
-		hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
+		hostOS, err := kmod.GetNodeLabelValue(ctx, *nodeID, kmod.OSNodeLabel, nodeClient)
 		if err != nil {
 			klog.Fatalf("Failed to read OS Host Info: %v", err)
+		}
+		if hostOS == "" {
+			klog.Warningf("Node label %q is missing or empty; host proxy and upcall IPC server setup will be skipped", kmod.OSNodeLabel)
 		}
 
 		networkIntf := network.Manager(netlinker, nodeClient, meta)
