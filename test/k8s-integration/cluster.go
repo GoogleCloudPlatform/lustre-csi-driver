@@ -166,7 +166,8 @@ func clusterUpGKE(project, gceZone, gceRegion, imageType string, numNodes, multi
 		// The pre-existing VPC network may be in custom subnet mode with no subnets,
 		// so let GKE create a dedicated subnet (auto-picked name and range) for the
 		// cluster. GKE deletes this subnet when the cluster is deleted.
-		"--create-subnetwork", "",
+		// gcloud ignores --create-subnetwork unless --enable-ip-alias is also set.
+		"--enable-ip-alias", "--create-subnetwork", "",
 	}
 
 	if isVariableSet(gkeClusterVersion) {
