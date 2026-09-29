@@ -95,9 +95,13 @@ func main() {
 		klog.Fatalf("Lustre kernel module installation check failed: %v", err)
 	}
 
-	hostOS, err := kmod.HostOSFromNodeLabel(ctx, *nodeID, nodeClient)
+	hostOS, err := kmod.GetNodeLabelValue(ctx, *nodeID, kmod.OSNodeLabel, nodeClient)
 	if err != nil {
 		klog.Fatalf("Failed to read OS Host Info: %v", err)
+	}
+	previewClientVersion, err := kmod.GetNodeLabelValue(ctx, *nodeID, kmod.PreviewClientLabel, nodeClient)
+	if err != nil {
+		klog.Fatalf("Failed to read preview client version: %v", err)
 	}
 
 	if isInstalled {
@@ -115,7 +119,7 @@ func main() {
 
 	switch hostOS {
 	case "cos":
-		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic)
+		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, previewClientVersion)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
 		}
@@ -135,7 +139,7 @@ func main() {
 				klog.Fatalf("The https://www.googleapis.com/auth/cloud-platform scope is missing. This is required for installing Lustre packages from Artifact Registry")
 			}
 		}
-		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic)
+		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, previewClientVersion)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on Ubuntu: %v", err)
 		}
