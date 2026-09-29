@@ -21,7 +21,7 @@ WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
 ADD . .
 RUN make kmod_installer GOARCH=${TARGETARCH} BINDIR=/bin
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.7-gke.2
+FROM gke.gcr.io/debian-base:trixie-v1.0.0-gke.2
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN clean-install bash
