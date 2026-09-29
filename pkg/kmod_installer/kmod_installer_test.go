@@ -231,39 +231,78 @@ func (m *mockNodeClient) GetNodeWithRetry(ctx context.Context, nodeName string) 
 	return m.node, m.err
 }
 
-func TestHostOSFromNodeLabel(t *testing.T) {
+func TestGetNodeLabelValue(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		mockNode *v1.Node
-		wantOS   string
-		mockErr  error
-		wantErr  bool
+		name      string
+		labelKey  string
+		mockNode  *v1.Node
+		wantValue string
+		mockErr   error
+		wantErr   bool
 	}{
 		{
-			name: "Valid label found",
+			name:     "Valid OS label found",
+			labelKey: OSNodeLabel,
 			mockNode: &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{osNodeLabel: "cos"},
+					Labels: map[string]string{OSNodeLabel: "cos"},
 				},
 			},
-			wantOS: "cos",
+			wantValue: "cos",
 		},
 		{
-			name: "Host OS Label missing - returns unknown",
+			name:     "Valid preview client label found",
+			labelKey: PreviewClientLabel,
+			mockNode: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{PreviewClientLabel: "2.16"},
+				},
+			},
+			wantValue: "2.16",
+		},
+		{
+			name:     "Label missing - returns empty string",
+			labelKey: OSNodeLabel,
 			mockNode: &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"random-key": "ubuntu"},
 				},
 			},
-			wantOS: "unknown",
+			wantValue: "",
 		},
 		{
-			name:    "API error from k8s client",
-			mockErr: fmt.Errorf("k8s node timeout"),
-			wantOS:  "",
-			wantErr: true,
+			name:     "Node has no labels map - returns empty string",
+			labelKey: OSNodeLabel,
+			mockNode: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{},
+			},
+			wantValue: "",
+		},
+		{
+			name:      "API error from k8s client",
+			labelKey:  OSNodeLabel,
+			mockErr:   fmt.Errorf("k8s node timeout"),
+			wantValue: "",
+			wantErr:   true,
+		},
+		{
+			name:      "Nil node object returned without error",
+			labelKey:  OSNodeLabel,
+			mockNode:  nil,
+			wantValue: "",
+			wantErr:   true,
+		},
+		{
+			name:     "Label value with surrounding whitespace is trimmed",
+			labelKey: PreviewClientLabel,
+			mockNode: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{PreviewClientLabel: "  2.16  "},
+				},
+			},
+			wantValue: "2.16",
 		},
 	}
 	for _, tc := range tests {
@@ -275,16 +314,16 @@ func TestHostOSFromNodeLabel(t *testing.T) {
 				err:  tc.mockErr,
 			}
 
-			got, err := HostOSFromNodeLabel(context.Background(), "node-name", client)
+			got, err := GetNodeLabelValue(context.Background(), "node-name", tc.labelKey, client)
 
 			// Error check
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("HostOSFromNodeLabel() error = %v, wantErr %v", err, tc.wantErr)
+				t.Fatalf("GetNodeLabelValue() error = %v, wantErr %v", err, tc.wantErr)
 			}
 
 			// Node label value check
-			if got != tc.wantOS {
-				t.Errorf("HostOSFromNodeLabel() got = %v, want %v", got, tc.wantOS)
+			if got != tc.wantValue {
+				t.Errorf("GetNodeLabelValue() got = %v, want %v", got, tc.wantValue)
 			}
 		})
 	}
@@ -350,6 +389,196 @@ func TestBuildLnetNetworkString(t *testing.T) {
 			got := BuildLnetNetworkString(tc.nics, tc.primaryNic, tc.disableMultiNIC)
 			if got != tc.want {
 				t.Errorf("BuildLnetNetworkString() got = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsPreviewVersion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		version     string
+		wantPreview bool
+	}{
+		{
+			name:        "Preview minor version 2.16",
+			version:     "2.16",
+			wantPreview: true,
+		},
+		{
+			name:        "Preview minor version 2.15",
+			version:     "2.15",
+			wantPreview: true,
+		},
+		{
+			name:        "Exact build with pre-release suffix 2.16.0_pre1",
+			version:     "2.16.0_pre1",
+			wantPreview: false,
+		},
+		{
+			name:        "Exact build full semver 2.16.0",
+			version:     "2.16.0",
+			wantPreview: false,
+		},
+		{
+			name:        "Exact build with rc suffix 2.16.1-rc2",
+			version:     "2.16.1-rc2",
+			wantPreview: false,
+		},
+		{
+			name:        "Invalid version string",
+			version:     "invalid",
+			wantPreview: false,
+		},
+		{
+			name:        "Empty version string",
+			version:     "",
+			wantPreview: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isPreviewVersion(tc.version); got != tc.wantPreview {
+				t.Errorf("isPreviewVersion(%q) = %v, want %v", tc.version, got, tc.wantPreview)
+			}
+		})
+	}
+}
+
+func TestBuildUbuntuAptDownloadArgs(t *testing.T) {
+	t.Parallel()
+
+	kernelVersion := "6.8.0-1017-gke"
+
+	tests := []struct {
+		name                 string
+		previewClientVersion string
+		want                 []string
+	}{
+		{
+			name:                 "Default production version (empty)",
+			previewClientVersion: "",
+			want: []string{
+				"download",
+				"lustre-client-modules-6.8.0-1017-gke/lustre-client-ubuntu-noble",
+			},
+		},
+		{
+			name:                 "Preview stream version 2.16",
+			previewClientVersion: "2.16",
+			want: []string{
+				"download",
+				"-t",
+				"lustre-client-ubuntu-noble-preview",
+				"lustre-client-modules-6.8.0-1017-gke=2.16*",
+			},
+		},
+		{
+			name:                 "Exact Debian package build version",
+			previewClientVersion: "2.16.0-ddn56b-1",
+			want: []string{
+				"download",
+				"-t",
+				"lustre-client-ubuntu-noble-preview",
+				"lustre-client-modules-6.8.0-1017-gke=2.16.0-ddn56b-1",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := buildUbuntuAptDownloadArgs(kernelVersion, tc.previewClientVersion)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("buildUbuntuAptDownloadArgs() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestBuildCosDKMSArgs(t *testing.T) {
+	t.Parallel()
+
+	lnetPort := 988
+	expectedNetwork := "tcp0(eth0)"
+	customModuleArgs := []string{"ptlrpc.max_ptlrpcds=8"}
+
+	tests := []struct {
+		name                 string
+		previewClientVersion string
+		want                 []string
+	}{
+		{
+			name:                 "Default production version (empty)",
+			previewClientVersion: "",
+			want: []string{
+				"install",
+				"lustre-client-drivers",
+				"--latest",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+				"--module-arg=ptlrpc.max_ptlrpcds=8",
+			},
+		},
+		{
+			name:                 "Preview stream version 2.16",
+			previewClientVersion: "2.16",
+			want: []string{
+				"install",
+				"lustre-client-drivers-pre",
+				"--latest",
+				"--min-version=2.16.0",
+				"--max-version=2.16.9999",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+				"--module-arg=ptlrpc.max_ptlrpcds=8",
+			},
+		},
+		{
+			name:                 "Exact driver build version",
+			previewClientVersion: "2.16.0_ddn52c",
+			want: []string{
+				"install",
+				"lustre-client-drivers-pre",
+				"--package-version=2.16.0_ddn52c",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+				"--module-arg=ptlrpc.max_ptlrpcds=8",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := buildCosDKMSArgs(tc.previewClientVersion, lnetPort, expectedNetwork, customModuleArgs)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("buildCosDKMSArgs() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

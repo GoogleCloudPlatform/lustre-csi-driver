@@ -38,6 +38,7 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dea
     echo "deb [signed-by=/usr/share/keyrings/google-cloud.gpg] http://packages.cloud.google.com/apt apt-transport-artifact-registry-stable main" | tee /etc/apt/sources.list.d/artifact-registry.list && \
     apt-get update && apt-get install -y --no-install-recommends apt-transport-artifact-registry && \
     echo "deb [signed-by=/usr/share/keyrings/lustre-client.gpg] ar+https://us-apt.pkg.dev/projects/lustre-client-binaries lustre-client-ubuntu-noble main" | tee -a /etc/apt/sources.list.d/artifact-registry.list && \
+    echo "deb [signed-by=/usr/share/keyrings/lustre-client.gpg] ar+https://us-apt.pkg.dev/projects/lustre-client-binaries lustre-client-ubuntu-noble-preview main" | tee -a /etc/apt/sources.list.d/artifact-registry.list && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=gcr.io/cos-cloud/cos-dkms:v0.3.16 /usr/bin/cos-dkms /usr/bin/cos-dkms

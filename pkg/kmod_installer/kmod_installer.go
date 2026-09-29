@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -30,16 +31,19 @@ import (
 )
 
 const (
-	legacyLNetPort  = 6988
-	defaultLNetPort = 988
-	cmdTimeout      = 15 * time.Minute
-	osNodeLabel     = "cloud.google.com/gke-os-distribution"
+	legacyLNetPort     = 6988
+	defaultLNetPort    = 988
+	cmdTimeout         = 15 * time.Minute
+	OSNodeLabel        = "cloud.google.com/gke-os-distribution"
+	PreviewClientLabel = "lustre.csi.storage.gke.io/preview-client-version"
 )
 
 var (
 	lnetAcceptPortFile       = "/sys/module/lnet/parameters/accept_port"
 	lnetNetworkParameterFile = "/sys/module/lnet/parameters/networks"
 	lustreModuleDir          = "/sys/module/lustre"
+
+	previewVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 )
 
 func lnetPort(enableLegacyLustrePort bool) int {
@@ -137,43 +141,14 @@ func readLnetConfig(path, defaultNic string) (string, error) {
 
 // InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
 // It proceeds with the installation using the provided NICs.
-func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic string) error {
+func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
 
-	// --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
-	// --latest: Installs the latest available driver version that is compatible with the kernel version running on the current node.
-	//           We can’t pin to a specific driver version because GKE nodes can skew from the control plane version.
-	//           If we pin to a fixed version and the control plane is ahead of the node, it could result in a kmod installer failure due to the node's kernel being too old for the specified driver version.
-	// --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
-	// --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
-	// --insert-on-install: Inserts the module into the kernel after installation.
-	// --module-arg lnet.accept_port=${LNET_PORT}: This is crucial for setting the LNET port.
-	//                                     Lustre uses LNET for network communication, and this
-	//                                     parameter configures the port LNET will use. This is
-	//                                     essential for proper communication between Lustre clients
-	//                                     and servers. The default value is 988.
-	// -w Set the number of parallel downloads (`0` downloads all files in parallel).
-	args := []string{"install", "lustre-client-drivers"}
-	args = append(args,
-		"--gcs-bucket=cos-default",
-		"--latest",
-		"-w", "0",
-		"--kernelmodulestree=/host_modules",
-		"--lsb-release-path=/host_etc/lsb-release",
-		"--insert-on-install",
-		"--logtostderr",
-		"--module-arg=lnet.accept_port="+strconv.Itoa(lnetPort),
-	)
-
-	args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
-
-	for _, arg := range customModuleArgs {
-		args = append(args, "--module-arg="+arg)
-	}
+	args := buildCosDKMSArgs(previewClientVersion, lnetPort, expectedNetwork, customModuleArgs)
 	cmd := exec.CommandContext(cmdCtx, "/usr/bin/cos-dkms", args...)
 	// TODO(samhalim): Add latency/success rate metrics for kmod cos-dkms install.
 
@@ -201,7 +176,7 @@ func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customMo
 }
 
 // InstallLustreKmodOnUbuntu installs the Lustre kernel modules on Ubuntu nodes.
-func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic string) error {
+func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
@@ -222,10 +197,10 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 	}
 
 	// download lustre client packages
-	moduleName := fmt.Sprintf("lustre-client-modules-%s/lustre-client-ubuntu-noble", kernelVersion)
+	downloadArgs := buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion)
 	tmpDir, err := os.MkdirTemp("", "lustre-kmod-*")
 	if err != nil {
-		return fmt.Errorf("failed to create temp driectory: %w", err)
+		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpDir); err != nil {
@@ -233,8 +208,8 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 		}
 	}()
 
-	klog.Infof("Downloading lustre client modules, package: %v, into: %v", moduleName, tmpDir)
-	downloadCmd := exec.CommandContext(cmdCtx, "apt-get", "download", moduleName)
+	klog.Infof("Downloading lustre client modules with args: %v into: %s", downloadArgs, tmpDir)
+	downloadCmd := exec.CommandContext(cmdCtx, "apt-get", downloadArgs...)
 	downloadCmd.Dir = tmpDir
 	if out, err := downloadCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to download lustre client modules: %w\noutput:\n%s", err, string(out))
@@ -326,18 +301,16 @@ func parseLnetNetwork(networkStr string) []string {
 	return strings.Split(networkStr, ",")
 }
 
-// HostOSFromNodeLabel returns the OS identifier from node label.
-func HostOSFromNodeLabel(ctx context.Context, nodeID string, nc network.NodeClient) (string, error) {
+// GetNodeLabelValue returns the value of the specified label from the node.
+func GetNodeLabelValue(ctx context.Context, nodeID string, labelKey string, nc network.NodeClient) (string, error) {
 	node, err := nc.GetNodeWithRetry(ctx, nodeID)
 	if err != nil {
 		return "", err
 	}
-	val, found := node.GetLabels()[osNodeLabel]
-	if !found {
-		klog.Warningf("Label %v could not be found on the node", osNodeLabel)
-		return "unknown", nil
+	if node == nil {
+		return "", fmt.Errorf("node object %s is empty", nodeID)
 	}
-	return val, nil
+	return strings.TrimSpace(node.GetLabels()[labelKey]), nil
 }
 
 // BuildLnetNetworkString constructs the LNet network configuration string.
@@ -352,4 +325,84 @@ func BuildLnetNetworkString(nics []string, primaryNic string, disableMultiNIC bo
 		}
 	}
 	return fmt.Sprintf("tcp0(%s)", strings.Join(orderedNics, ","))
+}
+
+// isPreviewVersion returns true if the version string represents a preview minor release stream (e.g. "2.16"),
+// for which the latest or max compatible build should be installed.
+func isPreviewVersion(version string) bool {
+	return previewVersionRegex.MatchString(strings.TrimSpace(version))
+}
+
+// buildCosDKMSArgs constructs the cos-dkms install command arguments.
+func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string) []string {
+	lustreClientDriverPackage := "lustre-client-drivers"
+	versionArgs := []string{
+		"--latest",
+	}
+	if previewClientVersion != "" {
+		lustreClientDriverPackage += "-pre"
+		if isPreviewVersion(previewClientVersion) {
+			versionArgs = append(versionArgs, []string{
+				"--min-version=" + previewClientVersion + ".0",
+				"--max-version=" + previewClientVersion + ".9999",
+			}...)
+		} else {
+			// If it doesn't match preview regex, we treat it as an exact driver build version.
+			// If it's not a valid version string, cos-dkms will reject it.
+			versionArgs = []string{
+				"--package-version=" + previewClientVersion,
+			}
+		}
+		klog.Infof("Preview client version requested: %q. Using driver package %q with args: %v",
+			previewClientVersion, lustreClientDriverPackage, versionArgs)
+	}
+
+	// --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
+	// --latest: Installs the latest available driver version that is compatible with the kernel version running on the current node.
+	//           We can’t pin to a specific driver version because GKE nodes can skew from the control plane version.
+	//           If we pin to a fixed version and the control plane is ahead of the node, it could result in a kmod installer failure due to the node's kernel being too old for the specified driver version.
+	// --kernelmodulestree: Sets the path to the kernel modules directory on the host ('/host_modules').
+	// --lsb-release-path: Specifies the path to the lsb-release file on the host ('/host_etc/lsb-release').
+	// --insert-on-install: Inserts the module into the kernel after installation.
+	// --module-arg lnet.accept_port=${LNET_PORT}: This is crucial for setting the LNET port.
+	//                                     Lustre uses LNET for network communication, and this
+	//                                     parameter configures the port LNET will use. This is
+	//                                     essential for proper communication between Lustre clients
+	//                                     and servers. The default value is 988.
+	// -w Set the number of parallel downloads (`0` downloads all files in parallel).
+	args := []string{"install", lustreClientDriverPackage}
+	args = append(args, versionArgs...)
+	args = append(args,
+		"--gcs-bucket=cos-default",
+		"-w", "0",
+		"--kernelmodulestree=/host_modules",
+		"--lsb-release-path=/host_etc/lsb-release",
+		"--insert-on-install",
+		"--logtostderr",
+		"--module-arg=lnet.accept_port="+strconv.Itoa(lnetPort),
+	)
+
+	args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
+
+	for _, arg := range customModuleArgs {
+		args = append(args, "--module-arg="+arg)
+	}
+
+	return args
+}
+
+// buildUbuntuAptDownloadArgs constructs the apt-get download arguments for Lustre client modules on Ubuntu.
+func buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion string) []string {
+	if previewClientVersion == "" {
+		return []string{"download", fmt.Sprintf("lustre-client-modules-%s/lustre-client-ubuntu-noble", kernelVersion)}
+	}
+
+	pkgTarget := fmt.Sprintf("lustre-client-modules-%s", kernelVersion)
+	if isPreviewVersion(previewClientVersion) {
+		pkgTarget = fmt.Sprintf("%s=%s*", pkgTarget, previewClientVersion)
+	} else {
+		pkgTarget = fmt.Sprintf("%s=%s", pkgTarget, previewClientVersion)
+	}
+
+	return []string{"download", "-t", "lustre-client-ubuntu-noble-preview", pkgTarget}
 }
