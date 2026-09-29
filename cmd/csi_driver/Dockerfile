@@ -21,7 +21,7 @@ WORKDIR /go/src/github.com/GoogleCloudPlatform/lustre-csi-driver
 ADD . .
 RUN make all GOARCH=${TARGETARCH} BINDIR=/bin
 
-FROM gke.gcr.io/debian-base:bookworm-v1.0.7-gke.2 AS debian
+FROM gke.gcr.io/debian-base:trixie-v1.0.0-gke.2 AS debian
 ENV DEBIAN_FRONTEND=noninteractive
 ARG TARGETPLATFORM
 
