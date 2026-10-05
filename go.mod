@@ -9,14 +9,14 @@ require (
 	github.com/container-storage-interface/spec v1.12.0
 	github.com/go-logr/logr v1.4.4
 	github.com/google/go-cmp v0.7.0
-	github.com/googleapis/gax-go/v2 v2.24.1
+	github.com/googleapis/gax-go/v2 v2.26.2
 	github.com/kubernetes-csi/csi-lib-utils v0.19.0
 	github.com/kubernetes-csi/csi-test/v5 v5.2.0
 	github.com/safchain/ethtool v0.7.0
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
-	google.golang.org/api v0.299.0
+	google.golang.org/api v0.300.0
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
