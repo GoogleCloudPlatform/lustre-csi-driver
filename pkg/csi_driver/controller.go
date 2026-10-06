@@ -69,6 +69,12 @@ const (
 	keyInstanceIP              = "ip"
 	keyMountPoint              = "mountpoint"
 	keyIAMAccessControlEnabled = "iam_access_control_enabled"
+	keyEnablePCCCache          = "enable_pcc_cache"
+	keyPCCEnabled              = "pcc_enabled"
+	keyPCCCacheSize            = "pcc_cache_size"
+	keyPCCIncludePatterns      = "pcc_include_patterns"
+	keyPCCMaxFileSize          = "pcc_max_file_size"
+	keyPCCRule                 = "pcc_rule"
 
 	defaultNetwork = "default"
 
@@ -83,6 +89,12 @@ var (
 		keyNetwork,
 		keyFilesystem,
 		keyPerUnitStorageThroughput,
+		keyEnablePCCCache,
+		keyPCCEnabled,
+		keyPCCCacheSize,
+		keyPCCIncludePatterns,
+		keyPCCMaxFileSize,
+		keyPCCRule,
 	}
 
 	// Supported volume attribute keys.
@@ -91,6 +103,12 @@ var (
 		keyFilesystem,
 		keyMountPoint,
 		keyIAMAccessControlEnabled,
+		keyEnablePCCCache,
+		keyPCCEnabled,
+		keyPCCCacheSize,
+		keyPCCIncludePatterns,
+		keyPCCMaxFileSize,
+		keyPCCRule,
 	}
 )
 
@@ -253,8 +271,21 @@ func (s *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		}
 	}
 
+	vol := instanceToCSIVolume(instance)
+	for _, pccKey := range []string{
+		keyEnablePCCCache,
+		keyPCCEnabled,
+		keyPCCCacheSize,
+		keyPCCIncludePatterns,
+		keyPCCMaxFileSize,
+		keyPCCRule,
+	} {
+		if v, ok := params[normalize(pccKey)]; ok && v != "" {
+			vol.VolumeContext[pccKey] = v
+		}
+	}
 	resp := &csi.CreateVolumeResponse{
-		Volume: instanceToCSIVolume(instance),
+		Volume: vol,
 	}
 	klog.Infof("CreateVolume succeeded: %+v", resp)
 
