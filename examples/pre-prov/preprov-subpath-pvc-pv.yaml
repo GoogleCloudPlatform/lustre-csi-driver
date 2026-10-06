@@ -1,0 +1,88 @@
+# Copyright 2025 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Prerequisite: Ensure /team-alpha and /team-beta already exist on the Lustre filesystem.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: preprov-pv-team-alpha
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 9000Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  volumeMode: Filesystem
+  claimRef:
+    namespace: ns-team-alpha
+    name: preprov-pvc-team-alpha
+  csi:
+    driver: lustre.csi.storage.gke.io
+    volumeHandle: <project-id>/<instance-location>/<instance-name>:team-alpha
+    volumeAttributes:
+      ip: ${EXISTING_LUSTRE_IP_ADDRESS}
+      filesystem: ${EXISTING_LUSTRE_FSNAME}
+      subPath: team-alpha
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: preprov-pvc-team-alpha
+  namespace: ns-team-alpha
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: preprov-pv-team-alpha
+  resources:
+    requests:
+      storage: 9000Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: preprov-pv-team-beta
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 9000Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  volumeMode: Filesystem
+  claimRef:
+    namespace: ns-team-beta
+    name: preprov-pvc-team-beta
+  csi:
+    driver: lustre.csi.storage.gke.io
+    volumeHandle: <project-id>/<instance-location>/<instance-name>:team-beta
+    volumeAttributes:
+      ip: ${EXISTING_LUSTRE_IP_ADDRESS}
+      filesystem: ${EXISTING_LUSTRE_FSNAME}
+      subPath: team-beta
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: preprov-pvc-team-beta
+  namespace: ns-team-beta
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: preprov-pv-team-beta
+  resources:
+    requests:
+      storage: 9000Gi
