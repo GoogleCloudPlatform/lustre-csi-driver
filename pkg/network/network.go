@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -475,4 +477,114 @@ func (rm *RouteManager) FindNextFreeTableID(startID int, nicIPAddr net.IP) (int,
 	}
 
 	return 0, fmt.Errorf("no free routing tables found between %d and %d", startID, maxTableID)
+}
+
+// defaultLustreTargetConnGlob matches Lustre client connection UUID files across all
+// active targets in sysfs. We use this to grab peer IPs (OSS, OST, MDT)
+const defaultLustreTargetConnGlob = "/sys/fs/lustre/*/*/*_conn_uuid"
+
+type lnetExecutor interface {
+	IsPeerMultiRail(ctx context.Context, nid string) (bool, error)
+	PeerDel(ctx context.Context, nid string) error
+	PeerAdd(ctx context.Context, nid string) error
+}
+
+type realLnetExecutor struct{}
+
+func (r *realLnetExecutor) IsPeerMultiRail(ctx context.Context, nid string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "lnetctl", "peer", "show", "--nid", nid)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		// If the peer does not exist yet or command fails, treat as not Multi-Rail.
+		return false, nil
+	}
+	return strings.Contains(string(out), "Multi-Rail: True"), nil
+}
+
+func (r *realLnetExecutor) PeerDel(ctx context.Context, nid string) error {
+	cmd := exec.CommandContext(ctx, "lnetctl", "peer", "del", "--prim_nid", nid, "--force")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete peer %s: %w, output: %s", nid, err, string(out))
+	}
+	return nil
+}
+
+func (r *realLnetExecutor) PeerAdd(ctx context.Context, nid string) error {
+	cmd := exec.CommandContext(ctx, "lnetctl", "peer", "add", "--prim_nid", nid, "--nid", nid)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to add peer %s: %w, output: %s", nid, err, string(out))
+	}
+	return nil
+}
+
+var defaultLnetExecutor lnetExecutor = &realLnetExecutor{}
+
+// GetTargetNIDsFromSysfs returns the unique target NIDs by reading Lustre sysfs connection files.
+func GetTargetNIDsFromSysfs(globPattern string) ([]string, error) {
+	files, err := filepath.Glob(globPattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to glob %s: %w", globPattern, err)
+	}
+
+	nidSet := make(map[string]struct{})
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		nid := strings.TrimSpace(string(data))
+		if nid != "" {
+			nidSet[nid] = struct{}{}
+		}
+	}
+
+	var nids []string
+	for nid := range nidSet {
+		nids = append(nids, nid)
+	}
+	sort.Strings(nids)
+	return nids, nil
+}
+
+// PromotePeersToMultiRail inspects existing Lustre target connections in sysfs
+// and promotes them to Multi-Rail: True via "lnetctl peer del --force" and "lnetctl peer add".
+func PromotePeersToMultiRail(ctx context.Context) error {
+	return promotePeersToMultiRailWithExecutor(ctx, defaultLnetExecutor, defaultLustreTargetConnGlob)
+}
+
+func promotePeersToMultiRailWithExecutor(ctx context.Context, exec lnetExecutor, globPattern string) error {
+	nids, err := GetTargetNIDsFromSysfs(globPattern)
+	if err != nil {
+		return err
+	}
+
+	if len(nids) == 0 {
+		klog.V(4).Info("No Lustre target NIDs found in sysfs for Multi-Rail promotion.")
+		return nil
+	}
+
+	for _, nid := range nids {
+		isMR, err := exec.IsPeerMultiRail(ctx, nid)
+		if err == nil && isMR {
+			klog.V(4).Infof("Lustre target peer %s is already Multi-Rail, skipping", nid)
+			continue
+		} else if err != nil {
+			klog.Warningf("Failed to check if Lustre target peer %s is Multi-Rail: %v", nid, err)
+		}
+
+		klog.Infof("Promoting Lustre target peer %s to Multi-Rail", nid)
+		if err := exec.PeerDel(ctx, nid); err != nil {
+			klog.Warningf("Failed to delete peer %s during Multi-Rail promotion: %v", nid, err)
+		}
+		if err := exec.PeerAdd(ctx, nid); err != nil {
+			klog.Warningf("Failed to add peer %s as Multi-Rail: %v", nid, err)
+		} else {
+			klog.Infof("Successfully promoted Lustre target peer %s to Multi-Rail", nid)
+		}
+	}
+
+	return nil
 }

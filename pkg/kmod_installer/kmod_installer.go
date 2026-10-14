@@ -33,6 +33,7 @@ import (
 const (
 	legacyLNetPort     = 6988
 	defaultLNetPort    = 988
+	lnetNumaRange      = 1000000
 	cmdTimeout         = 15 * time.Minute
 	OSNodeLabel        = "cloud.google.com/gke-os-distribution"
 	PreviewClientLabel = "lustre.csi.storage.gke.io/preview-client-version"
@@ -148,7 +149,7 @@ func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customMo
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
 
-	args := buildCosDKMSArgs(previewClientVersion, lnetPort, expectedNetwork, customModuleArgs)
+	args := buildCosDKMSArgs(previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC)
 	cmd := exec.CommandContext(cmdCtx, "/usr/bin/cos-dkms", args...)
 	// TODO(samhalim): Add latency/success rate metrics for kmod cos-dkms install.
 
@@ -254,6 +255,9 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 		return fmt.Errorf("depmod failed: %w\noutput:\n%s", err, string(out))
 	}
 	lnetArgs := []string{"-d", extractDir, "lnet", fmt.Sprintf("accept_port=%d", lnetPort), fmt.Sprintf("networks=%s", expectedNetwork)}
+	if !disableMultiNIC {
+		lnetArgs = append(lnetArgs, fmt.Sprintf("lnet_numa_range=%d", lnetNumaRange))
+	}
 	for _, arg := range customModuleArgs {
 		if strings.HasPrefix(arg, "lnet.") {
 			lnetArgs = append(lnetArgs, strings.TrimPrefix(arg, "lnet."))
@@ -334,7 +338,7 @@ func isPreviewVersion(version string) bool {
 }
 
 // buildCosDKMSArgs constructs the cos-dkms install command arguments.
-func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string) []string {
+func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC bool) []string {
 	lustreClientDriverPackage := "lustre-client-drivers"
 	versionArgs := []string{
 		"--latest",
@@ -381,7 +385,9 @@ func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork
 		"--logtostderr",
 		"--module-arg=lnet.accept_port="+strconv.Itoa(lnetPort),
 	)
-
+	if !disableMultiNIC {
+		args = append(args, fmt.Sprintf("--module-arg=lnet.lnet_numa_range=%d", lnetNumaRange))
+	}
 	args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
 
 	for _, arg := range customModuleArgs {
