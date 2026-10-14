@@ -29,14 +29,17 @@ cloud.google.com/go/auth/oauth2adapt
 # cloud.google.com/go/compute/metadata v0.10.0
 ## explicit; go 1.26.0
 cloud.google.com/go/compute/metadata
+# cloud.google.com/go/iam v1.12.0
+## explicit; go 1.25.0
+cloud.google.com/go/iam/apiv1/iampb
 # cloud.google.com/go/longrunning v1.3.0
 ## explicit; go 1.26.0
 cloud.google.com/go/longrunning
 cloud.google.com/go/longrunning/autogen
 cloud.google.com/go/longrunning/autogen/longrunningpb
 cloud.google.com/go/longrunning/internal
-# cloud.google.com/go/lustre v1.1.0
-## explicit; go 1.25.0
+# cloud.google.com/go/lustre v1.2.0
+## explicit; go 1.26.0
 cloud.google.com/go/lustre/apiv1
 cloud.google.com/go/lustre/apiv1/lustrepb
 cloud.google.com/go/lustre/internal
@@ -548,6 +551,10 @@ google.golang.org/api/transport/http
 # google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d
 ## explicit; go 1.25.0
 google.golang.org/genproto/googleapis/cloud/location
+google.golang.org/genproto/googleapis/type/date
+google.golang.org/genproto/googleapis/type/dayofweek
+google.golang.org/genproto/googleapis/type/expr
+google.golang.org/genproto/googleapis/type/timeofday
 # google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d
 ## explicit; go 1.25.0
 google.golang.org/genproto/googleapis/api
