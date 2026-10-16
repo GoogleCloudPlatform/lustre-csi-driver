@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -817,4 +818,147 @@ func TestGetPrimaryNIC(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetTargetNIDsFromSysfs(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create test directory tree mimicking /sys/fs/lustre/*/*/*_conn_uuid
+	paths := []struct {
+		relPath string
+		content string
+	}{
+		{"osc/osc1/ost_conn_uuid", "10.2.112.4@tcp\n"},
+		{"osc/osc2/ost_conn_uuid", " 10.2.112.4@tcp \n"}, // duplicate
+		{"mgc/mgc1/mgs_conn_uuid", "10.2.112.2@tcp"},
+		{"mdc/mdc1/mds_conn_uuid", "10.2.112.5@tcp\n"},
+		{"osc/osc3/empty_conn_uuid", "\n  \n"},
+		{"osc/osc4/other_file", "10.2.112.99@tcp"},
+	}
+
+	for _, p := range paths {
+		fullPath := filepath.Join(tempDir, p.relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+		if err := os.WriteFile(fullPath, []byte(p.content), 0o644); err != nil {
+			t.Fatalf("failed to write file: %v", err)
+		}
+	}
+
+	globPattern := filepath.Join(tempDir, "*/*/*_conn_uuid")
+	nids, err := GetTargetNIDsFromSysfs(globPattern)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantNIDs := []string{"10.2.112.2@tcp", "10.2.112.4@tcp", "10.2.112.5@tcp"}
+	if diff := cmp.Diff(wantNIDs, nids); diff != "" {
+		t.Errorf("GetTargetNIDsFromSysfs() mismatch (-want +got):\n%s", diff)
+	}
+
+	// Non-matching pattern returns empty list
+	emptyPattern := filepath.Join(tempDir, "nonexistent/*/*/*_conn_uuid")
+	emptyNids, err := GetTargetNIDsFromSysfs(emptyPattern)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(emptyNids) != 0 {
+		t.Errorf("expected empty nids, got: %v", emptyNids)
+	}
+}
+
+type fakeLnetExecutor struct {
+	multiRailPeers map[string]bool
+	isMRErr        error
+	delErr         error
+	addErr         error
+	deletedNIDs    []string
+	addedNIDs      []string
+}
+
+func (f *fakeLnetExecutor) IsPeerMultiRail(_ context.Context, nid string) (bool, error) {
+	if f.isMRErr != nil {
+		return false, f.isMRErr
+	}
+	return f.multiRailPeers[nid], nil
+}
+
+func (f *fakeLnetExecutor) PeerDel(_ context.Context, nid string) error {
+	f.deletedNIDs = append(f.deletedNIDs, nid)
+	return f.delErr
+}
+
+func (f *fakeLnetExecutor) PeerAdd(_ context.Context, nid string) error {
+	f.addedNIDs = append(f.addedNIDs, nid)
+	return f.addErr
+}
+
+func TestPromotePeersToMultiRailWithExecutor(t *testing.T) {
+	tempDir := t.TempDir()
+	fullPath1 := filepath.Join(tempDir, "osc/osc1/ost_conn_uuid")
+	fullPath2 := filepath.Join(tempDir, "osc/osc2/ost_conn_uuid")
+	if err := os.MkdirAll(filepath.Dir(fullPath1), 0o755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath2), 0o755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	_ = os.WriteFile(fullPath1, []byte("10.2.112.4@tcp\n"), 0o644)
+	_ = os.WriteFile(fullPath2, []byte("10.2.112.2@tcp\n"), 0o644)
+
+	globPattern := filepath.Join(tempDir, "*/*/*_conn_uuid")
+
+	t.Run("successful promotion of all unpromoted peers", func(t *testing.T) {
+		fakeExec := &fakeLnetExecutor{}
+		ctx := context.Background()
+		err := promotePeersToMultiRailWithExecutor(ctx, fakeExec, globPattern)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		wantPromoted := []string{"10.2.112.2@tcp", "10.2.112.4@tcp"}
+		if diff := cmp.Diff(wantPromoted, fakeExec.deletedNIDs); diff != "" {
+			t.Errorf("deleted NIDs mismatch (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff(wantPromoted, fakeExec.addedNIDs); diff != "" {
+			t.Errorf("added NIDs mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("already Multi-Rail peers are skipped", func(t *testing.T) {
+		fakeExec := &fakeLnetExecutor{
+			multiRailPeers: map[string]bool{
+				"10.2.112.2@tcp": true, // already Multi-Rail, should be skipped
+			},
+		}
+		ctx := context.Background()
+		err := promotePeersToMultiRailWithExecutor(ctx, fakeExec, globPattern)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		wantPromoted := []string{"10.2.112.4@tcp"}
+		if diff := cmp.Diff(wantPromoted, fakeExec.deletedNIDs); diff != "" {
+			t.Errorf("deleted NIDs mismatch (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff(wantPromoted, fakeExec.addedNIDs); diff != "" {
+			t.Errorf("added NIDs mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("executor errors handled gracefully", func(t *testing.T) {
+		fakeExec := &fakeLnetExecutor{
+			delErr: errors.New("del failed"),
+			addErr: errors.New("add failed"),
+		}
+		ctx := context.Background()
+		err := promotePeersToMultiRailWithExecutor(ctx, fakeExec, globPattern)
+		if err != nil {
+			t.Fatalf("expected graceful handling of executor errors, got: %v", err)
+		}
+		if len(fakeExec.deletedNIDs) != 2 || len(fakeExec.addedNIDs) != 2 {
+			t.Errorf("expected all peers to be attempted despite errors, got del: %v, add: %v", fakeExec.deletedNIDs, fakeExec.addedNIDs)
+		}
+	})
 }
