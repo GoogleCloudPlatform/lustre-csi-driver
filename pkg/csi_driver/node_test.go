@@ -1528,3 +1528,235 @@ func TestMountGlobalIAM(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractSubPath(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		vc        map[string]string
+		expected  string
+		expectErr bool
+	}{
+		{
+			name:      "no subPath specified",
+			vc:        map[string]string{keyInstanceIP: testIP, keyFilesystem: testFilesystem},
+			expected:  "",
+			expectErr: false,
+		},
+		{
+			name:      "valid simple subPath",
+			vc:        map[string]string{keySubPath: "team-alpha"},
+			expected:  "team-alpha",
+			expectErr: false,
+		},
+		{
+			name:      "valid nested subPath with leading/trailing slashes",
+			vc:        map[string]string{keySubPath: "/team-alpha/app1/"},
+			expected:  "team-alpha/app1",
+			expectErr: false,
+		},
+		{
+			name:      "valid subDir alias",
+			vc:        map[string]string{keySubDir: "team-beta"},
+			expected:  "team-beta",
+			expectErr: false,
+		},
+		{
+			name:      "conflicting subPath and subDir",
+			vc:        map[string]string{keySubPath: "team-alpha", keySubDir: "team-beta"},
+			expectErr: true,
+		},
+		{
+			name:      "empty subPath value",
+			vc:        map[string]string{keySubPath: "/"},
+			expectErr: true,
+		},
+		{
+			name:      "path traversal rejected",
+			vc:        map[string]string{keySubPath: "../team-beta"},
+			expectErr: true,
+		},
+		{
+			name:      "nested path traversal rejected",
+			vc:        map[string]string{keySubPath: "team-alpha/../team-beta"},
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := extractSubPath(tc.vc)
+			if (err != nil) != tc.expectErr {
+				t.Fatalf("extractSubPath(%v) error = %v, expectErr %v", tc.vc, err, tc.expectErr)
+			}
+			if got != tc.expected {
+				t.Errorf("extractSubPath(%v) = %q, expected %q", tc.vc, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestSubPathMounts(t *testing.T) {
+	oldRoot := GlobalMountRoot
+	defer func() { GlobalMountRoot = oldRoot }()
+	GlobalMountRoot = t.TempDir()
+
+	base := t.TempDir()
+	stagingTargetPath := filepath.Join(base, "staging")
+
+	// 1. NodeStageVolume should bypass staging when subPath is set.
+	t.Run("NodeStageVolume bypasses staging for subPath", func(t *testing.T) {
+		testEnv := initTestNodeServer(t)
+		req := &csi.NodeStageVolumeRequest{
+			VolumeId:          testVolumeID + ":team-alpha",
+			StagingTargetPath: stagingTargetPath,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				"subPath":     "team-alpha",
+			},
+		}
+		_, err := testEnv.ns.NodeStageVolume(t.Context(), req)
+		if err != nil {
+			t.Fatalf("unexpected NodeStageVolume error: %v", err)
+		}
+		if len(testEnv.fm.MountPoints) != 0 {
+			t.Fatalf("expected 0 mounts during NodeStageVolume bypass, got %+v", testEnv.fm.MountPoints)
+		}
+	})
+
+	// 2. Non-IAM multi-tenant subPath publish and teardown on the same node (team-alpha & team-beta).
+	t.Run("Multi-tenant subPath publish and reference-counted unpublish", func(t *testing.T) {
+		if err := os.RemoveAll(GlobalMountRoot); err != nil {
+			t.Fatalf("failed to reset GlobalMountRoot: %v", err)
+		}
+		testEnv := initTestNodeServer(t)
+
+		podAlpha1UID := "pod-alpha-1"
+		podAlpha2UID := "pod-alpha-2"
+		podBeta1UID := "pod-beta-1"
+
+		targetAlpha1 := filepath.Join(base, "pods", podAlpha1UID, "volumes", "kubernetes.io~csi", "pv-alpha", "mount")
+		targetAlpha2 := filepath.Join(base, "pods", podAlpha2UID, "volumes", "kubernetes.io~csi", "pv-alpha", "mount")
+		targetBeta1 := filepath.Join(base, "pods", podBeta1UID, "volumes", "kubernetes.io~csi", "pv-beta", "mount")
+
+		// Publish pod-alpha-1 (mounts team-alpha fileset + bind mount)
+		_, err := testEnv.ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":team-alpha",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        targetAlpha1,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				keyPodUID:     podAlpha1UID,
+				"subPath":     "team-alpha",
+			},
+		})
+		if err != nil {
+			t.Fatalf("pod-alpha-1 NodePublishVolume failed: %v", err)
+		}
+
+		// Publish pod-alpha-2 (reuses team-alpha global fileset mount + new bind mount)
+		_, err = testEnv.ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":team-alpha-ro",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        targetAlpha2,
+			VolumeCapability:  testVolumeCapability,
+			Readonly:          true,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				keyPodUID:     podAlpha2UID,
+				"subPath":     "team-alpha",
+			},
+		})
+		if err != nil {
+			t.Fatalf("pod-alpha-2 NodePublishVolume failed: %v", err)
+		}
+
+		// Publish pod-beta-1 (mounts separate team-beta fileset + bind mount)
+		_, err = testEnv.ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":team-beta",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        targetBeta1,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				keyPodUID:     podBeta1UID,
+				"subDir":      "team-beta",
+			},
+		})
+		if err != nil {
+			t.Fatalf("pod-beta-1 NodePublishVolume failed: %v", err)
+		}
+
+		alphaKey := computeGlobalKey(testVolumeID+":team-alpha", "", "team-alpha")
+		betaKey := computeGlobalKey(testVolumeID+":team-beta", "", "team-beta")
+		alphaGlobalMount := filepath.Join(GlobalMountRoot, alphaKey, "mount")
+		betaGlobalMount := filepath.Join(GlobalMountRoot, betaKey, "mount")
+
+		// Unpublish pod-alpha-1: alphaGlobalMount must remain active because pod-alpha-2 is still using it
+		_, err = testEnv.ns.NodeUnpublishVolume(t.Context(), &csi.NodeUnpublishVolumeRequest{
+			VolumeId:   testVolumeID + ":team-alpha",
+			TargetPath: targetAlpha1,
+		})
+		if err != nil {
+			t.Fatalf("pod-alpha-1 NodeUnpublishVolume failed: %v", err)
+		}
+		if exists, _ := pathExists(alphaGlobalMount); !exists {
+			t.Errorf("expected alpha global mount %q to remain while pod-alpha-2 is active", alphaGlobalMount)
+		}
+
+		// Unpublish pod-alpha-2: last pod for team-alpha -> alphaGlobalMount is unmounted & cleaned up, betaGlobalMount stays
+		_, err = testEnv.ns.NodeUnpublishVolume(t.Context(), &csi.NodeUnpublishVolumeRequest{
+			VolumeId:   testVolumeID + ":team-alpha-ro",
+			TargetPath: targetAlpha2,
+		})
+		if err != nil {
+			t.Fatalf("pod-alpha-2 NodeUnpublishVolume failed: %v", err)
+		}
+		if exists, _ := pathExists(filepath.Join(GlobalMountRoot, alphaKey)); exists {
+			t.Errorf("expected alpha key dir to be deleted after last pod unpublished")
+		}
+		if exists, _ := pathExists(betaGlobalMount); !exists {
+			t.Errorf("expected beta global mount %q to remain unaffected", betaGlobalMount)
+		}
+	})
+
+	// 3. Missing subdirectory (ENOENT) returns codes.FailedPrecondition.
+	t.Run("Missing subPath returns FailedPrecondition", func(t *testing.T) {
+		if err := os.RemoveAll(GlobalMountRoot); err != nil {
+			t.Fatalf("failed to reset GlobalMountRoot: %v", err)
+		}
+		fm := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+		mounter := &fakeMounter{
+			FakeMounter: fm,
+			mountErr:    fmt.Errorf("mount.lustre: mount 127.0.0.1@tcp:/gcloud/nonexistent at /var/lib/lustre/... failed: No such file or directory"),
+		}
+		driver := initTestDriver(t)
+		driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+		ns := newNodeServer(driver, mounter)
+
+		targetMissing := filepath.Join(base, "pods", "pod-missing", "volumes", "kubernetes.io~csi", "pv-missing", "mount")
+		_, err := ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":missing",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        targetMissing,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				keyPodUID:     "pod-missing",
+				"subPath":     "nonexistent",
+			},
+		})
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("expected codes.FailedPrecondition for missing subPath, got %v (err: %v)", status.Code(err), err)
+		}
+	})
+}

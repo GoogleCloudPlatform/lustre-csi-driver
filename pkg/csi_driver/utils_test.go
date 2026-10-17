@@ -90,6 +90,26 @@ func TestNormalizeVolumeContext(t *testing.T) {
 			expectedErr: false,
 		},
 		{
+			name: "subPath key",
+			input: map[string]string{
+				"subPath": "team-alpha",
+			},
+			expected: map[string]string{
+				keySubPath: "team-alpha",
+			},
+			expectedErr: false,
+		},
+		{
+			name: "subDir key",
+			input: map[string]string{
+				"subDir": "team-beta",
+			},
+			expected: map[string]string{
+				keySubDir: "team-beta",
+			},
+			expectedErr: false,
+		},
+		{
 			name:        "unsupported key",
 			input:       map[string]string{"unknown": "val2"},
 			expected:    nil,
