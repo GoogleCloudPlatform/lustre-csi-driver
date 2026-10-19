@@ -36,6 +36,18 @@ const (
 	cmdTimeout         = 15 * time.Minute
 	OSNodeLabel        = "cloud.google.com/gke-os-distribution"
 	PreviewClientLabel = "lustre.csi.storage.gke.io/preview-client-version"
+
+	// defaultUbuntuClientVersion is the Lustre minor series installed on GKE Ubuntu
+	// nodes that have not opted in to a preview client version. The default install
+	// is pinned to this series instead of "newest package in the production
+	// repository", so publishing a newer minor series (for example 2.16) to the
+	// production repository never changes the driver version on existing node pools.
+	// Patch releases within the series (2.14.0-ddn*) are still picked up automatically.
+	// Moving the Ubuntu default to a new minor series is a deliberate change to this
+	// constant that ships with a CSI driver release.
+	defaultUbuntuClientVersion = "2.14"
+	ubuntuProdAptSuite         = "lustre-client-ubuntu-noble"
+	ubuntuPreviewAptSuite      = "lustre-client-ubuntu-noble-preview"
 )
 
 var (
@@ -392,17 +404,26 @@ func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork
 }
 
 // buildUbuntuAptDownloadArgs constructs the apt-get download arguments for Lustre client modules on Ubuntu.
+//
+// apt resolves "<package>=<prefix>*" to the newest available version whose version string
+// starts with <prefix>, so "=2.14.*" selects the latest 2.14 patch release and never crosses
+// into another minor series. The prefix match spans every configured repository, which is
+// fine because the production repository only publishes 2.14 builds and the preview
+// repository only publishes newer series. Rolling back a bad patch build is handled on the
+// repository side (fix forward or remove the build), after which the previous build becomes
+// the newest match again.
 func buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion string) []string {
+	pkgTarget := fmt.Sprintf("lustre-client-modules-%s", kernelVersion)
 	if previewClientVersion == "" {
-		return []string{"download", fmt.Sprintf("lustre-client-modules-%s/lustre-client-ubuntu-noble", kernelVersion)}
+		return []string{"download", "-t", ubuntuProdAptSuite, fmt.Sprintf("%s=%s.*", pkgTarget, defaultUbuntuClientVersion)}
 	}
 
-	pkgTarget := fmt.Sprintf("lustre-client-modules-%s", kernelVersion)
 	if isPreviewVersion(previewClientVersion) {
-		pkgTarget = fmt.Sprintf("%s=%s*", pkgTarget, previewClientVersion)
+		// Trailing "." keeps "2.1" from matching "2.16".
+		pkgTarget = fmt.Sprintf("%s=%s.*", pkgTarget, previewClientVersion)
 	} else {
 		pkgTarget = fmt.Sprintf("%s=%s", pkgTarget, previewClientVersion)
 	}
 
-	return []string{"download", "-t", "lustre-client-ubuntu-noble-preview", pkgTarget}
+	return []string{"download", "-t", ubuntuPreviewAptSuite, pkgTarget}
 }

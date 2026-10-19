@@ -461,11 +461,13 @@ func TestBuildUbuntuAptDownloadArgs(t *testing.T) {
 		want                 []string
 	}{
 		{
-			name:                 "Default production version (empty)",
+			name:                 "Default production version (empty) is pinned to the 2.14 series",
 			previewClientVersion: "",
 			want: []string{
 				"download",
-				"lustre-client-modules-6.8.0-1017-gke/lustre-client-ubuntu-noble",
+				"-t",
+				"lustre-client-ubuntu-noble",
+				"lustre-client-modules-6.8.0-1017-gke=2.14.*",
 			},
 		},
 		{
@@ -475,7 +477,7 @@ func TestBuildUbuntuAptDownloadArgs(t *testing.T) {
 				"download",
 				"-t",
 				"lustre-client-ubuntu-noble-preview",
-				"lustre-client-modules-6.8.0-1017-gke=2.16*",
+				"lustre-client-modules-6.8.0-1017-gke=2.16.*",
 			},
 		},
 		{
