@@ -26,7 +26,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
@@ -64,10 +66,11 @@ type nodeServer struct {
 	// Embed UnimplementedIdentityServer to ensure the driver returns Unimplemented for any
 	// new RPC methods that might be introduced in future versions of the spec.
 	csi.UnimplementedNodeServer
-	driver      *LustreDriver
-	mounter     mount.Interface
-	volumeLocks *util.VolumeLocks
-	unmountExec unmountExecFunc
+	driver                     *LustreDriver
+	mounter                    mount.Interface
+	volumeLocks                *util.VolumeLocks
+	unmountExec                unmountExecFunc
+	peerMultiRailPromotionLock sync.Mutex
 }
 
 func newNodeServer(driver *LustreDriver, mounter mount.Interface) csi.NodeServer {
@@ -203,6 +206,8 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	}
 
 	klog.V(4).Infof("NodeStageVolume successfully mounted volume %v to path %s on node %s", volumeID, target, nodeName)
+
+	s.promotePeersToMultiRailAsync(nodeName)
 
 	return &csi.NodeStageVolumeResponse{}, nil
 }
@@ -472,6 +477,24 @@ func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPa
 	klog.V(4).Infof("mountGlobalIAM successfully mounted volume %v for principal %s to path %s on node %s", volumeID, principal, globalMountPath, nodeName)
 
 	return nil
+}
+
+func (s *nodeServer) promotePeersToMultiRailAsync(nodeName string) {
+	if len(s.driver.config.AdditionalNics) == 0 {
+		return
+	}
+	go func() {
+		s.peerMultiRailPromotionLock.Lock()
+		defer s.peerMultiRailPromotionLock.Unlock()
+
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		// TODO(b/515503061): Temporary workaround for versions below Lustre 2.16.
+		// Remove once Lustre 2.16 is verified, rolled out, and stable.
+		if err := network.PromotePeersToMultiRail(bgCtx); err != nil {
+			klog.Warningf("Failed to promote LNet peers to Multi-Rail on node %s: %v", nodeName, err)
+		}
+	}()
 }
 
 func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {

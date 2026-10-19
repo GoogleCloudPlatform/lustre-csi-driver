@@ -512,11 +512,33 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 	tests := []struct {
 		name                 string
 		previewClientVersion string
+		disableMultiNIC      bool
 		want                 []string
 	}{
 		{
-			name:                 "Default production version (empty)",
+			name:                 "Default production version (empty) with multi-NIC enabled",
 			previewClientVersion: "",
+			disableMultiNIC:      false,
+			want: []string{
+				"install",
+				"lustre-client-drivers",
+				"--latest",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				"--module-arg=lnet.lnet_numa_range=1000000",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+				"--module-arg=ptlrpc.max_ptlrpcds=8",
+			},
+		},
+		{
+			name:                 "Default production version with multi-NIC disabled",
+			previewClientVersion: "",
+			disableMultiNIC:      true,
 			want: []string{
 				"install",
 				"lustre-client-drivers",
@@ -533,8 +555,9 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			},
 		},
 		{
-			name:                 "Preview stream version 2.16",
+			name:                 "Preview stream version 2.16 with multi-NIC enabled",
 			previewClientVersion: "2.16",
+			disableMultiNIC:      false,
 			want: []string{
 				"install",
 				"lustre-client-drivers-pre",
@@ -548,13 +571,15 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 				"--insert-on-install",
 				"--logtostderr",
 				"--module-arg=lnet.accept_port=988",
+				"--module-arg=lnet.lnet_numa_range=1000000",
 				`--module-arg=lnet.networks="tcp0(eth0)"`,
 				"--module-arg=ptlrpc.max_ptlrpcds=8",
 			},
 		},
 		{
-			name:                 "Exact driver build version",
+			name:                 "Exact driver build version with multi-NIC enabled",
 			previewClientVersion: "2.16.0_ddn52c",
+			disableMultiNIC:      false,
 			want: []string{
 				"install",
 				"lustre-client-drivers-pre",
@@ -566,6 +591,7 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 				"--insert-on-install",
 				"--logtostderr",
 				"--module-arg=lnet.accept_port=988",
+				"--module-arg=lnet.lnet_numa_range=1000000",
 				`--module-arg=lnet.networks="tcp0(eth0)"`,
 				"--module-arg=ptlrpc.max_ptlrpcds=8",
 			},
@@ -576,7 +602,7 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := buildCosDKMSArgs(tc.previewClientVersion, lnetPort, expectedNetwork, customModuleArgs)
+			got := buildCosDKMSArgs(tc.previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, tc.disableMultiNIC)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("buildCosDKMSArgs() mismatch (-want +got):\n%s", diff)
 			}
