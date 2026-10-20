@@ -84,7 +84,13 @@ func main() {
 		klog.Fatalf("Failed to identify primary NIC: %v", err)
 	}
 
-	effectiveDisableMultiNIC, err := networkIntf.CheckDisableMultiNIC(ctx, *nodeID, nics, *disableMultiNIC)
+	// Fetch the Node object once; every node-derived setting below reads from it.
+	node, err := kmod.GetNode(ctx, *nodeID, nodeClient)
+	if err != nil {
+		klog.Fatalf("Failed to get node %s: %v", *nodeID, err)
+	}
+
+	effectiveDisableMultiNIC, err := network.DisableMultiNICForNode(node, nics, *disableMultiNIC)
 	if err != nil {
 		klog.Fatalf("Failed to check multi-NIC status: %v", err)
 	}
@@ -95,14 +101,8 @@ func main() {
 		klog.Fatalf("Lustre kernel module installation check failed: %v", err)
 	}
 
-	hostOS, err := kmod.GetNodeLabelValue(ctx, *nodeID, kmod.OSNodeLabel, nodeClient)
-	if err != nil {
-		klog.Fatalf("Failed to read OS Host Info: %v", err)
-	}
-	previewClientVersion, err := kmod.GetNodeLabelValue(ctx, *nodeID, kmod.PreviewClientLabel, nodeClient)
-	if err != nil {
-		klog.Fatalf("Failed to read preview client version: %v", err)
-	}
+	hostOS := kmod.NodeLabelValue(node, kmod.OSNodeLabel)
+	previewClientVersion := kmod.NodeLabelValue(node, kmod.PreviewClientLabel)
 
 	if isInstalled {
 		// Check if the current configuration matches the expectation.
@@ -139,10 +139,7 @@ func main() {
 				klog.Fatalf("The https://www.googleapis.com/auth/cloud-platform scope is missing. This is required for installing Lustre packages from Artifact Registry")
 			}
 		}
-		defaultClientVersion, err := kmod.DefaultUbuntuClientVersion(ctx, *nodeID, nodeClient)
-		if err != nil {
-			klog.Fatalf("Failed to determine the default Lustre client version: %v", err)
-		}
+		defaultClientVersion := kmod.DefaultUbuntuClientVersion(node)
 		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, previewClientVersion, defaultClientVersion)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on Ubuntu: %v", err)

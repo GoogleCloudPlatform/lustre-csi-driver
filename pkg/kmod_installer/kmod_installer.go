@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
+	v1 "k8s.io/api/core/v1"
 	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
@@ -328,16 +329,31 @@ func parseLnetNetwork(networkStr string) []string {
 	return strings.Split(networkStr, ",")
 }
 
+// GetNode fetches the Node object once so callers can read several fields from it
+// (labels, kubelet version) without repeating the API call.
+func GetNode(ctx context.Context, nodeID string, nc network.NodeClient) (*v1.Node, error) {
+	node, err := nc.GetNodeWithRetry(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, fmt.Errorf("node object %s is empty", nodeID)
+	}
+	return node, nil
+}
+
+// NodeLabelValue returns the trimmed value of labelKey on node, or "" if it is not set.
+func NodeLabelValue(node *v1.Node, labelKey string) string {
+	return strings.TrimSpace(node.GetLabels()[labelKey])
+}
+
 // GetNodeLabelValue returns the value of the specified label from the node.
 func GetNodeLabelValue(ctx context.Context, nodeID string, labelKey string, nc network.NodeClient) (string, error) {
-	node, err := nc.GetNodeWithRetry(ctx, nodeID)
+	node, err := GetNode(ctx, nodeID, nc)
 	if err != nil {
 		return "", err
 	}
-	if node == nil {
-		return "", fmt.Errorf("node object %s is empty", nodeID)
-	}
-	return strings.TrimSpace(node.GetLabels()[labelKey]), nil
+	return NodeLabelValue(node, labelKey), nil
 }
 
 // BuildLnetNetworkString constructs the LNet network configuration string.
@@ -448,18 +464,11 @@ func buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion, defaultClie
 // DefaultUbuntuClientVersion returns the Lustre minor series to install on an Ubuntu node
 // that has not opted in to a preview client version. The choice is keyed on the node's GKE
 // version, which is reported as the kubelet version (for example "v1.37.2-gke.1000").
-func DefaultUbuntuClientVersion(ctx context.Context, nodeID string, nc network.NodeClient) (string, error) {
-	node, err := nc.GetNodeWithRetry(ctx, nodeID)
-	if err != nil {
-		return "", err
-	}
-	if node == nil {
-		return "", fmt.Errorf("node object %s is empty", nodeID)
-	}
+func DefaultUbuntuClientVersion(node *v1.Node) string {
 	kubeletVersion := node.Status.NodeInfo.KubeletVersion
 	series := defaultUbuntuClientVersionFor(kubeletVersion, ubuntuDefaultClientVersions)
-	klog.Infof("Node %s runs GKE version %q; default Ubuntu Lustre client series is %s", nodeID, kubeletVersion, series)
-	return series, nil
+	klog.Infof("Node %s runs GKE version %q; default Ubuntu Lustre client series is %s", node.GetName(), kubeletVersion, series)
+	return series
 }
 
 func defaultUbuntuClientVersionFor(kubeletVersion string, boundaries []ubuntuDefaultClientVersion) string {

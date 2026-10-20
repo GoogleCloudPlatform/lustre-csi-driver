@@ -597,21 +597,30 @@ func TestDefaultUbuntuClientVersionFor(t *testing.T) {
 func TestDefaultUbuntuClientVersion(t *testing.T) {
 	t.Parallel()
 
+	node := &v1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-name"},
+		Status: v1.NodeStatus{
+			NodeInfo: v1.NodeSystemInfo{KubeletVersion: "v1.37.2-gke.1000"},
+		},
+	}
+	// With no boundaries configured, every node resolves to the base series.
+	if got := DefaultUbuntuClientVersion(node); got != "2.14" {
+		t.Errorf("DefaultUbuntuClientVersion() = %q, want %q", got, "2.14")
+	}
+}
+
+func TestGetNode(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		mockNode *v1.Node
 		mockErr  error
-		want     string
 		wantErr  bool
 	}{
 		{
-			name: "Current GKE node resolves to the base series",
-			mockNode: &v1.Node{
-				Status: v1.NodeStatus{
-					NodeInfo: v1.NodeSystemInfo{KubeletVersion: "v1.37.2-gke.1000"},
-				},
-			},
-			want: "2.14",
+			name:     "Node returned",
+			mockNode: &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-name"}},
 		},
 		{
 			name:    "API error from k8s client",
@@ -630,12 +639,12 @@ func TestDefaultUbuntuClientVersion(t *testing.T) {
 			t.Parallel()
 
 			client := &mockNodeClient{node: tc.mockNode, err: tc.mockErr}
-			got, err := DefaultUbuntuClientVersion(context.Background(), "node-name", client)
+			got, err := GetNode(context.Background(), "node-name", client)
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("DefaultUbuntuClientVersion() error = %v, wantErr %v", err, tc.wantErr)
+				t.Fatalf("GetNode() error = %v, wantErr %v", err, tc.wantErr)
 			}
-			if got != tc.want {
-				t.Errorf("DefaultUbuntuClientVersion() = %q, want %q", got, tc.want)
+			if !tc.wantErr && got != tc.mockNode {
+				t.Errorf("GetNode() returned a different node object than the client")
 			}
 		})
 	}
