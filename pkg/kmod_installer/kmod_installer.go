@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
+	v1 "k8s.io/api/core/v1"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
 
@@ -41,7 +43,17 @@ const (
 	cmdTimeout         = 15 * time.Minute
 	OSNodeLabel        = "cloud.google.com/gke-os-distribution"
 	PreviewClientLabel = "lustre.csi.storage.gke.io/preview-client-version"
+
+	ubuntuProdAptSuite    = "lustre-client-ubuntu-noble"
+	ubuntuPreviewAptSuite = "lustre-client-ubuntu-noble-preview"
 )
+
+// ubuntuPinnedClientVersion keeps GKE Ubuntu nodes older than beforeGKEVersion on the
+// lustreVersion minor series when they have not opted in to a preview client version.
+type ubuntuPinnedClientVersion struct {
+	beforeGKEVersion *utilversion.Version
+	lustreVersion    string
+}
 
 var (
 	lnetAcceptPortFile       = "/sys/module/lnet/parameters/accept_port"
@@ -49,6 +61,18 @@ var (
 	lustreModuleDir          = "/sys/module/lustre"
 
 	previewVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+
+	// ubuntuPinnedClientVersions, ordered oldest boundary first, pins the default Lustre
+	// series for GKE Ubuntu nodes that predate a GKE version. Nodes at or above the last
+	// boundary install the newest package in the production repository, the same way
+	// cos-dkms --latest does on COS. The pin exists so that promoting a newer series into
+	// the production repository does not change node pools that were created when an older
+	// series was the default; such a node pool only moves to the newer series when it is
+	// upgraded across the boundary. Add a boundary when a newer series is promoted and the
+	// fleet that predates it should stay put.
+	ubuntuPinnedClientVersions = []ubuntuPinnedClientVersion{
+		{beforeGKEVersion: utilversion.MustParseGeneric("1.38.0"), lustreVersion: "2.14"},
+	}
 )
 
 func lnetPort(enableLegacyLustrePort bool) int {
@@ -181,7 +205,9 @@ func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customMo
 }
 
 // InstallLustreKmodOnUbuntu installs the Lustre kernel modules on Ubuntu nodes.
-func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
+// previewClientVersion is the opt-in label value, if any; defaultClientVersion is the
+// minor series to install when the node has not opted in (see DefaultUbuntuClientVersion).
+func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion, defaultClientVersion string) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
@@ -202,7 +228,7 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 	}
 
 	// download lustre client packages
-	downloadArgs := buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion)
+	downloadArgs := buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion, defaultClientVersion)
 	tmpDir, err := os.MkdirTemp("", "lustre-kmod-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
@@ -309,16 +335,31 @@ func parseLnetNetwork(networkStr string) []string {
 	return strings.Split(networkStr, ",")
 }
 
+// GetNode fetches the Node object once so callers can read several fields from it
+// (labels, kubelet version) without repeating the API call.
+func GetNode(ctx context.Context, nodeID string, nc network.NodeClient) (*v1.Node, error) {
+	node, err := nc.GetNodeWithRetry(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, fmt.Errorf("node object %s is empty", nodeID)
+	}
+	return node, nil
+}
+
+// NodeLabelValue returns the trimmed value of labelKey on node, or "" if it is not set.
+func NodeLabelValue(node *v1.Node, labelKey string) string {
+	return strings.TrimSpace(node.GetLabels()[labelKey])
+}
+
 // GetNodeLabelValue returns the value of the specified label from the node.
 func GetNodeLabelValue(ctx context.Context, nodeID string, labelKey string, nc network.NodeClient) (string, error) {
-	node, err := nc.GetNodeWithRetry(ctx, nodeID)
+	node, err := GetNode(ctx, nodeID, nc)
 	if err != nil {
 		return "", err
 	}
-	if node == nil {
-		return "", fmt.Errorf("node object %s is empty", nodeID)
-	}
-	return strings.TrimSpace(node.GetLabels()[labelKey]), nil
+	return NodeLabelValue(node, labelKey), nil
 }
 
 // BuildLnetNetworkString constructs the LNet network configuration string.
@@ -402,17 +443,63 @@ func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork
 }
 
 // buildUbuntuAptDownloadArgs constructs the apt-get download arguments for Lustre client modules on Ubuntu.
-func buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion string) []string {
+//
+// pinnedClientVersion is the minor series an older fleet stays on (see
+// DefaultUbuntuClientVersion); when it is empty, the newest package in the production
+// repository is installed. apt resolves "<package>=<prefix>*" to the newest available
+// version whose version string starts with <prefix>, so "=2.14.*" selects the latest 2.14
+// patch release and never crosses into another minor series. Rolling back a bad patch
+// build is handled on the repository side (fix forward or remove the build), after which
+// the previous build becomes the newest match again.
+func buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion, pinnedClientVersion string) []string {
+	pkgTarget := fmt.Sprintf("lustre-client-modules-%s", kernelVersion)
 	if previewClientVersion == "" {
-		return []string{"download", fmt.Sprintf("lustre-client-modules-%s/lustre-client-ubuntu-noble", kernelVersion)}
+		if pinnedClientVersion == "" {
+			return []string{"download", fmt.Sprintf("%s/%s", pkgTarget, ubuntuProdAptSuite)}
+		}
+		return []string{"download", "-t", ubuntuProdAptSuite, fmt.Sprintf("%s=%s.*", pkgTarget, pinnedClientVersion)}
 	}
 
-	pkgTarget := fmt.Sprintf("lustre-client-modules-%s", kernelVersion)
 	if isPreviewVersion(previewClientVersion) {
-		pkgTarget = fmt.Sprintf("%s=%s*", pkgTarget, previewClientVersion)
+		// Trailing "." keeps "2.1" from matching "2.16".
+		pkgTarget = fmt.Sprintf("%s=%s.*", pkgTarget, previewClientVersion)
 	} else {
 		pkgTarget = fmt.Sprintf("%s=%s", pkgTarget, previewClientVersion)
 	}
 
-	return []string{"download", "-t", "lustre-client-ubuntu-noble-preview", pkgTarget}
+	return []string{"download", "-t", ubuntuPreviewAptSuite, pkgTarget}
+}
+
+// DefaultUbuntuClientVersion returns the Lustre minor series an Ubuntu node that has not
+// opted in to a preview client version is pinned to, or an empty string when the node should
+// install the newest package in the production repository. The choice is keyed on the node's
+// GKE version, which is reported as the kubelet version (for example "v1.37.2-gke.1000").
+func DefaultUbuntuClientVersion(node *v1.Node) string {
+	kubeletVersion := node.Status.NodeInfo.KubeletVersion
+	series := defaultUbuntuClientVersionFor(kubeletVersion, ubuntuPinnedClientVersions)
+	if series == "" {
+		klog.Infof("Node %s runs GKE version %q; installing the newest Lustre client in the production repository", node.GetName(), kubeletVersion)
+	} else {
+		klog.Infof("Node %s runs GKE version %q; default Lustre client is pinned to the %s series", node.GetName(), kubeletVersion, series)
+	}
+	return series
+}
+
+func defaultUbuntuClientVersionFor(kubeletVersion string, pins []ubuntuPinnedClientVersion) string {
+	if len(pins) == 0 {
+		return ""
+	}
+	v, err := utilversion.ParseGeneric(kubeletVersion)
+	if err != nil {
+		// An unknown node version is treated like the oldest fleet so it is never moved
+		// to a newer series by accident.
+		klog.Warningf("Could not parse node version %q, pinning Lustre client to the %s series: %v", kubeletVersion, pins[0].lustreVersion, err)
+		return pins[0].lustreVersion
+	}
+	for _, p := range pins {
+		if v.LessThan(p.beforeGKEVersion) {
+			return p.lustreVersion
+		}
+	}
+	return ""
 }
