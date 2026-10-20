@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
 
@@ -37,18 +38,19 @@ const (
 	OSNodeLabel        = "cloud.google.com/gke-os-distribution"
 	PreviewClientLabel = "lustre.csi.storage.gke.io/preview-client-version"
 
-	// defaultUbuntuClientVersion is the Lustre minor series installed on GKE Ubuntu
-	// nodes that have not opted in to a preview client version. The default install
-	// is pinned to this series instead of "newest package in the production
-	// repository", so publishing a newer minor series (for example 2.16) to the
-	// production repository never changes the driver version on existing node pools.
-	// Patch releases within the series (2.14.0-ddn*) are still picked up automatically.
-	// Moving the Ubuntu default to a new minor series is a deliberate change to this
-	// constant that ships with a CSI driver release.
-	defaultUbuntuClientVersion = "2.14"
-	ubuntuProdAptSuite         = "lustre-client-ubuntu-noble"
-	ubuntuPreviewAptSuite      = "lustre-client-ubuntu-noble-preview"
+	// ubuntuBaseClientVersion is the Lustre minor series installed on GKE Ubuntu nodes
+	// whose GKE version is older than every boundary in ubuntuDefaultClientVersions.
+	ubuntuBaseClientVersion = "2.14"
+	ubuntuProdAptSuite      = "lustre-client-ubuntu-noble"
+	ubuntuPreviewAptSuite   = "lustre-client-ubuntu-noble-preview"
 )
+
+// ubuntuDefaultClientVersion records the first GKE version at which the default Lustre
+// client on Ubuntu nodes moved to a new minor series.
+type ubuntuDefaultClientVersion struct {
+	minGKEVersion *utilversion.Version
+	lustreVersion string
+}
 
 var (
 	lnetAcceptPortFile       = "/sys/module/lnet/parameters/accept_port"
@@ -56,6 +58,17 @@ var (
 	lustreModuleDir          = "/sys/module/lustre"
 
 	previewVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+
+	// ubuntuDefaultClientVersions lists, newest boundary first, the GKE minor versions at
+	// which the default Lustre client on Ubuntu nodes moves to a new minor series. The
+	// default is keyed on the node's GKE version rather than on the newest package in the
+	// production repository, so publishing a newer series to that repository never changes
+	// existing node pools, and a node pool only changes Lustre version when it is upgraded
+	// across one of these boundaries. This matches COS, where the stable package moves to a
+	// new series only with a new milestone. Add a row when a COS milestone ships a new
+	// series by default, for example:
+	//   {minGKEVersion: utilversion.MustParseGeneric("1.38.0"), lustreVersion: "2.16"},
+	ubuntuDefaultClientVersions = []ubuntuDefaultClientVersion{}
 )
 
 func lnetPort(enableLegacyLustrePort bool) int {
@@ -188,7 +201,9 @@ func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customMo
 }
 
 // InstallLustreKmodOnUbuntu installs the Lustre kernel modules on Ubuntu nodes.
-func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
+// previewClientVersion is the opt-in label value, if any; defaultClientVersion is the
+// minor series to install when the node has not opted in (see DefaultUbuntuClientVersion).
+func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion, defaultClientVersion string) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
@@ -209,7 +224,7 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 	}
 
 	// download lustre client packages
-	downloadArgs := buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion)
+	downloadArgs := buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion, defaultClientVersion)
 	tmpDir, err := os.MkdirTemp("", "lustre-kmod-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
@@ -408,14 +423,16 @@ func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork
 // apt resolves "<package>=<prefix>*" to the newest available version whose version string
 // starts with <prefix>, so "=2.14.*" selects the latest 2.14 patch release and never crosses
 // into another minor series. The prefix match spans every configured repository, which is
-// fine because the production repository only publishes 2.14 builds and the preview
-// repository only publishes newer series. Rolling back a bad patch build is handled on the
-// repository side (fix forward or remove the build), after which the previous build becomes
-// the newest match again.
-func buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion string) []string {
+// fine because each repository only publishes one minor series. Rolling back a bad patch
+// build is handled on the repository side (fix forward or remove the build), after which
+// the previous build becomes the newest match again.
+func buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion, defaultClientVersion string) []string {
 	pkgTarget := fmt.Sprintf("lustre-client-modules-%s", kernelVersion)
 	if previewClientVersion == "" {
-		return []string{"download", "-t", ubuntuProdAptSuite, fmt.Sprintf("%s=%s.*", pkgTarget, defaultUbuntuClientVersion)}
+		if defaultClientVersion == "" {
+			defaultClientVersion = ubuntuBaseClientVersion
+		}
+		return []string{"download", "-t", ubuntuProdAptSuite, fmt.Sprintf("%s=%s.*", pkgTarget, defaultClientVersion)}
 	}
 
 	if isPreviewVersion(previewClientVersion) {
@@ -426,4 +443,35 @@ func buildUbuntuAptDownloadArgs(kernelVersion, previewClientVersion string) []st
 	}
 
 	return []string{"download", "-t", ubuntuPreviewAptSuite, pkgTarget}
+}
+
+// DefaultUbuntuClientVersion returns the Lustre minor series to install on an Ubuntu node
+// that has not opted in to a preview client version. The choice is keyed on the node's GKE
+// version, which is reported as the kubelet version (for example "v1.37.2-gke.1000").
+func DefaultUbuntuClientVersion(ctx context.Context, nodeID string, nc network.NodeClient) (string, error) {
+	node, err := nc.GetNodeWithRetry(ctx, nodeID)
+	if err != nil {
+		return "", err
+	}
+	if node == nil {
+		return "", fmt.Errorf("node object %s is empty", nodeID)
+	}
+	kubeletVersion := node.Status.NodeInfo.KubeletVersion
+	series := defaultUbuntuClientVersionFor(kubeletVersion, ubuntuDefaultClientVersions)
+	klog.Infof("Node %s runs GKE version %q; default Ubuntu Lustre client series is %s", nodeID, kubeletVersion, series)
+	return series, nil
+}
+
+func defaultUbuntuClientVersionFor(kubeletVersion string, boundaries []ubuntuDefaultClientVersion) string {
+	v, err := utilversion.ParseGeneric(kubeletVersion)
+	if err != nil {
+		klog.Warningf("Could not parse node version %q, defaulting to Lustre %s: %v", kubeletVersion, ubuntuBaseClientVersion, err)
+		return ubuntuBaseClientVersion
+	}
+	for _, b := range boundaries {
+		if v.AtLeast(b.minGKEVersion) {
+			return b.lustreVersion
+		}
+	}
+	return ubuntuBaseClientVersion
 }

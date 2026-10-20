@@ -139,7 +139,11 @@ func main() {
 				klog.Fatalf("The https://www.googleapis.com/auth/cloud-platform scope is missing. This is required for installing Lustre packages from Artifact Registry")
 			}
 		}
-		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, previewClientVersion)
+		defaultClientVersion, err := kmod.DefaultUbuntuClientVersion(ctx, *nodeID, nodeClient)
+		if err != nil {
+			klog.Fatalf("Failed to determine the default Lustre client version: %v", err)
+		}
+		err = kmod.InstallLustreKmodOnUbuntu(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, previewClientVersion, defaultClientVersion)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on Ubuntu: %v", err)
 		}

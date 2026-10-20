@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 )
 
 func TestIsLustreKmodInstalled(t *testing.T) {
@@ -458,11 +459,13 @@ func TestBuildUbuntuAptDownloadArgs(t *testing.T) {
 	tests := []struct {
 		name                 string
 		previewClientVersion string
+		defaultClientVersion string
 		want                 []string
 	}{
 		{
-			name:                 "Default production version (empty) is pinned to the 2.14 series",
+			name:                 "Default install is pinned to the resolved default series",
 			previewClientVersion: "",
+			defaultClientVersion: "2.14",
 			want: []string{
 				"download",
 				"-t",
@@ -471,8 +474,31 @@ func TestBuildUbuntuAptDownloadArgs(t *testing.T) {
 			},
 		},
 		{
-			name:                 "Preview stream version 2.16",
+			name:                 "Default install follows a newer resolved default series",
+			previewClientVersion: "",
+			defaultClientVersion: "2.16",
+			want: []string{
+				"download",
+				"-t",
+				"lustre-client-ubuntu-noble",
+				"lustre-client-modules-6.8.0-1017-gke=2.16.*",
+			},
+		},
+		{
+			name:                 "Empty resolved default falls back to the base series",
+			previewClientVersion: "",
+			defaultClientVersion: "",
+			want: []string{
+				"download",
+				"-t",
+				"lustre-client-ubuntu-noble",
+				"lustre-client-modules-6.8.0-1017-gke=2.14.*",
+			},
+		},
+		{
+			name:                 "Preview stream version 2.16 ignores the default series",
 			previewClientVersion: "2.16",
+			defaultClientVersion: "2.14",
 			want: []string{
 				"download",
 				"-t",
@@ -483,6 +509,7 @@ func TestBuildUbuntuAptDownloadArgs(t *testing.T) {
 		{
 			name:                 "Exact Debian package build version",
 			previewClientVersion: "2.16.0-ddn56b-1",
+			defaultClientVersion: "2.14",
 			want: []string{
 				"download",
 				"-t",
@@ -496,9 +523,119 @@ func TestBuildUbuntuAptDownloadArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := buildUbuntuAptDownloadArgs(kernelVersion, tc.previewClientVersion)
+			got := buildUbuntuAptDownloadArgs(kernelVersion, tc.previewClientVersion, tc.defaultClientVersion)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("buildUbuntuAptDownloadArgs() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestDefaultUbuntuClientVersionFor(t *testing.T) {
+	t.Parallel()
+
+	boundaries := []ubuntuDefaultClientVersion{
+		{minGKEVersion: utilversion.MustParseGeneric("1.40.0"), lustreVersion: "2.17"},
+		{minGKEVersion: utilversion.MustParseGeneric("1.38.0"), lustreVersion: "2.16"},
+	}
+
+	tests := []struct {
+		name           string
+		kubeletVersion string
+		boundaries     []ubuntuDefaultClientVersion
+		want           string
+	}{
+		{
+			name:           "No boundaries configured - base series",
+			kubeletVersion: "v1.39.2-gke.1000",
+			boundaries:     nil,
+			want:           "2.14",
+		},
+		{
+			name:           "Below the first boundary - base series",
+			kubeletVersion: "v1.37.5-gke.1234000",
+			boundaries:     boundaries,
+			want:           "2.14",
+		},
+		{
+			name:           "Exactly at a boundary",
+			kubeletVersion: "v1.38.0-gke.100",
+			boundaries:     boundaries,
+			want:           "2.16",
+		},
+		{
+			name:           "Between boundaries",
+			kubeletVersion: "v1.39.1-gke.5",
+			boundaries:     boundaries,
+			want:           "2.16",
+		},
+		{
+			name:           "Above the newest boundary",
+			kubeletVersion: "v1.41.0-gke.1",
+			boundaries:     boundaries,
+			want:           "2.17",
+		},
+		{
+			name:           "Unparseable node version - base series",
+			kubeletVersion: "",
+			boundaries:     boundaries,
+			want:           "2.14",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := defaultUbuntuClientVersionFor(tc.kubeletVersion, tc.boundaries); got != tc.want {
+				t.Errorf("defaultUbuntuClientVersionFor(%q) = %q, want %q", tc.kubeletVersion, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDefaultUbuntuClientVersion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mockNode *v1.Node
+		mockErr  error
+		want     string
+		wantErr  bool
+	}{
+		{
+			name: "Current GKE node resolves to the base series",
+			mockNode: &v1.Node{
+				Status: v1.NodeStatus{
+					NodeInfo: v1.NodeSystemInfo{KubeletVersion: "v1.37.2-gke.1000"},
+				},
+			},
+			want: "2.14",
+		},
+		{
+			name:    "API error from k8s client",
+			mockErr: fmt.Errorf("k8s node timeout"),
+			wantErr: true,
+		},
+		{
+			name:     "Nil node object returned without error",
+			mockNode: nil,
+			wantErr:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &mockNodeClient{node: tc.mockNode, err: tc.mockErr}
+			got, err := DefaultUbuntuClientVersion(context.Background(), "node-name", client)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("DefaultUbuntuClientVersion() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("DefaultUbuntuClientVersion() = %q, want %q", got, tc.want)
 			}
 		})
 	}
