@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"flag"
+	"time"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/lustre"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
@@ -44,6 +45,7 @@ var (
 	enableLegacyLustrePort  = flag.Bool("enable-legacy-lustre-port", false, "If set to true, the CSI driver controller will provision Lustre instance with the gkeSupportEnabled flag")
 	enableLabelController   = flag.Bool("enable-label-controller", true, "If true, the label controller will be started.")
 	leaderElectionNamespace = flag.String("leader-election-namespace", "", "Namespace where the leader election resource will be created. Required for out-of-cluster deployments.")
+	lctlTimeout             = flag.Duration("lctl-timeout", 15*time.Second, "Timeout for lctl commands when configuring Lustre kernel parameters.")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -102,7 +104,7 @@ func main() {
 		// Other nodes (like Ubuntu) have Lustre client utilities installed natively on the host.
 		if hostOS == "cos" {
 			go func() {
-				if err := upcall.SetupHostArtifacts(); err != nil {
+				if err := upcall.SetupHostArtifacts(*lctlTimeout); err != nil {
 					klog.Errorf("Failed to set up Lustre upcall host artifacts: %v", err)
 					return
 				}
