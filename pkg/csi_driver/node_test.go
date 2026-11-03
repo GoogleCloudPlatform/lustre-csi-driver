@@ -1528,3 +1528,111 @@ func TestMountGlobalIAM(t *testing.T) {
 		})
 	}
 }
+
+func TestNodePublishVolume_IAMCleanupOnError(t *testing.T) {
+	origGlobalMountRoot := GlobalMountRoot
+	GlobalMountRoot = t.TempDir()
+	defer func() { GlobalMountRoot = origGlobalMountRoot }()
+
+	testPrincipal := "test-ns/test-sa"
+	key := computeHash(testVolumeID + testPrincipal)
+	keyDir := filepath.Join(GlobalMountRoot, key)
+	globalMountPath := filepath.Join(keyDir, "mount")
+
+	t.Run("cleans up global key directory and token when first pod mount fails", func(t *testing.T) {
+		fm := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+		mounter := &fakeMounter{FakeMounter: fm, mountErr: fmt.Errorf("mount failed: Operation not permitted")}
+
+		driver := initTestDriver(t)
+		driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+		ns := newNodeServer(driver, mounter).(*nodeServer)
+
+		targetPath := filepath.Join(t.TempDir(), "pods", "pod-uid-1", "volumes", "kubernetes.io~csi", "pvc-1", "mount")
+		req := &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID,
+			StagingTargetPath: filepath.Join(t.TempDir(), "staging"),
+			TargetPath:        targetPath,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP:     testIP,
+				keyFilesystem:     testFilesystem,
+				keyIAMAccessControlEnabled: "true",
+				keyPodUID:         "pod-uid-1",
+				keyPodNamespace:   "test-ns",
+				keyServiceAccount: "test-sa",
+				keyServiceToken:   `{"test-project.svc.id.goog":{"token":"secret-jwt-token","expirationTimestamp":"2026-03-04T00:00:00Z"}}`,
+			},
+		}
+
+		_, err := ns.NodePublishVolume(t.Context(), req)
+		if err == nil {
+			t.Fatal("Expected NodePublishVolume to fail when global mount fails")
+		}
+
+		exists, err := pathExists(keyDir)
+		if err != nil {
+			t.Fatalf("Failed to check keyDir %q: %v", keyDir, err)
+		}
+		if exists {
+			t.Errorf("Expected unused global key directory %q (and its token file) to be removed after mount failure, but it still exists", keyDir)
+		}
+	})
+
+	t.Run("preserves global key directory and active mount when second pod fails", func(t *testing.T) {
+		if err := makeGlobalDirs(key); err != nil {
+			t.Fatalf("makeGlobalDirs failed: %v", err)
+		}
+		if err := updateTokenFile(key, "active-token"); err != nil {
+			t.Fatalf("updateTokenFile failed: %v", err)
+		}
+		if err := addPodReference(key, "pod-uid-active", testVolumeID); err != nil {
+			t.Fatalf("addPodReference failed: %v", err)
+		}
+
+		fm := &mount.FakeMounter{
+			MountPoints: []mount.MountPoint{
+				{Device: testDevice, Path: globalMountPath, Type: "lustre"},
+			},
+		}
+		mounter := &fakeMounter{FakeMounter: fm, mountErr: fmt.Errorf("bind mount failed")}
+
+		driver := initTestDriver(t)
+		driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+		ns := newNodeServer(driver, mounter).(*nodeServer)
+
+		targetPath := filepath.Join(t.TempDir(), "pods", "pod-uid-2", "volumes", "kubernetes.io~csi", "pvc-1", "mount")
+		req := &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID,
+			StagingTargetPath: filepath.Join(t.TempDir(), "staging"),
+			TargetPath:        targetPath,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP:     testIP,
+				keyFilesystem:     testFilesystem,
+				keyIAMAccessControlEnabled: "true",
+				keyPodUID:         "pod-uid-2",
+				keyPodNamespace:   "test-ns",
+				keyServiceAccount: "test-sa",
+				keyServiceToken:   `{"test-project.svc.id.goog":{"token":"secret-jwt-token-2","expirationTimestamp":"2026-03-04T00:00:00Z"}}`,
+			},
+		}
+
+		_, err := ns.NodePublishVolume(t.Context(), req)
+		if err == nil {
+			t.Fatal("Expected NodePublishVolume to fail when bind mount fails")
+		}
+
+		exists, err := pathExists(keyDir)
+		if err != nil || !exists {
+			t.Errorf("Expected global key directory %q to be preserved for active pod, exists=%v, err=%v", keyDir, exists, err)
+		}
+		activeRefExists, err := pathExists(filepath.Join(keyDir, "refs", "pod-uid-active"))
+		if err != nil || !activeRefExists {
+			t.Errorf("Expected active pod reference to remain intact, exists=%v, err=%v", activeRefExists, err)
+		}
+		failedRefExists, err := pathExists(filepath.Join(keyDir, "refs", "pod-uid-2"))
+		if err != nil || failedRefExists {
+			t.Errorf("Expected failed pod reference to be removed, exists=%v, err=%v", failedRefExists, err)
+		}
+	})
+}
