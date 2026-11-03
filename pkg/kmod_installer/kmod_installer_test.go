@@ -609,3 +609,43 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestUbuntuClientModules(t *testing.T) {
+	t.Parallel()
+
+	t.Run("without ptlrpc_gss.ko (Lustre 2.15 and earlier)", func(t *testing.T) {
+		t.Parallel()
+		extractDir := t.TempDir()
+		fsDir := filepath.Join(extractDir, "lib", "modules", "6.8.0-1066-gke", "updates", "fs")
+		if err := os.MkdirAll(fsDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll failed: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(fsDir, "lustre.ko"), []byte("fake"), 0o644); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+
+		want := []string{"ksocklnd", "lustre", "mgc", "lmv", "lov", "mdc", "osc"}
+		got := ubuntuClientModules(extractDir)
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("ubuntuClientModules() mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("with ptlrpc_gss.ko (Lustre 2.16+)", func(t *testing.T) {
+		t.Parallel()
+		extractDir := t.TempDir()
+		fsDir := filepath.Join(extractDir, "lib", "modules", "6.8.0-1066-gke", "updates", "kernel", "fs")
+		if err := os.MkdirAll(fsDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll failed: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(fsDir, "ptlrpc_gss.ko"), []byte("fake"), 0o644); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+
+		want := []string{"ksocklnd", "lustre", "mgc", "lmv", "lov", "mdc", "osc", "ptlrpc_gss"}
+		got := ubuntuClientModules(extractDir)
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("ubuntuClientModules() mismatch (-want +got):\n%s", diff)
+		}
+	})
+}

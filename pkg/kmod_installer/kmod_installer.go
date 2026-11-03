@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -275,9 +276,10 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 	}
 
 	// Load the underlying TCP network driver (ksocklnd), core lustre module,
-	// and required client subsystem modules (mgc: management, lmv/mdc: metadata, lov/osc: object storage)
-	// via modprobe to ensure they are resident in kernel memory before the ephemeral module files are removed.
-	clientModules := []string{"ksocklnd", "lustre", "mgc", "lmv", "lov", "mdc", "osc"}
+	// and required client subsystem modules (mgc: management, lmv/mdc: metadata, lov/osc: object storage,
+	// plus ptlrpc_gss when present in 2.16+ packages) via modprobe to ensure they are resident
+	// in kernel memory before the ephemeral module files are removed.
+	clientModules := ubuntuClientModules(extractDir)
 	for _, mod := range clientModules {
 		modArgs := []string{"-d", extractDir, mod}
 		prefix := mod + "."
@@ -296,6 +298,33 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 	klog.Infof("Ubuntu Lustre installation completed successfully.")
 
 	return nil
+}
+
+// ubuntuClientModules returns the list of Lustre client kernel modules to load via modprobe.
+// If ptlrpc_gss.ko is present in the extracted package directory (e.g., Lustre 2.16+ packages
+// with GSS/IAM support), ptlrpc_gss is included so it remains resident in kernel memory
+// before the temporary extractDir is removed.
+func ubuntuClientModules(extractDir string) []string {
+	modules := []string{"ksocklnd", "lustre", "mgc", "lmv", "lov", "mdc", "osc"}
+	if hasExtractedModule(extractDir, "ptlrpc_gss.ko") {
+		modules = append(modules, "ptlrpc_gss")
+	}
+	return modules
+}
+
+func hasExtractedModule(extractDir, moduleFileName string) bool {
+	found := false
+	_ = filepath.WalkDir(extractDir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() && d.Name() == moduleFileName {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 func parseLnetNetwork(networkStr string) []string {
