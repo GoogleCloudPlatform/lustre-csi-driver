@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	"k8s.io/klog/v2"
 )
 
@@ -274,10 +275,20 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 		return fmt.Errorf("modprobe lnet failed: %w\noutput:\n%s", err, string(out))
 	}
 
-	// Load the underlying TCP network driver (ksocklnd), core lustre module,
-	// and required client subsystem modules (mgc: management, lmv/mdc: metadata, lov/osc: object storage)
-	// via modprobe to ensure they are resident in kernel memory before the ephemeral module files are removed.
-	clientModules := []string{"ksocklnd", "lustre", "mgc", "lmv", "lov", "mdc", "osc"}
+	modinfoCmd := exec.CommandContext(cmdCtx, "modinfo", "-b", extractDir, "-k", kernelVersion, "-F", "version", "lustre")
+	modVerOut, err := modinfoCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("modinfo lustre failed: %w\noutput:\n%s", err, string(modVerOut))
+	}
+
+	// Load the underlying TCP network driver (ksocklnd), RPC security module (ptlrpc_gss for 2.16+ packages),
+	// core lustre module, and required client subsystem modules (mgc: management, lmv/mdc: metadata,
+	// lov/osc: object storage) via modprobe to ensure they are resident in kernel memory before
+	// the ephemeral module files are removed.
+	clientModules, err := ubuntuClientModules(string(modVerOut))
+	if err != nil {
+		return err
+	}
 	for _, mod := range clientModules {
 		modArgs := []string{"-d", extractDir, mod}
 		prefix := mod + "."
@@ -296,6 +307,23 @@ func InstallLustreKmodOnUbuntu(ctx context.Context, enableLegacyPort bool, custo
 	klog.Infof("Ubuntu Lustre installation completed successfully.")
 
 	return nil
+}
+
+// ubuntuClientModules returns the ordered list of Lustre client kernel modules to load via modprobe
+// based on the extracted Lustre module version. For Lustre 2.16+, ptlrpc_gss is loaded right after
+// ksocklnd and before the lustre filesystem and client OBD modules so the RPC security policy is
+// registered in ptlrpc before higher-level client modules initialize.
+func ubuntuClientModules(verOut string) ([]string, error) {
+	ok, verStr, err := util.LustreSupportsGSSIAM(verOut)
+	if err != nil {
+		return nil, fmt.Errorf("parsing lustre module version %q: %w", verStr, err)
+	}
+	if ok {
+		klog.Infof("Lustre module version %s >= %s; including ptlrpc_gss module", verStr, util.MinGSSIAMVersion)
+		return []string{"ksocklnd", "ptlrpc_gss", "lustre", "mgc", "lmv", "lov", "mdc", "osc"}, nil
+	}
+	klog.Infof("Skipping ptlrpc_gss module: Lustre module version %s < %s", verStr, util.MinGSSIAMVersion)
+	return []string{"ksocklnd", "lustre", "mgc", "lmv", "lov", "mdc", "osc"}, nil
 }
 
 func parseLnetNetwork(networkStr string) []string {
