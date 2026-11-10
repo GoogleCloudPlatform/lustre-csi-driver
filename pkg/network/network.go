@@ -399,6 +399,19 @@ func (rm *RouteManager) CheckDisableMultiNIC(ctx context.Context, nodeID string,
 		return false, err
 	}
 
+	return DisableMultiNICForNode(node, nics, disableMultiNIC)
+}
+
+// DisableMultiNICForNode is CheckDisableMultiNIC for a Node object the caller has already
+// fetched, so callers that need several node fields can make a single API call.
+func DisableMultiNICForNode(node *v1.Node, nics []string, disableMultiNIC bool) (bool, error) {
+	nodeID := node.GetName()
+	if len(nics) <= 1 {
+		klog.V(4).Infof("Node only has 1 nic or less available. Not suitable for Multi-NIC feature. current nics: %v", nics)
+
+		return true, nil
+	}
+
 	val, found := node.GetLabels()[multiNICLabel]
 	labelName := multiNICLabel
 	if !found {
