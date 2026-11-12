@@ -29,6 +29,7 @@ import (
 	"syscall"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/pcc"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	"golang.org/x/sys/unix"
@@ -68,6 +69,7 @@ type nodeServer struct {
 	mounter     mount.Interface
 	volumeLocks *util.VolumeLocks
 	unmountExec unmountExecFunc
+	pccManager  *pcc.Manager
 }
 
 func newNodeServer(driver *LustreDriver, mounter mount.Interface) csi.NodeServer {
@@ -75,6 +77,7 @@ func newNodeServer(driver *LustreDriver, mounter mount.Interface) csi.NodeServer
 		driver:      driver,
 		mounter:     mounter,
 		volumeLocks: util.NewVolumeLocks(),
+		pccManager:  pcc.NewManager(),
 	}
 }
 
@@ -100,6 +103,11 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	}
 
 	vc, err := normalizeVolumeContext(req.GetVolumeContext())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	pccCfg, err := pcc.ParseConfig(vc)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -169,6 +177,11 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	}
 
 	if mounted {
+		if pccCfg.Enabled && s.pccManager != nil {
+			if err := s.pccManager.AttachVolume(ctx, volumeID, target, pccCfg); err != nil {
+				return nil, status.Errorf(codes.Internal, "Could not attach PCC for volume %s at %q on node %s: %v", volumeID, target, nodeName, err)
+			}
+		}
 		klog.V(4).Infof("NodeStageVolume successfully mounted device %v to path %s on node %s, mount already exists.", volumeID, target, nodeName)
 
 		return &csi.NodeStageVolumeResponse{}, nil
@@ -202,6 +215,16 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return nil, status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, target, nodeName, err)
 	}
 
+	if pccCfg.Enabled && s.pccManager != nil {
+		if err := s.pccManager.AttachVolume(ctx, volumeID, target, pccCfg); err != nil {
+			klog.Errorf("PCC attach failed for volume %s at %q on node %s: %v; unmounting", volumeID, target, nodeName, err)
+			if unmntErr := s.unmountPath(target); unmntErr != nil {
+				klog.Errorf("Unmount %q failed on node %s: %v", target, nodeName, unmntErr)
+			}
+			return nil, status.Errorf(codes.Internal, "Could not attach PCC for volume %s at %q on node %s: %v", volumeID, target, nodeName, err)
+		}
+	}
+
 	klog.V(4).Infof("NodeStageVolume successfully mounted volume %v to path %s on node %s", volumeID, target, nodeName)
 
 	return &csi.NodeStageVolumeResponse{}, nil
@@ -222,6 +245,10 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 		return nil, status.Errorf(codes.Aborted, util.VolumeOperationAlreadyExistsFmt, target)
 	}
 	defer s.volumeLocks.Release(target)
+
+	if s.pccManager != nil {
+		s.pccManager.DetachVolume(ctx, volumeID, target)
+	}
 
 	klog.V(5).InfoS("NodeUnstageVolume attempting to unmount", "staging target", target)
 	if err := s.unmountPath(target); err != nil {
