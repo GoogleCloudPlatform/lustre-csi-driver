@@ -109,6 +109,11 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	mountPoint := vc[normalize(keyMountPoint)]
 	iamAccessControlEnabled := vc[normalize(keyIAMAccessControlEnabled)]
 
+	subPath, err := extractSubPath(vc)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	if len(mountPoint) != 0 {
 		var err error
 		ip, fsname, err = parseMountPoint(mountPoint)
@@ -127,6 +132,11 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 
 	if strings.ToLower(iamAccessControlEnabled) == "true" {
 		klog.V(4).Infof("NodeStageVolume skipping for IAM-enabled volume %s", volumeID)
+		return &csi.NodeStageVolumeResponse{}, nil
+	}
+
+	if subPath != "" {
+		klog.V(4).Infof("NodeStageVolume skipping for subPath-enabled volume %s (subPath=%q)", volumeID, subPath)
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
@@ -263,6 +273,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	subPath, err := extractSubPath(vc)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	isIAM := strings.EqualFold(vc[normalize(keyIAMAccessControlEnabled)], "true")
 
 	if acquired := s.volumeLocks.TryAcquire(targetPath); !acquired {
@@ -307,8 +322,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if err := s.publishIAMVolume(ctx, volumeID, targetPath, targetMounted, vc, mountOptions, volCap); err != nil {
 			return nil, err
 		}
+	} else if subPath != "" {
+		if err := s.publishSubPathVolume(ctx, volumeID, targetPath, targetMounted, subPath, vc, mountOptions, volCap); err != nil {
+			return nil, err
+		}
 	} else if !targetMounted {
-		// For non-IAM volumes, perform a bind mount from staging path to target path.
+		// For non-IAM root volumes, perform a bind mount from staging path to target path.
 		klog.V(5).Infof("NodePublishVolume: bind mounting staging path %s to target path %s", stagingTargetPath, targetPath)
 		if err := s.mounter.MountSensitiveWithoutSystemd(stagingTargetPath, targetPath, "lustre", mountOptions, nil); err != nil {
 			return nil, status.Errorf(codes.Internal, "Legacy bind mount failed: %v", err)
@@ -325,6 +344,129 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+// publishSubPathVolume manages the global fileset mount, reference counting,
+// and bind mounting for non-IAM subdirectory volumes.
+func (s *nodeServer) publishSubPathVolume(ctx context.Context, volumeID, targetPath string, targetMounted bool, subPath string, vc map[string]string, mountOptions []string, volCap *csi.VolumeCapability) error {
+	podUID := vc[normalize(keyPodUID)]
+	if len(podUID) == 0 {
+		if extractedUID, err := getPodUIDFromTargetPath(targetPath); err == nil {
+			podUID = extractedUID
+		}
+	}
+	if len(podUID) == 0 {
+		return status.Errorf(codes.InvalidArgument, "Pod UID not provided for %s", volumeID)
+	}
+
+	key := computeGlobalKey(volumeID, "", subPath)
+	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
+
+	// Acquire lock on the global key to serialize mounting for the same fileset.
+	if acquired := s.volumeLocks.TryAcquire(key); !acquired {
+		return status.Errorf(codes.Aborted, "Operation exists for key %s", key)
+	}
+	defer s.volumeLocks.Release(key)
+
+	klog.V(5).Infof("publishSubPathVolume: subPath %q (hash key %q)", subPath, key)
+
+	if err := makeGlobalDirs(key); err != nil {
+		return status.Errorf(codes.Internal, "Failed to make global directories for key %s: %v", key, err)
+	}
+
+	// Mount the global fileset path if not already mounted.
+	globalMounted, err := s.isMounted(globalMountPath)
+	if err != nil {
+		return err
+	}
+
+	if !globalMounted {
+		if err := s.mountGlobalSubPath(ctx, volumeID, globalMountPath, key, subPath, vc, volCap); err != nil {
+			return err
+		}
+	}
+
+	// Record pod reference per volume to safely manage unmounting during teardown.
+	if err := addPodReference(key, podUID, volumeID); err != nil {
+		return status.Errorf(codes.Internal, "Failed to add pod reference: %v", err)
+	}
+
+	if !targetMounted {
+		klog.Infof("Bind mounting %s to %s", globalMountPath, targetPath)
+		if err := s.mounter.MountSensitiveWithoutSystemd(globalMountPath, targetPath, "lustre", mountOptions, nil); err != nil {
+			// Clean up the pod reference if the bind mount fails to prevent stale references.
+			if rmErr := removePodReference(key, podUID); rmErr != nil {
+				klog.Errorf("Failed to clean up pod reference for pod %s, volume %s: %v", podUID, volumeID, rmErr)
+			}
+			if unmntErr := s.unmountPath(targetPath); unmntErr != nil {
+				klog.Errorf("Failed to clean up target mount point %q: %v", targetPath, unmntErr)
+			}
+			return status.Errorf(codes.Internal, "Bind mount failed for volume %q to target path %q: %v", volumeID, targetPath, err)
+		}
+	}
+
+	return nil
+}
+
+// mountGlobalSubPath parses target storage endpoints, configures multi-NIC routing,
+// and mounts the Lustre fileset subdirectory to the shared global mount path.
+func (s *nodeServer) mountGlobalSubPath(_ context.Context, volumeID, globalMountPath, key, subPath string, vc map[string]string, volCap *csi.VolumeCapability) error {
+	ip := vc[normalize(keyInstanceIP)]
+	fsname := vc[normalize(keyFilesystem)]
+	mountPoint := vc[normalize(keyMountPoint)]
+
+	if len(mountPoint) != 0 {
+		var err error
+		ip, fsname, err = parseMountPoint(mountPoint)
+		if err != nil {
+			return status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
+
+	if len(ip) == 0 {
+		return status.Error(codes.InvalidArgument, "Lustre instance IP is not provided")
+	}
+
+	if len(fsname) == 0 {
+		return status.Error(codes.InvalidArgument, "Lustre filesystem name is not provided")
+	}
+
+	nodeName := s.driver.config.NodeID
+
+	// Configure multi-NIC routing for subPath volumes since NodeStageVolume is bypassed.
+	if err := s.setUpMultiNIC(volumeID, ip); err != nil {
+		return err
+	}
+
+	source := buildLustreSource(ip, fsname, subPath)
+	subPathMountOptions := []string{}
+
+	if m := volCap.GetMount(); m != nil {
+		for _, f := range m.GetMountFlags() {
+			if !hasOption(subPathMountOptions, f) {
+				subPathMountOptions = append(subPathMountOptions, f)
+			}
+		}
+	}
+
+	klog.V(5).Infof("mountGlobalSubPath mounting volume %s (%s) to path %s on node %s with mountOptions %v", volumeID, source, globalMountPath, nodeName, subPathMountOptions)
+	if err := s.mounter.MountSensitiveWithoutSystemd(source, globalMountPath, "lustre", subPathMountOptions, nil); err != nil {
+		klog.Errorf("Mount %q failed on node %s for subPath %s, cleaning up", globalMountPath, nodeName, subPath)
+		if unmntErr := s.unmountPath(globalMountPath); unmntErr != nil {
+			klog.Errorf("Unmount %q failed on node %s for subPath %s: %v", globalMountPath, nodeName, subPath, unmntErr)
+		}
+		_ = os.RemoveAll(filepath.Join(GlobalMountRoot, key))
+
+		if isNoSuchFileOrDirErr(err) {
+			return status.Errorf(codes.FailedPrecondition, "failed to mount Lustre fileset %q: subPath %q does not exist on filesystem %q: %v", source, subPath, fsname, err)
+		}
+
+		return status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, globalMountPath, nodeName, err)
+	}
+
+	klog.V(4).Infof("mountGlobalSubPath successfully mounted volume %v (%s) to path %s on node %s", volumeID, source, globalMountPath, nodeName)
+
+	return nil
 }
 
 // publishIAMVolume manages the global mount, token lifecycle, reference counting,
@@ -345,8 +487,13 @@ func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath 
 		return status.Errorf(codes.InvalidArgument, "Service account name not provided for %s", volumeID)
 	}
 
+	subPath, err := extractSubPath(vc)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	principal := fmt.Sprintf("%s/%s", namespace, saName)
-	key := computeHash(volumeID + principal)
+	key := computeGlobalKey(volumeID, principal, subPath)
 	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
 
 	// Acquire lock on the global key to serialize mounting for the same IAM role.
@@ -423,6 +570,11 @@ func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPa
 	fsname := vc[normalize(keyFilesystem)]
 	mountPoint := vc[normalize(keyMountPoint)]
 
+	subPath, err := extractSubPath(vc)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	if len(mountPoint) != 0 {
 		var err error
 		ip, fsname, err = parseMountPoint(mountPoint)
@@ -447,7 +599,7 @@ func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPa
 	}
 
 	// Perform secure mount with Workload Identity user credentials.
-	source := fmt.Sprintf("%s@tcp:/%s", ip, fsname)
+	source := buildLustreSource(ip, fsname, subPath)
 	userOpt := fmt.Sprintf("user_principal=gke-wi://%s+%s", principal, key)
 	iamMountOptions := []string{userOpt}
 
@@ -464,6 +616,10 @@ func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPa
 		klog.Errorf("Mount %q failed on node %s for principal %s, cleaning up", globalMountPath, nodeName, principal)
 		if unmntErr := s.unmountPath(globalMountPath); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s for principal %s: %v", globalMountPath, nodeName, principal, unmntErr)
+		}
+
+		if subPath != "" && isNoSuchFileOrDirErr(err) {
+			return status.Errorf(codes.FailedPrecondition, "failed to mount Lustre fileset %q: subPath %q does not exist on filesystem %q: %v", source, subPath, fsname, err)
 		}
 
 		return status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, globalMountPath, nodeName, err)
@@ -923,4 +1079,82 @@ func (s *nodeServer) cleanUpIAMReferenceForKey(key, refPath string) error {
 	}
 
 	return nil
+}
+
+// extractSubPath extracts and validates the optional subdirectory path from normalized volumeContext.
+func extractSubPath(vc map[string]string) (string, error) {
+	subPathVal, hasSubPath := vc[normalize(keySubPath)]
+	subDirVal, hasSubDir := vc[normalize(keySubDir)]
+
+	if hasSubPath && hasSubDir && subPathVal != subDirVal {
+		return "", fmt.Errorf("conflicting subPath (%q) and subDir (%q) attributes provided", subPathVal, subDirVal)
+	}
+
+	if !hasSubPath && !hasSubDir {
+		return "", nil
+	}
+
+	raw := subPathVal
+	if !hasSubPath {
+		raw = subDirVal
+	}
+
+	trimmed := strings.Trim(strings.TrimSpace(raw), "/")
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid subPath %q: subPath cannot be empty or root '/'", raw)
+	}
+
+	for _, seg := range strings.Split(trimmed, "/") {
+		if seg == "" {
+			return "", fmt.Errorf("invalid subPath %q: must not contain empty path segments", raw)
+		}
+		if seg == "." || seg == ".." {
+			return "", fmt.Errorf("invalid subPath %q: relative path segments '.' and '..' are not allowed", raw)
+		}
+	}
+
+	return trimmed, nil
+}
+
+// buildLustreSource constructs the Lustre mount source string (<ip>@tcp:/<fsname>[/<subPath>]).
+func buildLustreSource(ip, fsname, subPath string) string {
+	if subPath == "" {
+		return fmt.Sprintf("%s@tcp:/%s", ip, fsname)
+	}
+	return fmt.Sprintf("%s@tcp:/%s/%s", ip, fsname, subPath)
+}
+
+// stripVolumeIDSuffix removes any optional ":<suffix>" from a volumeHandle so PVs
+// targeting the same Lustre instance and subPath share the same global mount key.
+func stripVolumeIDSuffix(volumeID string) string {
+	if colonIdx := strings.Index(volumeID, ":"); colonIdx != -1 {
+		return volumeID[:colonIdx]
+	}
+	return volumeID
+}
+
+// computeGlobalKey derives the deterministic hash key for /var/lib/lustre/mounts/<key>.
+//   - IAM root mount:        hash(baseVolumeID + principal)
+//   - Non-IAM subPath mount: hash(baseVolumeID + ":" + subPath)
+//   - IAM subPath mount:     hash(baseVolumeID + ":" + principal + ":" + subPath)
+func computeGlobalKey(volumeID, principal, subPath string) string {
+	baseVolumeID := stripVolumeIDSuffix(volumeID)
+	if subPath == "" {
+		return computeHash(baseVolumeID + principal)
+	}
+	if principal == "" {
+		return computeHash(baseVolumeID + ":" + subPath)
+	}
+	return computeHash(baseVolumeID + ":" + principal + ":" + subPath)
+}
+
+// isNoSuchFileOrDirErr returns true if a mount error indicates the subdirectory does not exist (ENOENT).
+func isNoSuchFileOrDirErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no such file or directory")
 }
