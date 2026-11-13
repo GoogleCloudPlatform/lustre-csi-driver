@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
 
@@ -31,6 +32,8 @@ const (
 	Tib = 1024 * Gib
 	Pib = 1024 * Tib
 )
+
+var MinGSSIAMVersion = utilversion.MustParseGeneric("2.16.0")
 
 // ConvertLabelsStringToMap converts the labels from string to map
 // example: "key1=value1,key2=value2" gets converted into {"key1": "value1", "key2": "value2"}
@@ -171,4 +174,15 @@ func GetRegionFromZone(location string) (string, error) {
 
 func BytesToGib(bytes int64) int64 {
 	return bytes / Gib
+}
+
+// LustreSupportsGSSIAM parses Lustre version output (e.g., from `lctl get_param -n version`
+// or `modinfo -F version lustre`) and reports whether the Lustre client is >= 2.16.
+func LustreSupportsGSSIAM(verOut string) (bool, string, error) {
+	verStr := strings.TrimPrefix(strings.TrimSpace(verOut), "version=")
+	v, err := utilversion.ParseGeneric(verStr)
+	if err != nil {
+		return false, verStr, err
+	}
+	return !v.LessThan(MinGSSIAMVersion), verStr, nil
 }

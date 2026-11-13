@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	utilversion "k8s.io/apimachinery/pkg/util/version"
+	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
 	"k8s.io/klog/v2"
 )
 
@@ -43,8 +43,6 @@ const (
 SUBSYSTEM=="lustre", ACTION=="change", ENV{PARAM}=="?*", RUN+="/etc/udev/lustre-host-proxy /usr/sbin/lctl set_param $env{PARAM}=$env{SETTING}"
 `
 )
-
-var minGSSIAMVersion = utilversion.MustParseGeneric("2.16.0")
 
 // SetupHostArtifacts deploys the static Go proxy binary and the udev rules to the host filesystem via the /host_etc_udev mount.
 func SetupHostArtifacts(lctlTimeout time.Duration) error {
@@ -102,17 +100,6 @@ func SetupHostArtifacts(lctlTimeout time.Duration) error {
 	return nil
 }
 
-// lustreSupportsGSSIAM parses `lctl get_param -n version` output and reports
-// whether the running Lustre client is >= 2.16.
-func lustreSupportsGSSIAM(verOut string) (bool, string, error) {
-	verStr := strings.TrimPrefix(strings.TrimSpace(verOut), "version=")
-	v, err := utilversion.ParseGeneric(verStr)
-	if err != nil {
-		return false, verStr, err
-	}
-	return !v.LessThan(minGSSIAMVersion), verStr, nil
-}
-
 // configureGSSIAMUpcallTunable checks the active Lustre version and, if >= 2.16,
 // sets the Lustre kernel tunable sptlrpc.gssiam.gssiam_upcall to point to the
 // host proxy symlink at /etc/udev/l_gssiam_upcall.
@@ -125,12 +112,12 @@ func configureGSSIAMUpcallTunable(lctlTimeout time.Duration) error {
 		return fmt.Errorf("querying lustre version: %w (output: %s)", err, strings.TrimSpace(string(verOut)))
 	}
 
-	ok, verStr, err := lustreSupportsGSSIAM(string(verOut))
+	ok, verStr, err := util.LustreSupportsGSSIAM(string(verOut))
 	if err != nil {
 		return fmt.Errorf("parsing lustre version %q: %w", verStr, err)
 	}
 	if !ok {
-		klog.Infof("Skipping sptlrpc.gssiam.gssiam_upcall setup: Lustre %s < %s", verStr, minGSSIAMVersion)
+		klog.Infof("Skipping sptlrpc.gssiam.gssiam_upcall setup: Lustre %s < %s", verStr, util.MinGSSIAMVersion)
 		return nil
 	}
 
