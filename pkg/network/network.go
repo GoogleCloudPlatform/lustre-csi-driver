@@ -27,26 +27,22 @@ import (
 	"strconv"
 	"strings"
 
-	gcemetadata "cloud.google.com/go/compute/metadata"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/k8sclient"
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
 
 const (
-	multiNICLabel         = "lustre.csi.storage.gke.io/multi-nic"
-	multiNICLabelAlias    = "lustre.csi.storage.gke.io/multi-rail"
-	RDMANodeLabel         = "lustre.csi.storage.gke.io/rdma"
-	instanceTypeNodeLabel = "node.kubernetes.io/instance-type"
-	betaInstanceTypeLabel = "beta.kubernetes.io/instance-type"
+	multiNICLabel      = "lustre.csi.storage.gke.io/multi-nic"
+	multiNICLabelAlias = "lustre.csi.storage.gke.io/multi-rail"
+	RDMANodeLabel      = "lustre.csi.storage.gke.io/rdma"
 	// max user specified table ID is 252. 253, 254, and 255 are reserved (default, main, local).
 	maxTableID = 252
 )
-
-var supportedRDMAMachineFamily = []string{"a5x"}
 
 // netlinker is an interface to abstract the netlink package functions used by this package.
 // This enables mocking/faking in tests.
@@ -83,7 +79,48 @@ type RouteManager struct {
 
 // realNetlink is the real implementation of netlinker,
 // which calls the actual vishvananda/netlink functions.
-type realNetlink struct{}
+type realNetlink struct {
+	hasInfiniband func(name string) bool
+	linkListFn    func() ([]netlink.Link, error)
+	driverNameFn  func(name string) (string, error)
+}
+
+func defaultHasInfiniband(ifName string) bool {
+	_, err := os.Stat(fmt.Sprintf("/sys/class/net/%s/device/infiniband", ifName))
+	return err == nil
+}
+
+func (r *realNetlink) hasIB(name string) bool {
+	if r.hasInfiniband != nil {
+		return r.hasInfiniband(name)
+	}
+	return defaultHasInfiniband(name)
+}
+
+func (r *realNetlink) getLinks() ([]netlink.Link, error) {
+	if r.linkListFn != nil {
+		return r.linkListFn()
+	}
+	return netlink.LinkList()
+}
+
+func (r *realNetlink) getDriverName(eth *ethtool.Ethtool, name string) (string, error) {
+	if r.driverNameFn != nil {
+		return r.driverNameFn(name)
+	}
+	var driver string
+	var driverErr error
+	if eth != nil {
+		driver, driverErr = eth.DriverName(name)
+	}
+	if eth == nil || driverErr != nil {
+		driver = readDriverNameFromSysfs(name)
+		if driver == "" {
+			return "", driverErr
+		}
+	}
+	return driver, nil
+}
 
 type k8sNodeClient struct{}
 
@@ -112,7 +149,7 @@ func (r *realNetlink) RouteListFiltered(family int, filter *netlink.Route, mask 
 }
 
 func (r *realNetlink) GetStandardNICs() ([]string, error) {
-	links, err := netlink.LinkList()
+	links, err := r.getLinks()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list network interfaces: %w", err)
 	}
@@ -126,21 +163,19 @@ func (r *realNetlink) GetStandardNICs() ([]string, error) {
 	var ethNICs []string
 	for _, link := range links {
 		name := link.Attrs().Name
-		driver, err := eth.DriverName(name)
+		driver, err := r.getDriverName(eth, name)
 		if err != nil {
 			klog.Warningf("Failed to get driver for interface %s: %v", name, err)
 
 			continue
 		}
 
-		if driver == "gve" || driver == "virtio_net" || driver == "idpf" {
+		// We only care about standard NICs (gVNIC or VirtIO-Net) for Lustre traffic.
+		// RDMA NICs (like irdma, mlx5_core) should be excluded as they are handled separately
+		// and might have names like ethN or gpu0rdma0.
+		if driver == "gve" || driver == "virtio_net" || (driver == "idpf" && !r.hasIB(name)) {
 			klog.V(4).Infof("Found valid NIC %s with driver %s", name, driver)
 			ethNICs = append(ethNICs, name)
-		} else {
-			// We only care about standard NICs (gVNIC or VirtIO-Net) for Lustre traffic.
-			// RDMA NICs (like irdma, mlx5_core) should be excluded as they are handled separately
-			// and might have names like ethN or gpu0rdma0.
-			klog.Infof("Skipping interface %s with driver %s", name, driver)
 		}
 	}
 
@@ -158,7 +193,7 @@ func readDriverNameFromSysfs(ifName string) string {
 }
 
 func (r *realNetlink) GetIRDMANICs() ([]string, error) {
-	links, err := netlink.LinkList()
+	links, err := r.getLinks()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list network interfaces: %w", err)
 	}
@@ -172,18 +207,18 @@ func (r *realNetlink) GetIRDMANICs() ([]string, error) {
 	var irdmaNICs []string
 	for _, link := range links {
 		name := link.Attrs().Name
-		driver, err := eth.DriverName(name)
+		driver, err := r.getDriverName(eth, name)
 		if err != nil {
-			driver = readDriverNameFromSysfs(name)
+			continue
 		}
 
-		if driver == "irdma" || driver == "idpf" {
-			klog.V(4).Infof("Found valid irdma/idpf NIC %s with driver %s", name, driver)
+		if driver == "idpf" && r.hasIB(name) {
+			klog.V(4).Infof("Found valid idpf RDMA NIC %s with driver %s", name, driver)
 			irdmaNICs = append(irdmaNICs, name)
 		}
 	}
 
-	klog.V(4).Infof("Found %d irdma/idpf NICs: %v", len(irdmaNICs), irdmaNICs)
+	klog.V(4).Infof("Found %d idpf RDMA NICs: %v", len(irdmaNICs), irdmaNICs)
 	return irdmaNICs, nil
 }
 
@@ -541,7 +576,8 @@ func (rm *RouteManager) writeSysctl(path, val string) error {
 	return os.WriteFile(path, []byte(val), 0o644)
 }
 
-// IsRDMASupportedNode checks if the node has the RDMA node label enabled and has a RDMA supported machine type (A5X).
+// IsRDMASupportedNode checks if the node has the RDMA node label enabled and verifies that
+// irdma/idpf RDMA network interfaces exist on the node.
 func (rm *RouteManager) IsRDMASupportedNode(ctx context.Context, nodeID string) (bool, error) {
 	node, err := rm.nc.GetNodeWithRetry(ctx, nodeID)
 	if err != nil {
@@ -557,93 +593,49 @@ func (rm *RouteManager) IsRDMASupportedNode(ctx context.Context, nodeID string) 
 		return false, nil
 	}
 
-	machineType := labels[instanceTypeNodeLabel]
-	if machineType == "" {
-		machineType = labels[betaInstanceTypeLabel]
+	irdmaNICs, err := rm.nl.GetIRDMANICs()
+	if err != nil {
+		return false, fmt.Errorf("failed to discover irdma interfaces for node %s: %w", nodeID, err)
+	}
+	if len(irdmaNICs) == 0 {
+		return false, fmt.Errorf("node %s has label %s=true, but no iRDMA interfaces were detected", nodeID, RDMANodeLabel)
 	}
 
-	if machineType == "" {
-		// Fallback to GCE metadata if label not found on node object
-		metaType, err := gcemetadata.GetWithContext(ctx, "instance/machine-type")
-		if err == nil {
-			machineType = metaType
-		} else {
-			klog.V(4).Infof("Failed to get machine-type from instance metadata: %v", err)
-		}
-	}
-
-	parts := strings.Split(strings.TrimSpace(machineType), "/")
-	machine := strings.ToLower(parts[len(parts)-1])
-	supported := false
-	for _, prefix := range supportedRDMAMachineFamily {
-		if strings.HasPrefix(machine, prefix) {
-			supported = true
-			break
-		}
-	}
-	if !supported {
-		klog.V(4).Infof("Node %s machine type %q does not match supported RDMA machine prefixes %v", nodeID, machine, supportedRDMAMachineFamily)
-		return false, nil
-	}
-
-	klog.Infof("Node %s matched RDMA conditions (RDMA label: %s=%s, machine-type: %s)", nodeID, RDMANodeLabel, rdmaVal, machine)
+	klog.Infof("Node %s matched RDMA conditions (RDMA label: %s=%s, discovered %d irdma interfaces: %v)",
+		nodeID, RDMANodeLabel, rdmaVal, len(irdmaNICs), irdmaNICs)
 	return true, nil
 }
 
 // GetStandardAndIRDMANICs discovers standard NICs (e.g. eth0, eth1) and irdma/idpf RDMA NICs (e.g. rdma0..rdma7).
 func (rm *RouteManager) GetStandardAndIRDMANICs() ([]string, []string, error) {
-	// Discover irdma/idpf NICs (e.g. rdma0..rdma7)
-	rawIRDMANICs, err := rm.nl.GetIRDMANICs()
+	// Discover irdma/idpf RDMA NICs (e.g. rdma0..rdma7)
+	irdmaNICs, err := rm.nl.GetIRDMANICs()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get irdma NICs: %w", err)
 	}
-	sort.Strings(rawIRDMANICs)
+	sort.Strings(irdmaNICs)
 
+	var stdNICs []string
 	if rm.mc != nil {
 		// When metadata client is available, rm.GetStandardNICs() validates against the primary VPC
 		// so all standard NICs in the primary VPC (e.g. eth0, eth1) are returned.
-		stdNICs, err := rm.GetStandardNICs()
+		stdNICs, err = rm.GetStandardNICs()
 		if err != nil {
-			klog.Warningf("Failed to get validated standard NICs: %v", err)
+			return nil, nil, fmt.Errorf("failed to get validated standard NICs: %w", err)
 		}
-		stdSet := make(map[string]bool, len(stdNICs))
-		for _, nic := range stdNICs {
-			stdSet[nic] = true
+	} else {
+		// Fallback when metadata client is nil: query raw standard NICs directly
+		stdNICs, err = rm.nl.GetStandardNICs()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get standard NICs: %w", err)
 		}
-		irdmaNICs := make([]string, 0, len(rawIRDMANICs))
-		for _, nic := range rawIRDMANICs {
-			if !stdSet[nic] {
-				irdmaNICs = append(irdmaNICs, nic)
-			}
-		}
-		klog.Infof("Discovered network devices for symmetric routing (standard: %v, irdma/idpf: %v)",
-			stdNICs, irdmaNICs)
-
-		return stdNICs, irdmaNICs, nil
-	}
-
-	// Fallback when metadata client is nil: exclude irdma/idpf NICs from raw standard NICs
-	rawStdNICs, err := rm.nl.GetStandardNICs()
-	if err != nil {
-		klog.Warningf("Failed to get standard NICs: %v", err)
-	}
-	sort.Strings(rawStdNICs)
-
-	irdmaSet := make(map[string]bool, len(rawIRDMANICs))
-	for _, nic := range rawIRDMANICs {
-		irdmaSet[nic] = true
-	}
-	stdNICs := make([]string, 0, len(rawStdNICs))
-	for _, nic := range rawStdNICs {
-		if !irdmaSet[nic] {
-			stdNICs = append(stdNICs, nic)
-		}
+		sort.Strings(stdNICs)
 	}
 
 	klog.Infof("Discovered network devices for symmetric routing (standard: %v, irdma/idpf: %v)",
-		stdNICs, rawIRDMANICs)
+		stdNICs, irdmaNICs)
 
-	return stdNICs, rawIRDMANICs, nil
+	return stdNICs, irdmaNICs, nil
 }
 
 // ConfigureRDMASymmetricRouting configures symmetric policy routing and loose reverse-path filtering
@@ -653,18 +645,13 @@ func (rm *RouteManager) ConfigureRDMASymmetricRouting() error {
 	if err != nil {
 		return fmt.Errorf("failed to discover network devices: %w", err)
 	}
-	devices := append(gvnics, irdmaNICs...)
-	if len(devices) == 0 {
+	allDevices := append(gvnics, irdmaNICs...)
+	if len(allDevices) == 0 {
 		klog.Warning("No network devices found for RDMA symmetric routing")
 		return nil
 	}
 
-	irdmaDev := make(map[string]bool, len(irdmaNICs))
-	for _, nic := range irdmaNICs {
-		irdmaDev[nic] = true
-	}
-
-	// 1. Global rp_filter settings
+	// 1. Global and per-interface rp_filter settings (loose mode = 2)
 	globalRPFilters := []string{
 		"/proc/sys/net/ipv4/conf/all/rp_filter",
 		"/proc/sys/net/ipv4/conf/default/rp_filter",
@@ -674,108 +661,134 @@ func (rm *RouteManager) ConfigureRDMASymmetricRouting() error {
 			return fmt.Errorf("failed to set rp_filter on %s: %w", path, err)
 		}
 	}
+	for _, dev := range allDevices {
+		devRPFilter := fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/rp_filter", dev)
+		if err := rm.writeSysctl(devRPFilter, "2\n"); err != nil {
+			return fmt.Errorf("failed to set rp_filter on interface %s: %w", dev, err)
+		}
+	}
 
-	idx := 1
-	for _, dev := range devices {
+	if len(irdmaNICs) == 0 {
+		klog.Infof("No secondary RDMA interfaces found for dedicated routing tables")
+		return nil
+	}
+
+	// 2. Configure dedicated routing tables and policy rules for secondary RDMA NICs
+	var errs []error
+	for i, dev := range irdmaNICs {
 		link, err := rm.nl.LinkByName(dev)
 		if err != nil {
-			klog.V(4).Infof("Interface %s not found on host, skipping", dev)
+			errs = append(errs, fmt.Errorf("failed to get link for %s: %w", dev, err))
 			continue
 		}
 
-		table := 100 + idx
 		addrs, err := rm.nl.AddrList(link, netlink.FAMILY_V4)
-		if err != nil || len(addrs) == 0 {
-			klog.Warningf("Interface %s has no IPv4 address, skipping", dev)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to list IPv4 addresses for %s: %w", dev, err))
+			continue
+		}
+		if len(addrs) == 0 {
+			errs = append(errs, fmt.Errorf("interface %s has no IPv4 address yet", dev))
+			continue
+		}
+
+		if addrs[0].IPNet == nil || addrs[0].IP == nil {
+			errs = append(errs, fmt.Errorf("interface %s has nil IPNet or IP", dev))
 			continue
 		}
 
 		ipAddr := addrs[0].IP.To4()
 		if ipAddr == nil {
-			klog.Warningf("Interface %s has invalid IPv4 address %v, skipping", dev, addrs[0].IP)
+			errs = append(errs, fmt.Errorf("interface %s has invalid IPv4 address %v", dev, addrs[0].IP))
 			continue
 		}
 
-		// 2. Per-device routes in dedicated table (ONLY for IRDMA NICs, not gVNICs)
-		if irdmaDev[dev] {
-			routes, err := rm.nl.RouteList(link, netlink.FAMILY_V4)
-			if err != nil {
-				return fmt.Errorf("failed to list routes for %s: %w", dev, err)
-			}
+		table, err := rm.FindNextFreeTableID(101, ipAddr)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to find free routing table for %s: %w", dev, err))
+			continue
+		}
 
-			var gateway net.IP
-			var subnetNet *net.IPNet
-			for _, r := range routes {
-				if r.Gw != nil && gateway == nil {
-					gateway = r.Gw
-				}
-				if r.Dst != nil && subnetNet == nil {
+		// Per-device routes in dedicated table for this RDMA NIC
+		routes, err := rm.nl.RouteList(link, netlink.FAMILY_V4)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to list routes for %s: %w", dev, err))
+			continue
+		}
+
+		var gateway net.IP
+		var subnetNet *net.IPNet
+		for _, r := range routes {
+			if r.Gw != nil && gateway == nil {
+				gateway = r.Gw
+			}
+			if (r.Table == unix.RT_TABLE_MAIN || r.Table == 0) && r.Dst != nil && r.Dst.Mask != nil && subnetNet == nil {
+				if r.Dst.Contains(ipAddr) {
 					if ones, bits := r.Dst.Mask.Size(); ones > 0 && ones < bits {
 						subnetNet = r.Dst
 					}
 				}
 			}
-			if gateway == nil {
-				return fmt.Errorf("could not find gateway for %s", dev)
-			}
-			if subnetNet == nil {
-				mask := addrs[0].Mask
-				subnet := ipAddr.Mask(mask)
-				subnetNet = &net.IPNet{IP: subnet, Mask: mask}
-			}
-
-			// Route local subnet via gateway onlink (prevents GCP ARP FAILED)
-			subnetRoute := &netlink.Route{
-				LinkIndex: link.Attrs().Index,
-				Dst:       subnetNet,
-				Gw:        gateway,
-				Table:     table,
-				Flags:     int(netlink.FLAG_ONLINK),
-			}
-			if err := rm.nl.RouteReplace(subnetRoute); err != nil {
-				return fmt.Errorf("failed to replace subnet route for %s in table %d: %w", dev, table, err)
-			}
-
-			// Default route out of this NIC's gateway for this table
-			defaultRoute := &netlink.Route{
-				LinkIndex: link.Attrs().Index,
-				Dst:       nil,
-				Gw:        gateway,
-				Table:     table,
-				Flags:     int(netlink.FLAG_ONLINK),
-			}
-			if err := rm.nl.RouteReplace(defaultRoute); err != nil {
-				return fmt.Errorf("failed to replace default route for %s in table %d: %w", dev, table, err)
-			}
+		}
+		if gateway == nil {
+			errs = append(errs, fmt.Errorf("could not find gateway for %s", dev))
+			continue
+		}
+		if subnetNet == nil {
+			mask := addrs[0].Mask
+			subnet := ipAddr.Mask(mask)
+			subnetNet = &net.IPNet{IP: subnet, Mask: mask}
 		}
 
-		// 3. Policy routing rules (deleting first prevents duplicate accumulation in FIB)
+		// Route local subnet via gateway onlink (prevents GCP ARP FAILED)
+		subnetRoute := &netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       subnetNet,
+			Gw:        gateway,
+			Src:       ipAddr,
+			Table:     table,
+			Flags:     int(netlink.FLAG_ONLINK),
+		}
+		if err := rm.nl.RouteReplace(subnetRoute); err != nil {
+			errs = append(errs, fmt.Errorf("failed to replace subnet route for %s in table %d: %w", dev, table, err))
+			continue
+		}
+
+		// Default route out of this NIC's gateway for this table
+		defaultRoute := &netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       nil,
+			Gw:        gateway,
+			Src:       ipAddr,
+			Table:     table,
+			Flags:     int(netlink.FLAG_ONLINK),
+		}
+		if err := rm.nl.RouteReplace(defaultRoute); err != nil {
+			errs = append(errs, fmt.Errorf("failed to replace default route for %s in table %d: %w", dev, table, err))
+			continue
+		}
+
+		// 3. Policy routing rules
 		srcRule := netlink.NewRule()
 		srcRule.Src = &net.IPNet{IP: ipAddr, Mask: net.CIDRMask(32, 32)}
 		srcRule.Table = table
-		srcRule.Priority = 1000 + idx
+		srcRule.Priority = 1001 + i
 		if err := rm.ensureRule(srcRule); err != nil {
-			return fmt.Errorf("failed to configure src rule for %s (table %d): %w", dev, table, err)
+			errs = append(errs, fmt.Errorf("failed to configure src rule for %s (table %d): %w", dev, table, err))
+			continue
 		}
 
 		oifRule := netlink.NewRule()
 		oifRule.OifName = dev
 		oifRule.Table = table
-		oifRule.Priority = 2000 + idx
+		oifRule.Priority = 2001 + i
 		if err := rm.ensureRule(oifRule); err != nil {
-			return fmt.Errorf("failed to configure oif rule for %s (table %d): %w", dev, table, err)
+			errs = append(errs, fmt.Errorf("failed to configure oif rule for %s (table %d): %w", dev, table, err))
+			continue
 		}
-
-		// 4. Interface-specific RPF fix
-		devRPFilter := fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/rp_filter", dev)
-		if err := rm.writeSysctl(devRPFilter, "2\n"); err != nil {
-			return fmt.Errorf("failed to set rp_filter on interface %s: %w", dev, err)
-		}
-
-		idx++
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (rm *RouteManager) ensureRule(rule *netlink.Rule) error {
@@ -794,19 +807,13 @@ func (rm *RouteManager) ensureRule(rule *netlink.Rule) error {
 				klog.V(4).Infof("Policy rule for table %d oif %s already exists, skipping addition", rule.Table, rule.OifName)
 				return nil
 			}
+			// Stale rule exists at this Table and Priority with a different selector; delete it.
+			staleRule := r
+			if err := rm.nl.RuleDel(&staleRule); err != nil && !os.IsNotExist(err) {
+				klog.Warningf("Failed to delete stale policy rule for table %d priority %d: %v", r.Table, r.Priority, err)
+			}
 		}
 	}
-
-	// Delete existing rule for this table and selector to prevent duplicate accumulation
-	delRule := netlink.NewRule()
-	delRule.Table = rule.Table
-	if rule.Src != nil {
-		delRule.Src = rule.Src
-	}
-	if rule.OifName != "" {
-		delRule.OifName = rule.OifName
-	}
-	_ = rm.nl.RuleDel(delRule)
 
 	if err := rm.nl.RuleAdd(rule); err != nil {
 		if os.IsExist(err) {

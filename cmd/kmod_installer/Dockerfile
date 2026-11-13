@@ -31,7 +31,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     gpg \
-    iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor --batch --yes -o /usr/share/keyrings/google-cloud.gpg && \

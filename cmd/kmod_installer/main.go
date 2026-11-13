@@ -106,13 +106,14 @@ func main() {
 
 	isRDMASupportedNode, err := networkIntf.IsRDMASupportedNode(ctx, *nodeID)
 	if err != nil {
-		klog.Warningf("Failed to check if node %s is A5x RDMA: %v", *nodeID, err)
-	} else if isRDMASupportedNode {
+		klog.Fatalf("Failed to check if node %s is RDMA supported: %v", *nodeID, err)
+	}
+	if isRDMASupportedNode {
 		klog.Infof("Node %s is an RDMA supported node, configuring symmetric routing...", *nodeID)
 		if err := networkIntf.ConfigureRDMASymmetricRouting(); err != nil {
-			klog.Fatalf("Failed to configure A5x symmetric routing: %v", err)
+			klog.Fatalf("Failed to configure RDMA symmetric routing: %v", err)
 		}
-		klog.Infof("Successfully configured A5x symmetric routing.")
+		klog.Infof("Successfully configured RDMA symmetric routing.")
 	}
 
 	if isInstalled {
