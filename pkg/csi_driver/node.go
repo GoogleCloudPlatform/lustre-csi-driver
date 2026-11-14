@@ -355,18 +355,25 @@ func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath 
 	}
 	defer s.volumeLocks.Release(key)
 
+	// On a failed initial publish, remove GlobalMountRoot/<key> (including the token
+	// and global mount) if no pod references it. Otherwise it leaks, because
+	// NodeUnpublishVolume only discovers keys via refs/<podUID>.
+	if !targetMounted {
+		defer func() {
+			if retErr == nil {
+				return
+			}
+			if err := s.cleanUpUnreferencedIAMKey(key); err != nil {
+				klog.Errorf("publishIAMVolume: failed to clean up unreferenced key %s after error %v: %v", key, retErr, err)
+			}
+		}()
+	}
+
 	klog.V(5).Infof("publishIAMVolume: Workload Identity principal %q (hash key %q)", principal, key)
 
 	if err := makeGlobalDirs(key); err != nil {
 		return status.Errorf(codes.Internal, "Failed to make global directories for key %s: %v", key, err)
 	}
-	defer func() {
-		if retErr != nil {
-			if err := s.cleanUpGlobalKeyIfUnused(key); err != nil {
-				klog.Errorf("Failed to clean up unused global directories for key %s: %v", key, err)
-			}
-		}
-	}()
 	klog.V(5).Infof("publishIAMVolume: Verified global directory under %s", filepath.Join(GlobalMountRoot, key))
 
 	// Parse and update the service token file for Lustre client authentication.
@@ -787,6 +794,37 @@ func makeGlobalDirs(key string) error {
 	return nil
 }
 
+// cleanUpUnreferencedIAMKey removes the global mount, token and key directory
+// for key if no pod references remain under key/refs. It is used to roll back
+// a failed publishIAMVolume, where no pod reference exists for
+// NodeUnpublishVolume to discover.
+func (s *nodeServer) cleanUpUnreferencedIAMKey(key string) error {
+	refsDir := filepath.Join(GlobalMountRoot, key, "refs")
+	var pathErr *os.PathError
+	if err := os.Remove(refsDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if errors.As(err, &pathErr) && pathErr.Err == syscall.ENOTEMPTY {
+			klog.V(5).Infof("Global mount for key %s is still shared by other pods, skipping cleanup", key)
+			return nil
+		}
+		return fmt.Errorf("unexpected error checking refs directory %q: %w", refsDir, err)
+	}
+
+	klog.Infof("No pod references for key %s after failed publish. Cleaning up global path.", key)
+	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
+	if err := s.unmountPath(globalMountPath); err != nil {
+		return fmt.Errorf("failed to unmount global path %q: %w", globalMountPath, err)
+	}
+
+	keyDir := filepath.Join(GlobalMountRoot, key)
+	if err := os.RemoveAll(keyDir); err != nil {
+		return fmt.Errorf("failed to clean up global directories for key %s: %w", key, err)
+	}
+	return nil
+}
+
 func updateTokenFile(key, token string) error {
 	tokenPath := filepath.Join(GlobalMountRoot, key, "token")
 	tmpPath := tokenPath + ".tmp"
@@ -895,12 +933,8 @@ func (s *nodeServer) cleanUpIAMReferenceForKey(key, refPath string) error {
 		return fmt.Errorf("failed to remove pod reference %q: %w", refPath, err)
 	}
 
-	return s.cleanUpGlobalKeyIfUnused(key)
-}
-
-func (s *nodeServer) cleanUpGlobalKeyIfUnused(key string) error {
 	// Attempt to remove the 'refs' directory.
-	// If os.Remove succeeds, no pods are using this shared mount key.
+	// If os.Remove succeeds, this was the last pod using this shared mount key.
 	refsDir := filepath.Join(GlobalMountRoot, key, "refs")
 	var pathErr *os.PathError
 	if err := os.Remove(refsDir); err != nil {
@@ -919,7 +953,7 @@ func (s *nodeServer) cleanUpGlobalKeyIfUnused(key string) error {
 		return fmt.Errorf("unexpected error checking refs directory %q: %w", refsDir, err)
 	}
 
-	// Outcome 3: If we successfully removed refsDir, no pods remain. Cleanup the global mount.
+	// Outcome 3: If we successfully removed refsDir, this is the last pod. Cleanup the global mount.
 	klog.Infof("No more pod references for key %s. Unmounting global path.", key)
 	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
 
