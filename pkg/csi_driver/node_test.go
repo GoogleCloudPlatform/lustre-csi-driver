@@ -1140,6 +1140,9 @@ func TestPublishIAMVolume(t *testing.T) {
 	testGlobalMountPath := filepath.Join(GlobalMountRoot, testKey, "mount")
 	testTokenPath := filepath.Join(GlobalMountRoot, testKey, "token")
 	testRefPath := filepath.Join(GlobalMountRoot, testKey, "refs", testPodUID)
+	testOtherPodUID := "pod-uid-other"
+	testOtherRefPath := filepath.Join(GlobalMountRoot, testKey, "refs", testOtherPodUID)
+	testKeyDir := filepath.Join(GlobalMountRoot, testKey)
 
 	validTokenJSON := `{"test-project.svc.id.goog": {"token": "jwt-token", "expirationTimestamp": "2027-01-01T00:00:00Z"}}`
 
@@ -1163,6 +1166,14 @@ func TestPublishIAMVolume(t *testing.T) {
 		expectedMounts []*mount.MountPoint
 		expectErr      bool
 		expectToken    string
+		// preCreateOtherRef simulates another pod already sharing the global mount.
+		preCreateOtherRef bool
+		// expectKeyDirGone asserts that GlobalMountRoot/<key> and the global mount were cleaned up.
+		expectKeyDirGone bool
+		// expectKeyDirKept asserts that GlobalMountRoot/<key> still exists after the call.
+		expectKeyDirKept bool
+		// expectRefPresent asserts that the publishing pod's reference file exists after the call.
+		expectRefPresent bool
 	}{
 		{
 			name:          "valid initial publish",
@@ -1242,12 +1253,72 @@ func TestPublishIAMVolume(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name:          "bind mount failure returns error",
+			name:             "first pod bind mount failure cleans up global mount and key dir",
+			targetMounted:    false,
+			vc:               validVC,
+			mountErr:         fmt.Errorf("simulated bind mount failure"),
+			failTarget:       testTargetPath,
+			expectErr:        true,
+			expectKeyDirGone: true,
+		},
+		{
+			name:             "global IAM mount failure (EPERM) cleans up key dir and token",
+			targetMounted:    false,
+			vc:               validVC,
+			mountErr:         syscall.EPERM,
+			failTarget:       testGlobalMountPath,
+			expectErr:        true,
+			expectKeyDirGone: true,
+		},
+		{
+			name: "missing token after global dirs created cleans up key dir",
+			vc: map[string]string{
+				keyPodUID:         testPodUID,
+				keyPodNamespace:   testNamespace,
+				keyServiceAccount: testServiceAccount,
+				keyServiceToken:   `{"other-project.svc.id.goog": {"token": "jwt-token"}}`,
+			},
+			expectErr:        true,
+			expectKeyDirGone: true,
+		},
+		{
+			name:          "bind mount failure with other pod refs preserves shared global state",
 			targetMounted: false,
-			vc:            validVC,
-			mountErr:      fmt.Errorf("simulated bind mount failure"),
-			failTarget:    testTargetPath,
-			expectErr:     true,
+			existingMounts: []mount.MountPoint{
+				{Device: testIP + "@tcp:/" + testFilesystem, Path: testGlobalMountPath},
+			},
+			preCreateOtherRef: true,
+			vc:                validVC,
+			mountErr:          fmt.Errorf("simulated bind mount failure"),
+			failTarget:        testTargetPath,
+			expectedMounts: []*mount.MountPoint{
+				{Device: testIP + "@tcp:/" + testFilesystem, Path: testGlobalMountPath},
+			},
+			expectErr:        true,
+			expectToken:      "jwt-token",
+			expectKeyDirKept: true,
+		},
+		{
+			name:          "failed token refresh for already published pod keeps state",
+			targetMounted: true,
+			existingMounts: []mount.MountPoint{
+				{Device: testIP + "@tcp:/" + testFilesystem, Path: testGlobalMountPath},
+				{Device: testGlobalMountPath, Path: testTargetPath},
+			},
+			preCreateRef: true,
+			vc: map[string]string{
+				keyPodUID:         testPodUID,
+				keyPodNamespace:   testNamespace,
+				keyServiceAccount: testServiceAccount,
+				keyServiceToken:   `{malformed-json`,
+			},
+			expectedMounts: []*mount.MountPoint{
+				{Device: testIP + "@tcp:/" + testFilesystem, Path: testGlobalMountPath},
+				{Device: testGlobalMountPath, Path: testTargetPath},
+			},
+			expectErr:        true,
+			expectKeyDirKept: true,
+			expectRefPresent: true,
 		},
 	}
 
@@ -1265,6 +1336,15 @@ func TestPublishIAMVolume(t *testing.T) {
 				}
 				if err := addPodReference(testKey, testPodUID, testVolumeID); err != nil {
 					t.Fatalf("Failed to pre-create ref: %v", err)
+				}
+			}
+
+			if tc.preCreateOtherRef {
+				if err := makeGlobalDirs(testKey); err != nil {
+					t.Fatalf("Failed to create global dirs: %v", err)
+				}
+				if err := addPodReference(testKey, testOtherPodUID, testVolumeID); err != nil {
+					t.Fatalf("Failed to pre-create other pod ref: %v", err)
 				}
 			}
 
@@ -1309,6 +1389,165 @@ func TestPublishIAMVolume(t *testing.T) {
 				if string(refContent) != testVolumeID {
 					t.Errorf("Expected ref content %q, got %q", testVolumeID, string(refContent))
 				}
+			}
+
+			if tc.expectKeyDirGone {
+				if exists, err := pathExists(testKeyDir); err != nil || exists {
+					t.Errorf("Expected key dir %q to be removed, exists=%v, err=%v", testKeyDir, exists, err)
+				}
+				for _, mp := range fm.MountPoints {
+					if mp.Path == testGlobalMountPath {
+						t.Errorf("Expected global mount %q to be unmounted, but it is still mounted", testGlobalMountPath)
+					}
+				}
+			}
+
+			if tc.expectKeyDirKept {
+				if exists, err := pathExists(testKeyDir); err != nil || !exists {
+					t.Errorf("Expected key dir %q to be kept, exists=%v, err=%v", testKeyDir, exists, err)
+				}
+				validateMountPoint(t, tc.name, fm, tc.expectedMounts...)
+			}
+
+			if tc.expectErr && tc.expectToken != "" {
+				content, err := os.ReadFile(testTokenPath)
+				if err != nil {
+					t.Fatalf("Failed to read token file: %v", err)
+				}
+				if string(content) != tc.expectToken {
+					t.Errorf("Expected token %q, got %q", tc.expectToken, string(content))
+				}
+			}
+
+			if tc.preCreateOtherRef {
+				if exists, err := pathExists(testOtherRefPath); err != nil || !exists {
+					t.Errorf("Expected other pod ref %q to be kept, exists=%v, err=%v", testOtherRefPath, exists, err)
+				}
+			}
+
+			if tc.expectErr {
+				exists, err := pathExists(testRefPath)
+				if err != nil {
+					t.Fatalf("Failed to check ref %q: %v", testRefPath, err)
+				}
+				if exists != tc.expectRefPresent {
+					t.Errorf("Expected ref %q present=%v, got %v", testRefPath, tc.expectRefPresent, exists)
+				}
+			}
+		})
+	}
+}
+
+func TestCleanUpUnreferencedIAMKey(t *testing.T) {
+	oldRoot := GlobalMountRoot
+	defer func() { GlobalMountRoot = oldRoot }()
+	GlobalMountRoot = t.TempDir()
+
+	testKey := "test-key"
+	keyDir := filepath.Join(GlobalMountRoot, testKey)
+	globalMountPath := filepath.Join(keyDir, "mount")
+	refsDir := filepath.Join(keyDir, "refs")
+
+	cases := []struct {
+		name             string
+		createDirs       bool
+		createToken      bool
+		otherRef         bool
+		globalMounted    bool
+		removeRefsDir    bool
+		expectKeyDirGone bool
+	}{
+		{
+			name:             "other pod refs present is a no-op",
+			createDirs:       true,
+			createToken:      true,
+			otherRef:         true,
+			globalMounted:    true,
+			expectKeyDirGone: false,
+		},
+		{
+			name:             "no refs and global mounted unmounts and removes key dir",
+			createDirs:       true,
+			createToken:      true,
+			globalMounted:    true,
+			expectKeyDirGone: true,
+		},
+		{
+			name:             "no refs and not mounted removes key dir and token",
+			createDirs:       true,
+			createToken:      true,
+			expectKeyDirGone: true,
+		},
+		{
+			name:             "missing refs dir returns nil without changes",
+			createDirs:       true,
+			createToken:      true,
+			removeRefsDir:    true,
+			expectKeyDirGone: false,
+		},
+		{
+			name:             "missing key dir returns nil",
+			expectKeyDirGone: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.RemoveAll(GlobalMountRoot); err != nil {
+				t.Fatalf("Failed to reset global mount root: %v", err)
+			}
+
+			if tc.createDirs {
+				if err := makeGlobalDirs(testKey); err != nil {
+					t.Fatalf("makeGlobalDirs failed: %v", err)
+				}
+			}
+			if tc.createToken {
+				if err := updateTokenFile(testKey, "jwt-token"); err != nil {
+					t.Fatalf("updateTokenFile failed: %v", err)
+				}
+			}
+			if tc.otherRef {
+				if err := addPodReference(testKey, "pod-uid-other", testVolumeID); err != nil {
+					t.Fatalf("addPodReference failed: %v", err)
+				}
+			}
+			if tc.removeRefsDir {
+				if err := os.Remove(refsDir); err != nil {
+					t.Fatalf("Failed to remove refs dir: %v", err)
+				}
+			}
+
+			fm := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+			if tc.globalMounted {
+				fm.MountPoints = append(fm.MountPoints, mount.MountPoint{Device: testDevice, Path: globalMountPath, Type: "lustre"})
+			}
+			driver := initTestDriver(t)
+			ns := newNodeServer(driver, fm).(*nodeServer)
+
+			if err := ns.cleanUpUnreferencedIAMKey(testKey); err != nil {
+				t.Fatalf("cleanUpUnreferencedIAMKey returned error: %v", err)
+			}
+
+			exists, err := pathExists(keyDir)
+			if err != nil {
+				t.Fatalf("Failed to check key dir: %v", err)
+			}
+			if exists == tc.expectKeyDirGone {
+				t.Errorf("Expected key dir gone=%v, but exists=%v", tc.expectKeyDirGone, exists)
+			}
+
+			globalStillMounted := false
+			for _, mp := range fm.MountPoints {
+				if mp.Path == globalMountPath {
+					globalStillMounted = true
+				}
+			}
+			if tc.globalMounted && tc.expectKeyDirGone && globalStillMounted {
+				t.Errorf("Expected global mount %q to be unmounted", globalMountPath)
+			}
+			if tc.globalMounted && !tc.expectKeyDirGone && !globalStillMounted {
+				t.Errorf("Expected global mount %q to remain mounted", globalMountPath)
 			}
 		})
 	}
@@ -1527,4 +1766,112 @@ func TestMountGlobalIAM(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNodePublishVolume_IAMCleanupOnError(t *testing.T) {
+	origGlobalMountRoot := GlobalMountRoot
+	GlobalMountRoot = t.TempDir()
+	defer func() { GlobalMountRoot = origGlobalMountRoot }()
+
+	testPrincipal := "test-ns/test-sa"
+	key := computeHash(testVolumeID + testPrincipal)
+	keyDir := filepath.Join(GlobalMountRoot, key)
+	globalMountPath := filepath.Join(keyDir, "mount")
+
+	t.Run("cleans up global key directory and token when first pod mount fails", func(t *testing.T) {
+		fm := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+		mounter := &fakeMounter{FakeMounter: fm, mountErr: fmt.Errorf("mount failed: Operation not permitted")}
+
+		driver := initTestDriver(t)
+		driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+		ns := newNodeServer(driver, mounter).(*nodeServer)
+
+		targetPath := filepath.Join(t.TempDir(), "pods", "pod-uid-1", "volumes", "kubernetes.io~csi", "pvc-1", "mount")
+		req := &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID,
+			StagingTargetPath: filepath.Join(t.TempDir(), "staging"),
+			TargetPath:        targetPath,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP:              testIP,
+				keyFilesystem:              testFilesystem,
+				keyIAMAccessControlEnabled: "true",
+				keyPodUID:                  "pod-uid-1",
+				keyPodNamespace:            "test-ns",
+				keyServiceAccount:          "test-sa",
+				keyServiceToken:            `{"test-project.svc.id.goog":{"token":"secret-jwt-token","expirationTimestamp":"2026-03-04T00:00:00Z"}}`,
+			},
+		}
+
+		_, err := ns.NodePublishVolume(t.Context(), req)
+		if err == nil {
+			t.Fatal("Expected NodePublishVolume to fail when global mount fails")
+		}
+
+		exists, err := pathExists(keyDir)
+		if err != nil {
+			t.Fatalf("Failed to check keyDir %q: %v", keyDir, err)
+		}
+		if exists {
+			t.Errorf("Expected unused global key directory %q (and its token file) to be removed after mount failure, but it still exists", keyDir)
+		}
+	})
+
+	t.Run("preserves global key directory and active mount when second pod fails", func(t *testing.T) {
+		if err := makeGlobalDirs(key); err != nil {
+			t.Fatalf("makeGlobalDirs failed: %v", err)
+		}
+		if err := updateTokenFile(key, "active-token"); err != nil {
+			t.Fatalf("updateTokenFile failed: %v", err)
+		}
+		if err := addPodReference(key, "pod-uid-active", testVolumeID); err != nil {
+			t.Fatalf("addPodReference failed: %v", err)
+		}
+
+		fm := &mount.FakeMounter{
+			MountPoints: []mount.MountPoint{
+				{Device: testDevice, Path: globalMountPath, Type: "lustre"},
+			},
+		}
+		mounter := &fakeMounter{FakeMounter: fm, mountErr: fmt.Errorf("bind mount failed")}
+
+		driver := initTestDriver(t)
+		driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+		ns := newNodeServer(driver, mounter).(*nodeServer)
+
+		targetPath := filepath.Join(t.TempDir(), "pods", "pod-uid-2", "volumes", "kubernetes.io~csi", "pvc-1", "mount")
+		req := &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID,
+			StagingTargetPath: filepath.Join(t.TempDir(), "staging"),
+			TargetPath:        targetPath,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP:              testIP,
+				keyFilesystem:              testFilesystem,
+				keyIAMAccessControlEnabled: "true",
+				keyPodUID:                  "pod-uid-2",
+				keyPodNamespace:            "test-ns",
+				keyServiceAccount:          "test-sa",
+				keyServiceToken:            `{"test-project.svc.id.goog":{"token":"secret-jwt-token-2","expirationTimestamp":"2026-03-04T00:00:00Z"}}`,
+			},
+		}
+
+		_, err := ns.NodePublishVolume(t.Context(), req)
+		if err == nil {
+			t.Fatal("Expected NodePublishVolume to fail when bind mount fails")
+		}
+
+		exists, err := pathExists(keyDir)
+		if err != nil || !exists {
+			t.Errorf("Expected global key directory %q to be preserved for active pod, exists=%v, err=%v", keyDir, exists, err)
+		}
+		activeRefExists, err := pathExists(filepath.Join(keyDir, "refs", "pod-uid-active"))
+		if err != nil || !activeRefExists {
+			t.Errorf("Expected active pod reference to remain intact, exists=%v, err=%v", activeRefExists, err)
+		}
+		failedRefExists, err := pathExists(filepath.Join(keyDir, "refs", "pod-uid-2"))
+		if err != nil || failedRefExists {
+			t.Errorf("Expected failed pod reference to be removed, exists=%v, err=%v", failedRefExists, err)
+		}
+	})
 }
