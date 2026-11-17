@@ -609,3 +609,70 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestUbuntuClientModules(t *testing.T) {
+	t.Parallel()
+
+	baseModules := []string{"ksocklnd", "lustre", "mgc", "lmv", "lov", "mdc", "osc"}
+	gssModules := []string{"ksocklnd", "ptlrpc_gss", "lustre", "mgc", "lmv", "lov", "mdc", "osc"}
+
+	tests := []struct {
+		name    string
+		verOut  string
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:   "Lustre 2.16.0_ddn60b includes ptlrpc_gss",
+			verOut: "2.16.0_ddn60b\n",
+			want:   gssModules,
+		},
+		{
+			name:   "Lustre 2.16.0_ddn60 includes ptlrpc_gss",
+			verOut: "2.16.0_ddn60\n",
+			want:   gssModules,
+		},
+		{
+			name:   "Lustre 2.17.0 includes ptlrpc_gss",
+			verOut: "2.17.0\n",
+			want:   gssModules,
+		},
+		{
+			name:   "Lustre 2.15.99 (< 2.16) omits ptlrpc_gss",
+			verOut: "2.15.99\n",
+			want:   baseModules,
+		},
+		{
+			name:   "Lustre 2.14.0_ddn255 (< 2.16) omits ptlrpc_gss",
+			verOut: "2.14.0_ddn255\n",
+			want:   baseModules,
+		},
+		{
+			name:    "empty version output returns error",
+			verOut:  "   \n",
+			wantErr: true,
+		},
+		{
+			name:    "unparseable version output returns error",
+			verOut:  "unknown\n",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ubuntuClientModules(tc.verOut)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ubuntuClientModules(%q) error = %v, wantErr %v", tc.verOut, err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("ubuntuClientModules(%q) mismatch (-want +got):\n%s", tc.verOut, diff)
+			}
+		})
+	}
+}
