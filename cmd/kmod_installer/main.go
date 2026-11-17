@@ -104,6 +104,18 @@ func main() {
 		klog.Fatalf("Failed to read preview client version: %v", err)
 	}
 
+	isRDMASupportedNode, err := networkIntf.IsRDMASupportedNode(ctx, *nodeID)
+	if err != nil {
+		klog.Fatalf("Failed to check if node %s is RDMA supported: %v", *nodeID, err)
+	}
+	if isRDMASupportedNode {
+		klog.Infof("Node %s is an RDMA supported node, configuring symmetric routing...", *nodeID)
+		if err := networkIntf.ConfigureRDMASymmetricRouting(); err != nil {
+			klog.Fatalf("Failed to configure RDMA symmetric routing: %v", err)
+		}
+		klog.Infof("Successfully configured RDMA symmetric routing.")
+	}
+
 	if isInstalled {
 		// Check if the current configuration matches the expectation.
 		expectedNetwork := kmod.BuildLnetNetworkString(nics, primaryNic, effectiveDisableMultiNIC)
