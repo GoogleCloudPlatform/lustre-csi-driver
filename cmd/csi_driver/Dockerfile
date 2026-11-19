@@ -31,6 +31,9 @@ RUN clean-install bash
 RUN apt-get update && apt-get install -y --no-install-recommends \
     apt \
     dpkg \
+    e2fsprogs \
+    mdadm \
+    util-linux \
     libyaml-0-2 \
     libnl-3-200 \
     libnl-genl-3-200 \
