@@ -69,6 +69,8 @@ const (
 	keyInstanceIP              = "ip"
 	keyMountPoint              = "mountpoint"
 	keyIAMAccessControlEnabled = "iam_access_control_enabled"
+	keySubPath                 = "subpath"
+	keySubDir                  = "subdir"
 
 	defaultNetwork = "default"
 
@@ -91,6 +93,8 @@ var (
 		keyFilesystem,
 		keyMountPoint,
 		keyIAMAccessControlEnabled,
+		keySubPath,
+		keySubDir,
 	}
 )
 
@@ -140,6 +144,10 @@ func (s *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 
 	vc, err := normalizeVolumeContext(req.GetVolumeContext())
 	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	if _, err := extractSubPath(vc); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
