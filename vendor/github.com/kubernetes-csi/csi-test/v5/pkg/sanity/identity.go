@@ -59,6 +59,8 @@ var _ = DescribeSanity("Identity Service", func(sc *TestContext) {
 						case csi.PluginCapability_Service_CONTROLLER_SERVICE:
 						case csi.PluginCapability_Service_VOLUME_ACCESSIBILITY_CONSTRAINTS:
 						case csi.PluginCapability_Service_GROUP_CONTROLLER_SERVICE:
+						case csi.PluginCapability_Service_SNAPSHOT_METADATA_SERVICE:
+						case csi.PluginCapability_Service_SNAPSHOT_ACCESSIBILITY_CONSTRAINTS:
 						default:
 							Fail(fmt.Sprintf("Unknown service: %v\n", cap.GetService().GetType()))
 						}
