@@ -35,6 +35,7 @@ Status: General Availability
 * [Lustre CSI Driver Manual Installation](./docs/installation.md)
 * [Creating and Connecting to a New Lustre Instance](./docs/dynamic-prov-guide.md)
 * [Importing an Existing Lustre Instance](./docs/preprov-guide.md)
+* [Sub-directory (Fileset) Mounts and Project Quotas](./docs/preprov-guide.md#sub-directory-fileset-mounts-and-project-quotas)
 * [Troubleshooting](./docs/troubleshooting.md)
 
 ## Development and Contribution

@@ -17,14 +17,19 @@ limitations under the License.
 package driver
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/cloud_provider/metadata"
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	utiltesting "k8s.io/client-go/util/testing"
@@ -1289,6 +1294,12 @@ func TestPublishIAMVolume(t *testing.T) {
 				t.Fatalf("Test %q: expected error %v, got %v", tc.name, tc.expectErr, err)
 			}
 
+			if tc.expectErr && !tc.preCreateRef {
+				if exists, _ := pathExists(filepath.Join(GlobalMountRoot, testKey)); exists {
+					t.Errorf("Test %q: expected global key dir %q to be cleaned up on error", tc.name, testKey)
+				}
+			}
+
 			if !tc.expectErr {
 				validateMountPoint(t, tc.name, fm, tc.expectedMounts...)
 
@@ -1556,9 +1567,33 @@ func TestExtractSubPath(t *testing.T) {
 			expectErr: false,
 		},
 		{
+			name:      "valid leading slash only",
+			vc:        map[string]string{keySubPath: "/team-alpha"},
+			expected:  "team-alpha",
+			expectErr: false,
+		},
+		{
+			name:      "valid trailing slash only",
+			vc:        map[string]string{keySubPath: "team-alpha/"},
+			expected:  "team-alpha",
+			expectErr: false,
+		},
+		{
+			name:      "valid whitespace trimmed subPath",
+			vc:        map[string]string{keySubPath: " /team-alpha/logs "},
+			expected:  "team-alpha/logs",
+			expectErr: false,
+		},
+		{
 			name:      "valid subDir alias",
 			vc:        map[string]string{keySubDir: "team-beta"},
 			expected:  "team-beta",
+			expectErr: false,
+		},
+		{
+			name:      "matching subPath and subDir",
+			vc:        map[string]string{keySubPath: "team-alpha", keySubDir: "team-alpha"},
+			expected:  "team-alpha",
 			expectErr: false,
 		},
 		{
@@ -1567,18 +1602,73 @@ func TestExtractSubPath(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name:      "empty subPath value",
+			name:      "empty string subPath rejected",
+			vc:        map[string]string{keySubPath: ""},
+			expectErr: true,
+		},
+		{
+			name:      "whitespace subPath rejected",
+			vc:        map[string]string{keySubPath: "   "},
+			expectErr: true,
+		},
+		{
+			name:      "root slash subPath rejected",
 			vc:        map[string]string{keySubPath: "/"},
 			expectErr: true,
 		},
 		{
-			name:      "path traversal rejected",
+			name:      "double slash root rejected",
+			vc:        map[string]string{keySubPath: "//"},
+			expectErr: true,
+		},
+		{
+			name:      "leading extra slash rejected",
+			vc:        map[string]string{keySubPath: "//team-alpha"},
+			expectErr: true,
+		},
+		{
+			name:      "trailing extra slash rejected",
+			vc:        map[string]string{keySubPath: "team-alpha//"},
+			expectErr: true,
+		},
+		{
+			name:      "empty middle segment rejected",
+			vc:        map[string]string{keySubPath: "team-alpha//app1"},
+			expectErr: true,
+		},
+		{
+			name:      "current dir dot rejected",
+			vc:        map[string]string{keySubPath: "."},
+			expectErr: true,
+		},
+		{
+			name:      "nested dot segment rejected",
+			vc:        map[string]string{keySubPath: "team-alpha/./app1"},
+			expectErr: true,
+		},
+		{
+			name:      "parent traversal dotdot rejected",
+			vc:        map[string]string{keySubPath: ".."},
+			expectErr: true,
+		},
+		{
+			name:      "leading path traversal rejected",
 			vc:        map[string]string{keySubPath: "../team-beta"},
 			expectErr: true,
 		},
 		{
 			name:      "nested path traversal rejected",
 			vc:        map[string]string{keySubPath: "team-alpha/../team-beta"},
+			expectErr: true,
+		},
+		{
+			name:      "multi-level path traversal rejected",
+			vc:        map[string]string{keySubPath: "a/../../b"},
+			expectErr: true,
+		},
+		{
+			name:      "null byte rejected",
+			vc:        map[string]string{keySubPath: "team-alpha\x00"},
 			expectErr: true,
 		},
 	}
@@ -1598,6 +1688,93 @@ func TestExtractSubPath(t *testing.T) {
 	}
 }
 
+func TestBuildLustreMountOptions(t *testing.T) {
+	t.Parallel()
+
+	makeVolCap := func(flags ...string) *csi.VolumeCapability {
+		return &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{
+				Mount: &csi.VolumeCapability_MountVolume{
+					MountFlags: flags,
+				},
+			},
+			AccessMode: &csi.VolumeCapability_AccessMode{
+				Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+			},
+		}
+	}
+
+	cases := []struct {
+		name             string
+		baseOpts         []string
+		volCap           *csi.VolumeCapability
+		addStatfsProject bool
+		expected         []string
+	}{
+		{
+			name:             "root mount with no flags omits statfs_project",
+			volCap:           testVolumeCapability,
+			addStatfsProject: false,
+			expected:         []string{},
+		},
+		{
+			name:             "root mount preserves default/user mount flags without statfs_project",
+			volCap:           makeVolCap("rw", "flock", "lazystatfs"),
+			addStatfsProject: false,
+			expected:         []string{"rw", "flock", "lazystatfs"},
+		},
+		{
+			name:             "subPath mount with no flags appends statfs_project",
+			volCap:           testVolumeCapability,
+			addStatfsProject: true,
+			expected:         []string{"statfs_project"},
+		},
+		{
+			name:             "subPath mount preserves existing flags and appends statfs_project",
+			volCap:           makeVolCap("rw", "flock", "lazystatfs"),
+			addStatfsProject: true,
+			expected:         []string{"rw", "flock", "lazystatfs", "statfs_project"},
+		},
+		{
+			name:             "subPath mount deduplicates statfs_project from mountOptions",
+			volCap:           makeVolCap("rw", "statfs_project", "flock", "statfs_project"),
+			addStatfsProject: true,
+			expected:         []string{"rw", "statfs_project", "flock"},
+		},
+		{
+			name:             "subPath mount deduplicates comma-separated statfs_project",
+			volCap:           makeVolCap("rw,statfs_project", "flock,lazystatfs"),
+			addStatfsProject: true,
+			expected:         []string{"rw", "statfs_project", "flock", "lazystatfs"},
+		},
+		{
+			name:             "IAM subPath mount keeps user_principal and appends statfs_project",
+			baseOpts:         []string{"user_principal=gke-wi://ns/sa+key"},
+			volCap:           makeVolCap("rw", "flock", "lazystatfs"),
+			addStatfsProject: true,
+			expected:         []string{"user_principal=gke-wi://ns/sa+key", "rw", "flock", "lazystatfs", "statfs_project"},
+		},
+		{
+			name:             "IAM root mount keeps user_principal without statfs_project",
+			baseOpts:         []string{"user_principal=gke-wi://ns/sa+key"},
+			volCap:           makeVolCap("flock"),
+			addStatfsProject: false,
+			expected:         []string{"user_principal=gke-wi://ns/sa+key", "flock"},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := buildLustreMountOptions(tc.baseOpts, tc.volCap, tc.addStatfsProject)
+			if !reflect.DeepEqual(got, tc.expected) {
+				t.Errorf("buildLustreMountOptions() = %v, expected %v", got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestSubPathMounts(t *testing.T) {
 	oldRoot := GlobalMountRoot
 	defer func() { GlobalMountRoot = oldRoot }()
@@ -1606,7 +1783,7 @@ func TestSubPathMounts(t *testing.T) {
 	base := t.TempDir()
 	stagingTargetPath := filepath.Join(base, "staging")
 
-	// 1. NodeStageVolume should bypass staging when subPath is set.
+	// 1. NodeStageVolume should bypass staging when subPath is set and reject invalid subPaths.
 	t.Run("NodeStageVolume bypasses staging for subPath", func(t *testing.T) {
 		testEnv := initTestNodeServer(t)
 		req := &csi.NodeStageVolumeRequest{
@@ -1628,7 +1805,139 @@ func TestSubPathMounts(t *testing.T) {
 		}
 	})
 
-	// 2. Non-IAM multi-tenant subPath publish and teardown on the same node (team-alpha & team-beta).
+	t.Run("NodeStageVolume and NodePublishVolume reject invalid subPath", func(t *testing.T) {
+		testEnv := initTestNodeServer(t)
+		for _, invalid := range []string{"", "/", "//team-alpha", "team-alpha//", "team-alpha//sub", "a/../../b", "."} {
+			_, stageErr := testEnv.ns.NodeStageVolume(t.Context(), &csi.NodeStageVolumeRequest{
+				VolumeId:          testVolumeID + ":bad",
+				StagingTargetPath: stagingTargetPath,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					keyInstanceIP: testIP,
+					keyFilesystem: testFilesystem,
+					"subPath":     invalid,
+				},
+			})
+			if status.Code(stageErr) != codes.InvalidArgument {
+				t.Errorf("NodeStageVolume(%q): expected codes.InvalidArgument, got %v", invalid, stageErr)
+			}
+
+			_, pubErr := testEnv.ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+				VolumeId:          testVolumeID + ":bad",
+				StagingTargetPath: stagingTargetPath,
+				TargetPath:        filepath.Join(base, "pods", "pod-bad", "volumes", "kubernetes.io~csi", "pv-bad", "mount"),
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					keyInstanceIP: testIP,
+					keyFilesystem: testFilesystem,
+					keyPodUID:     "pod-bad",
+					"subPath":     invalid,
+				},
+			})
+			if status.Code(pubErr) != codes.InvalidArgument {
+				t.Errorf("NodePublishVolume(%q): expected codes.InvalidArgument, got %v", invalid, pubErr)
+			}
+		}
+	})
+
+	// 2. Mount options include statfs_project without duplication for non-IAM and IAM subPath mounts.
+	t.Run("subPath mounts set statfs_project and deduplicate mount options", func(t *testing.T) {
+		if err := os.RemoveAll(GlobalMountRoot); err != nil {
+			t.Fatalf("failed to reset GlobalMountRoot: %v", err)
+		}
+		testEnv := initTestNodeServer(t)
+
+		volCapWithDefaults := &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{
+				Mount: &csi.VolumeCapability_MountVolume{
+					MountFlags: []string{"rw", "flock", "lazystatfs"},
+				},
+			},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER},
+		}
+		targetAlpha := filepath.Join(base, "pods", "pod-opts-1", "volumes", "kubernetes.io~csi", "pv-opts-alpha", "mount")
+		_, err := testEnv.ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":opts-alpha",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        targetAlpha,
+			VolumeCapability:  volCapWithDefaults,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				keyPodUID:     "pod-opts-1",
+				"subPath":     "team-alpha",
+			},
+		})
+		if err != nil {
+			t.Fatalf("NodePublishVolume failed: %v", err)
+		}
+
+		alphaKey := computeGlobalKey(testVolumeID+":opts-alpha", "", "team-alpha")
+		alphaGlobalMount := filepath.Join(GlobalMountRoot, alphaKey, "mount")
+
+		volCapWithExistingStatfs := &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{
+				Mount: &csi.VolumeCapability_MountVolume{
+					MountFlags: []string{"rw", "statfs_project", "flock"},
+				},
+			},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER},
+		}
+		targetBeta := filepath.Join(base, "pods", "pod-opts-2", "volumes", "kubernetes.io~csi", "pv-opts-beta", "mount")
+		_, err = testEnv.ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":opts-beta",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        targetBeta,
+			VolumeCapability:  volCapWithExistingStatfs,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				keyPodUID:     "pod-opts-2",
+				"subPath":     "team-beta",
+			},
+		})
+		if err != nil {
+			t.Fatalf("NodePublishVolume failed: %v", err)
+		}
+
+		betaKey := computeGlobalKey(testVolumeID+":opts-beta", "", "team-beta")
+		betaGlobalMount := filepath.Join(GlobalMountRoot, betaKey, "mount")
+
+		// Verify IAM + subPath mount options include user_principal and statfs_project.
+		iamTarget := filepath.Join(base, "pods", "pod-opts-iam", "volumes", "kubernetes.io~csi", "pv-opts-iam", "mount")
+		_, err = testEnv.ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":opts-iam",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        iamTarget,
+			VolumeCapability:  volCapWithDefaults,
+			VolumeContext: map[string]string{
+				keyInstanceIP:              testIP,
+				keyFilesystem:              testFilesystem,
+				keyPodUID:                  "pod-opts-iam",
+				keyPodNamespace:            "test-ns",
+				keyServiceAccount:          "test-sa",
+				keyIAMAccessControlEnabled: "true",
+				keyServiceToken:            `{"test-project.svc.id.goog":{"token":"test-token","expirationTimestamp":"2099-01-01T00:00:00Z"}}`,
+				"subPath":                  "team-gamma",
+			},
+		})
+		if err != nil {
+			t.Fatalf("IAM subPath NodePublishVolume failed: %v", err)
+		}
+		iamKey := computeGlobalKey(testVolumeID+":opts-iam", "test-ns/test-sa", "team-gamma")
+		iamGlobalMount := filepath.Join(GlobalMountRoot, iamKey, "mount")
+
+		validateMountPoint(t, "subPath mount options", testEnv.fm,
+			&mount.MountPoint{Device: testDevice + "/team-alpha", Path: alphaGlobalMount, Type: "lustre", Opts: []string{"rw", "flock", "lazystatfs", "statfs_project"}},
+			&mount.MountPoint{Device: testDevice + "/team-alpha", Path: targetAlpha, Type: "lustre", Opts: []string{"bind", "rw", "flock", "lazystatfs"}},
+			&mount.MountPoint{Device: testDevice + "/team-beta", Path: betaGlobalMount, Type: "lustre", Opts: []string{"rw", "statfs_project", "flock"}},
+			&mount.MountPoint{Device: testDevice + "/team-beta", Path: targetBeta, Type: "lustre", Opts: []string{"bind", "rw", "statfs_project", "flock"}},
+			&mount.MountPoint{Device: testDevice + "/team-gamma", Path: iamGlobalMount, Type: "lustre", Opts: []string{"user_principal=gke-wi://test-ns/test-sa+" + iamKey, "rw", "flock", "lazystatfs", "statfs_project"}},
+			&mount.MountPoint{Device: testDevice + "/team-gamma", Path: iamTarget, Type: "lustre", Opts: []string{"bind", "rw", "flock", "lazystatfs"}},
+		)
+	})
+
+	// 3. Non-IAM multi-tenant subPath publish and teardown on the same node (team-alpha & team-beta).
 	t.Run("Multi-tenant subPath publish and reference-counted unpublish", func(t *testing.T) {
 		if err := os.RemoveAll(GlobalMountRoot); err != nil {
 			t.Fatalf("failed to reset GlobalMountRoot: %v", err)
@@ -1728,35 +2037,533 @@ func TestSubPathMounts(t *testing.T) {
 		}
 	})
 
-	// 3. Missing subdirectory (ENOENT) returns codes.FailedPrecondition.
-	t.Run("Missing subPath returns FailedPrecondition", func(t *testing.T) {
+	// 4. Single pod mounting multiple subPath volumes does not collide during unpublish.
+	t.Run("Single pod with multiple subPath volumes unpublishes independently", func(t *testing.T) {
 		if err := os.RemoveAll(GlobalMountRoot); err != nil {
 			t.Fatalf("failed to reset GlobalMountRoot: %v", err)
 		}
+		testEnv := initTestNodeServer(t)
+
+		sharedPodUID := "pod-multi-vol"
+		volAlpha1 := testVolumeID + ":team-alpha-1"
+		volAlpha2 := testVolumeID + ":team-alpha-2"
+		volBeta := testVolumeID + ":team-beta"
+
+		targetAlpha1 := filepath.Join(base, "pods", sharedPodUID, "volumes", "kubernetes.io~csi", "pv-alpha-1", "mount")
+		targetAlpha2 := filepath.Join(base, "pods", sharedPodUID, "volumes", "kubernetes.io~csi", "pv-alpha-2", "mount")
+		targetBeta := filepath.Join(base, "pods", sharedPodUID, "volumes", "kubernetes.io~csi", "pv-beta", "mount")
+
+		publish := func(volID, target, subPath string) {
+			t.Helper()
+			_, err := testEnv.ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+				VolumeId:          volID,
+				StagingTargetPath: stagingTargetPath,
+				TargetPath:        target,
+				VolumeCapability:  testVolumeCapability,
+				VolumeContext: map[string]string{
+					keyInstanceIP: testIP,
+					keyFilesystem: testFilesystem,
+					keyPodUID:     sharedPodUID,
+					"subPath":     subPath,
+				},
+			})
+			if err != nil {
+				t.Fatalf("NodePublishVolume(%s) failed: %v", volID, err)
+			}
+		}
+
+		publish(volAlpha1, targetAlpha1, "team-alpha")
+		publish(volAlpha2, targetAlpha2, "team-alpha")
+		publish(volBeta, targetBeta, "team-beta")
+
+		alphaKey := computeGlobalKey(volAlpha1, "", "team-alpha")
+		betaKey := computeGlobalKey(volBeta, "", "team-beta")
+		alphaGlobalMount := filepath.Join(GlobalMountRoot, alphaKey, "mount")
+		betaGlobalMount := filepath.Join(GlobalMountRoot, betaKey, "mount")
+
+		// Unpublish volAlpha1: volAlpha2 (same key) and volBeta (different key) must remain mounted.
+		if _, err := testEnv.ns.NodeUnpublishVolume(t.Context(), &csi.NodeUnpublishVolumeRequest{
+			VolumeId:   volAlpha1,
+			TargetPath: targetAlpha1,
+		}); err != nil {
+			t.Fatalf("NodeUnpublishVolume(volAlpha1) failed: %v", err)
+		}
+		if exists, _ := pathExists(alphaGlobalMount); !exists {
+			t.Errorf("expected alpha global mount %q to remain while volAlpha2 is active", alphaGlobalMount)
+		}
+		if exists, _ := pathExists(betaGlobalMount); !exists {
+			t.Errorf("expected beta global mount %q to remain unaffected", betaGlobalMount)
+		}
+
+		// Unpublish volAlpha2: alpha key should now be cleaned up, while beta remains intact.
+		if _, err := testEnv.ns.NodeUnpublishVolume(t.Context(), &csi.NodeUnpublishVolumeRequest{
+			VolumeId:   volAlpha2,
+			TargetPath: targetAlpha2,
+		}); err != nil {
+			t.Fatalf("NodeUnpublishVolume(volAlpha2) failed: %v", err)
+		}
+		if exists, _ := pathExists(filepath.Join(GlobalMountRoot, alphaKey)); exists {
+			t.Errorf("expected alpha key dir to be deleted after volAlpha2 unpublished")
+		}
+		if exists, _ := pathExists(betaGlobalMount); !exists {
+			t.Errorf("expected beta global mount %q to remain unaffected", betaGlobalMount)
+		}
+
+		// Unpublish volBeta: beta key should now be cleaned up cleanly.
+		if _, err := testEnv.ns.NodeUnpublishVolume(t.Context(), &csi.NodeUnpublishVolumeRequest{
+			VolumeId:   volBeta,
+			TargetPath: targetBeta,
+		}); err != nil {
+			t.Fatalf("NodeUnpublishVolume(volBeta) failed: %v", err)
+		}
+		if exists, _ := pathExists(filepath.Join(GlobalMountRoot, betaKey)); exists {
+			t.Errorf("expected beta key dir to be deleted after volBeta unpublished")
+		}
+	})
+
+	// 5. Bind mount failure cleans up unreferenced global mount without leaking.
+	t.Run("Bind mount failure cleans up unused global mount and preserves shared mount", func(t *testing.T) {
+		if err := os.RemoveAll(GlobalMountRoot); err != nil {
+			t.Fatalf("failed to reset GlobalMountRoot: %v", err)
+		}
+
+		// 5a. Sole pod bind mount failure -> global mount is unmounted and key dir deleted.
+		targetFail := filepath.Join(base, "pods", "pod-bind-fail", "volumes", "kubernetes.io~csi", "pv-bind-fail", "mount")
 		fm := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
 		mounter := &fakeMounter{
 			FakeMounter: fm,
-			mountErr:    fmt.Errorf("mount.lustre: mount 127.0.0.1@tcp:/gcloud/nonexistent at /var/lib/lustre/... failed: No such file or directory"),
+			mountErr:    fmt.Errorf("simulated bind mount error"),
+			failTarget:  targetFail,
 		}
 		driver := initTestDriver(t)
 		driver.config.MetadataService = &mockMetadataService{project: "test-project"}
 		ns := newNodeServer(driver, mounter)
 
-		targetMissing := filepath.Join(base, "pods", "pod-missing", "volumes", "kubernetes.io~csi", "pv-missing", "mount")
 		_, err := ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
-			VolumeId:          testVolumeID + ":missing",
+			VolumeId:          testVolumeID + ":bind-fail",
 			StagingTargetPath: stagingTargetPath,
-			TargetPath:        targetMissing,
+			TargetPath:        targetFail,
 			VolumeCapability:  testVolumeCapability,
 			VolumeContext: map[string]string{
 				keyInstanceIP: testIP,
 				keyFilesystem: testFilesystem,
-				keyPodUID:     "pod-missing",
-				"subPath":     "nonexistent",
+				keyPodUID:     "pod-bind-fail",
+				"subPath":     "bind-fail",
 			},
 		})
-		if status.Code(err) != codes.FailedPrecondition {
-			t.Fatalf("expected codes.FailedPrecondition for missing subPath, got %v (err: %v)", status.Code(err), err)
+		if status.Code(err) != codes.Internal {
+			t.Fatalf("expected codes.Internal on bind mount failure, got %v", err)
+		}
+		failKey := computeGlobalKey(testVolumeID+":bind-fail", "", "bind-fail")
+		if exists, _ := pathExists(filepath.Join(GlobalMountRoot, failKey)); exists {
+			t.Errorf("expected global key dir %q to be cleaned up after sole pod bind failure", failKey)
+		}
+		if len(fm.MountPoints) != 0 {
+			t.Errorf("expected 0 remaining mount points after rollback, got %+v", fm.MountPoints)
+		}
+
+		// 5b. Second pod bind mount failure -> first pod's global mount stays intact.
+		targetOK := filepath.Join(base, "pods", "pod-bind-ok", "volumes", "kubernetes.io~csi", "pv-shared", "mount")
+		targetFail2 := filepath.Join(base, "pods", "pod-bind-fail-2", "volumes", "kubernetes.io~csi", "pv-shared", "mount")
+		fm2 := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+		mounter2 := &fakeMounter{
+			FakeMounter: fm2,
+			mountErr:    fmt.Errorf("simulated bind mount error"),
+			failTarget:  targetFail2,
+		}
+		ns2 := newNodeServer(driver, mounter2)
+
+		_, err = ns2.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":shared-1",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        targetOK,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				keyPodUID:     "pod-bind-ok",
+				"subPath":     "shared-dir",
+			},
+		})
+		if err != nil {
+			t.Fatalf("first pod publish failed unexpectedly: %v", err)
+		}
+
+		_, err = ns2.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+			VolumeId:          testVolumeID + ":shared-2",
+			StagingTargetPath: stagingTargetPath,
+			TargetPath:        targetFail2,
+			VolumeCapability:  testVolumeCapability,
+			VolumeContext: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFilesystem,
+				keyPodUID:     "pod-bind-fail-2",
+				"subPath":     "shared-dir",
+			},
+		})
+		if status.Code(err) != codes.Internal {
+			t.Fatalf("expected codes.Internal on second pod bind failure, got %v", err)
+		}
+		sharedKey := computeGlobalKey(testVolumeID+":shared-1", "", "shared-dir")
+		if exists, _ := pathExists(filepath.Join(GlobalMountRoot, sharedKey, "mount")); !exists {
+			t.Errorf("expected shared global mount to remain active for first pod")
 		}
 	})
+
+	// 6. Missing subdirectory (ENOENT) returns codes.FailedPrecondition (both non-IAM and IAM).
+	t.Run("Missing subPath returns FailedPrecondition", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			mountErr error
+			iam      bool
+		}{
+			{
+				name:     "non-IAM No such file or directory string",
+				mountErr: fmt.Errorf("mount.lustre: mount 127.0.0.1@tcp:/gcloud/nonexistent at /var/lib/lustre/... failed: No such file or directory"),
+			},
+			{
+				name:     "non-IAM wrapped syscall.ENOENT",
+				mountErr: fmt.Errorf("mount failed: %w", syscall.ENOENT),
+			},
+			{
+				name:     "IAM subPath ENOENT",
+				mountErr: fmt.Errorf("mount.lustre: mount 127.0.0.1@tcp:/gcloud/nonexistent failed: No such file or directory"),
+				iam:      true,
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := os.RemoveAll(GlobalMountRoot); err != nil {
+					t.Fatalf("failed to reset GlobalMountRoot: %v", err)
+				}
+				fm := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+				mounter := &fakeMounter{
+					FakeMounter: fm,
+					mountErr:    tc.mountErr,
+				}
+				driver := initTestDriver(t)
+				driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+				ns := newNodeServer(driver, mounter)
+
+				vc := map[string]string{
+					keyInstanceIP: testIP,
+					keyFilesystem: testFilesystem,
+					keyPodUID:     "pod-missing",
+					"subPath":     "nonexistent",
+				}
+				principal := ""
+				if tc.iam {
+					principal = "test-ns/test-sa"
+					vc[keyIAMAccessControlEnabled] = "true"
+					vc[keyPodNamespace] = "test-ns"
+					vc[keyServiceAccount] = "test-sa"
+					vc[keyServiceToken] = `{"test-project.svc.id.goog":{"token":"test-token","expirationTimestamp":"2099-01-01T00:00:00Z"}}`
+				}
+
+				targetMissing := filepath.Join(base, "pods", "pod-missing", "volumes", "kubernetes.io~csi", "pv-missing", "mount")
+				_, err := ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+					VolumeId:          testVolumeID + ":missing",
+					StagingTargetPath: stagingTargetPath,
+					TargetPath:        targetMissing,
+					VolumeCapability:  testVolumeCapability,
+					VolumeContext:     vc,
+				})
+				if status.Code(err) != codes.FailedPrecondition {
+					t.Fatalf("expected codes.FailedPrecondition for missing subPath, got %v (err: %v)", status.Code(err), err)
+				}
+				expectedMsg := fmt.Sprintf("subPath %q does not exist on filesystem %q", "nonexistent", testFilesystem)
+				if !strings.Contains(err.Error(), expectedMsg) {
+					t.Errorf("expected error %q to contain %q", err.Error(), expectedMsg)
+				}
+				missingKey := computeGlobalKey(testVolumeID+":missing", principal, "nonexistent")
+				if exists, _ := pathExists(filepath.Join(GlobalMountRoot, missingKey)); exists {
+					t.Errorf("expected global key dir %q to be cleaned up after ENOENT failure", missingKey)
+				}
+			})
+		}
+	})
+
+	// 7. Concurrent setUpMultiNIC calls are serialized cleanly.
+	t.Run("setUpMultiNIC serialization", func(t *testing.T) {
+		driver := initTestDriver(t)
+		ns := newNodeServer(driver, &mount.FakeMounter{}).(*nodeServer)
+
+		// Exercise concurrent lock acquisition via multiNICMu without external netlink side effects.
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				if err := ns.setUpMultiNIC(fmt.Sprintf("%s:sub-%d", testVolumeID, idx), testIP); err != nil {
+					t.Errorf("setUpMultiNIC error: %v", err)
+				}
+			}(i)
+		}
+		wg.Wait()
+	})
+}
+
+func TestNodeGetVolumeStats(t *testing.T) {
+	t.Parallel()
+
+	t.Run("validation and missing path errors", func(t *testing.T) {
+		t.Parallel()
+		testEnv := initTestNodeServer(t)
+
+		if _, err := testEnv.ns.NodeGetVolumeStats(t.Context(), &csi.NodeGetVolumeStatsRequest{
+			VolumePath: t.TempDir(),
+		}); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("empty VolumeId: expected InvalidArgument, got %v", err)
+		}
+
+		if _, err := testEnv.ns.NodeGetVolumeStats(t.Context(), &csi.NodeGetVolumeStatsRequest{
+			VolumeId: testVolumeID,
+		}); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("empty VolumePath: expected InvalidArgument, got %v", err)
+		}
+
+		if _, err := testEnv.ns.NodeGetVolumeStats(t.Context(), &csi.NodeGetVolumeStatsRequest{
+			VolumeId:   testVolumeID,
+			VolumePath: filepath.Join(t.TempDir(), "does-not-exist"),
+		}); status.Code(err) != codes.NotFound {
+			t.Errorf("non-existent path: expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("real path statfs returns valid bytes and inodes", func(t *testing.T) {
+		t.Parallel()
+		testEnv := initTestNodeServer(t)
+		target := t.TempDir()
+
+		resp, err := testEnv.ns.NodeGetVolumeStats(t.Context(), &csi.NodeGetVolumeStatsRequest{
+			VolumeId:   testVolumeID + ":team-alpha",
+			VolumePath: target,
+		})
+		if err != nil {
+			t.Fatalf("NodeGetVolumeStats failed: %v", err)
+		}
+		if len(resp.GetUsage()) != 2 {
+			t.Fatalf("expected 2 usage entries, got %d", len(resp.GetUsage()))
+		}
+		if resp.GetUsage()[0].GetUnit() != csi.VolumeUsage_BYTES || resp.GetUsage()[0].GetTotal() <= 0 {
+			t.Errorf("unexpected BYTES usage: %+v", resp.GetUsage()[0])
+		}
+		if resp.GetUsage()[1].GetUnit() != csi.VolumeUsage_INODES {
+			t.Errorf("unexpected INODES usage: %+v", resp.GetUsage()[1])
+		}
+	})
+
+	cases := []struct {
+		name           string
+		statfs         unix.Statfs_t
+		statfsErr      error
+		wantCode       codes.Code
+		wantBytesTotal int64
+		wantBytesAvail int64
+		wantBytesUsed  int64
+		wantInodeTotal int64
+		wantInodeAvail int64
+		wantInodeUsed  int64
+	}{
+		{
+			name: "project quota limits reflected via statfs_project",
+			statfs: unix.Statfs_t{
+				Bsize:  4096,
+				Blocks: 2415919104, // 9 TiB quota limit in 4 KiB blocks
+				Bfree:  2147483648, // 8 TiB remaining
+				Files:  6000000,    // 6M inode quota limit
+				Ffree:  5500000,    // 5.5M inodes remaining
+			},
+			wantBytesTotal: 2415919104 * 4096,
+			wantBytesAvail: 2147483648 * 4096,
+			wantBytesUsed:  (2415919104 - 2147483648) * 4096,
+			wantInodeTotal: 6000000,
+			wantInodeAvail: 5500000,
+			wantInodeUsed:  500000,
+		},
+		{
+			name: "no project quota assigned falls back gracefully to global capacity",
+			statfs: unix.Statfs_t{
+				Bsize:  4096,
+				Blocks: 26843545600, // 100 TiB global capacity
+				Bfree:  24159191040, // 90 TiB free
+				Files:  50000000,
+				Ffree:  49000000,
+			},
+			wantBytesTotal: 26843545600 * 4096,
+			wantBytesAvail: 24159191040 * 4096,
+			wantBytesUsed:  (26843545600 - 24159191040) * 4096,
+			wantInodeTotal: 50000000,
+			wantInodeAvail: 49000000,
+			wantInodeUsed:  1000000,
+		},
+		{
+			name: "clamps negative used counts when free exceeds total",
+			statfs: unix.Statfs_t{
+				Bsize:  4096,
+				Blocks: 100,
+				Bfree:  120,
+				Files:  50,
+				Ffree:  60,
+			},
+			wantBytesTotal: 100 * 4096,
+			wantBytesAvail: 120 * 4096,
+			wantBytesUsed:  0,
+			wantInodeTotal: 50,
+			wantInodeAvail: 60,
+			wantInodeUsed:  0,
+		},
+		{
+			name:      "statfs error returns Internal",
+			statfsErr: errors.New("statfs I/O error"),
+			wantCode:  codes.Internal,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			target := t.TempDir()
+			driver := initTestDriver(t)
+			ns := newNodeServer(driver, &mount.FakeMounter{}).(*nodeServer)
+			var calledPath string
+			ns.statfsFn = func(path string, buf *unix.Statfs_t) error {
+				calledPath = path
+				if tc.statfsErr != nil {
+					return tc.statfsErr
+				}
+				*buf = tc.statfs
+				return nil
+			}
+
+			resp, err := ns.NodeGetVolumeStats(t.Context(), &csi.NodeGetVolumeStatsRequest{
+				VolumeId:   testVolumeID + ":team-alpha",
+				VolumePath: target,
+			})
+			if tc.wantCode != codes.OK {
+				if status.Code(err) != tc.wantCode {
+					t.Fatalf("expected code %v, got %v (err: %v)", tc.wantCode, status.Code(err), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if calledPath != target {
+				t.Errorf("statfs called with path %q, expected %q", calledPath, target)
+			}
+
+			bytesUsage := resp.GetUsage()[0]
+			if bytesUsage.GetTotal() != tc.wantBytesTotal || bytesUsage.GetAvailable() != tc.wantBytesAvail || bytesUsage.GetUsed() != tc.wantBytesUsed {
+				t.Errorf("BYTES usage = %+v, want total=%d avail=%d used=%d", bytesUsage, tc.wantBytesTotal, tc.wantBytesAvail, tc.wantBytesUsed)
+			}
+
+			inodesUsage := resp.GetUsage()[1]
+			if inodesUsage.GetTotal() != tc.wantInodeTotal || inodesUsage.GetAvailable() != tc.wantInodeAvail || inodesUsage.GetUsed() != tc.wantInodeUsed {
+				t.Errorf("INODES usage = %+v, want total=%d avail=%d used=%d", inodesUsage, tc.wantInodeTotal, tc.wantInodeAvail, tc.wantInodeUsed)
+			}
+		})
+	}
+}
+
+func TestSubPathQuotaLifecycle(t *testing.T) {
+	oldRoot := GlobalMountRoot
+	defer func() { GlobalMountRoot = oldRoot }()
+	GlobalMountRoot = t.TempDir()
+
+	base := t.TempDir()
+	stagingPath := filepath.Join(base, "staging")
+	targetPath := filepath.Join(base, "pods", "pod-quota", "volumes", "kubernetes.io~csi", "pv-quota", "mount")
+
+	fm := &mount.FakeMounter{MountPoints: []mount.MountPoint{}}
+	driver := initTestDriver(t)
+	driver.config.MetadataService = &mockMetadataService{project: "test-project"}
+	ns := newNodeServer(driver, fm).(*nodeServer)
+
+	const quotaBytesTotal int64 = 9 * 1024 * 1024 * 1024 * 1024 // 9 TiB
+	const quotaBytesAvail int64 = 8 * 1024 * 1024 * 1024 * 1024 // 8 TiB
+	const blockSize int64 = 4096
+	ns.statfsFn = func(path string, buf *unix.Statfs_t) error {
+		if path != targetPath {
+			return fmt.Errorf("unexpected statfs path %q", path)
+		}
+		buf.Bsize = blockSize
+		buf.Blocks = uint64(quotaBytesTotal / blockSize)
+		buf.Bfree = uint64(quotaBytesAvail / blockSize)
+		buf.Files = 6000000
+		buf.Ffree = 5500000
+		return nil
+	}
+
+	vc := map[string]string{
+		keyInstanceIP: testIP,
+		keyFilesystem: testFilesystem,
+		keyPodUID:     "pod-quota",
+		"subPath":     "team-alpha",
+	}
+	volID := testVolumeID + ":team-alpha"
+	volCap := &csi.VolumeCapability{
+		AccessType: &csi.VolumeCapability_Mount{
+			Mount: &csi.VolumeCapability_MountVolume{
+				MountFlags: []string{"rw", "flock", "lazystatfs"},
+			},
+		},
+		AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER},
+	}
+
+	// 1. NodeStageVolume bypasses staging.
+	if _, err := ns.NodeStageVolume(t.Context(), &csi.NodeStageVolumeRequest{
+		VolumeId:          volID,
+		StagingTargetPath: stagingPath,
+		VolumeCapability:  volCap,
+		VolumeContext:     vc,
+	}); err != nil {
+		t.Fatalf("NodeStageVolume failed: %v", err)
+	}
+
+	// 2. NodePublishVolume mounts fileset with statfs_project and bind-mounts targetPath.
+	if _, err := ns.NodePublishVolume(t.Context(), &csi.NodePublishVolumeRequest{
+		VolumeId:          volID,
+		StagingTargetPath: stagingPath,
+		TargetPath:        targetPath,
+		VolumeCapability:  volCap,
+		VolumeContext:     vc,
+	}); err != nil {
+		t.Fatalf("NodePublishVolume failed: %v", err)
+	}
+
+	key := computeGlobalKey(volID, "", "team-alpha")
+	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
+	validateMountPoint(t, "quota lifecycle mount", fm,
+		&mount.MountPoint{Device: testDevice + "/team-alpha", Path: globalMountPath, Type: "lustre", Opts: []string{"rw", "flock", "lazystatfs", "statfs_project"}},
+		&mount.MountPoint{Device: testDevice + "/team-alpha", Path: targetPath, Type: "lustre", Opts: []string{"bind", "rw", "flock", "lazystatfs"}},
+	)
+
+	// 3. NodeGetVolumeStats reports project quota capacity on targetPath.
+	statsResp, err := ns.NodeGetVolumeStats(t.Context(), &csi.NodeGetVolumeStatsRequest{
+		VolumeId:   volID,
+		VolumePath: targetPath,
+	})
+	if err != nil {
+		t.Fatalf("NodeGetVolumeStats failed: %v", err)
+	}
+	if statsResp.GetUsage()[0].GetTotal() != quotaBytesTotal || statsResp.GetUsage()[0].GetAvailable() != quotaBytesAvail {
+		t.Errorf("expected quota BYTES total=%d avail=%d, got %+v", quotaBytesTotal, quotaBytesAvail, statsResp.GetUsage()[0])
+	}
+	if statsResp.GetUsage()[1].GetTotal() != 6000000 || statsResp.GetUsage()[1].GetAvailable() != 5500000 {
+		t.Errorf("expected quota INODES total=6000000 avail=5500000, got %+v", statsResp.GetUsage()[1])
+	}
+
+	// 4. NodeUnpublishVolume cleanly tears down targetPath and global mount.
+	if _, err := ns.NodeUnpublishVolume(t.Context(), &csi.NodeUnpublishVolumeRequest{
+		VolumeId:   volID,
+		TargetPath: targetPath,
+	}); err != nil {
+		t.Fatalf("NodeUnpublishVolume failed: %v", err)
+	}
+	if len(fm.MountPoints) != 0 {
+		t.Errorf("expected all mount points removed after unpublish, got %+v", fm.MountPoints)
+	}
 }

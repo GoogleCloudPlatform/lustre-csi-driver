@@ -12,7 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Prerequisite: Ensure /team-alpha and /team-beta already exist on the Lustre filesystem.
+# Prerequisites:
+# 1. Ensure /team-alpha and /team-beta already exist on the Lustre filesystem.
+# 2. (Optional, recommended for multi-tenant quota isolation) Pre-assign numeric
+#    Lustre Project IDs and set block/inode quotas on the admin client:
+#      sudo lfs project -p 101 -r -s /mnt/lustre/team-alpha
+#      sudo lfs setquota -p 101 -b 8T -B 9T -i 5000000 -I 6000000 /mnt/lustre
+#    The CSI driver automatically appends the `statfs_project` mount option for
+#    `subPath` mounts so `df -h`, `df -i`, and Kubelet metrics reflect the
+#    assigned project quota rather than the global filesystem capacity.
+# 3. Always use `persistentVolumeReclaimPolicy: Retain` for static subPath PVs.
 apiVersion: v1
 kind: PersistentVolume
 metadata:
