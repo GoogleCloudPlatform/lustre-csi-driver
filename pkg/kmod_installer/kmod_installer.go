@@ -23,6 +23,8 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +42,13 @@ const (
 	// equally and enable multi-rail load balancing across NUMA nodes when Multi-NIC is enabled.
 	lnetNumaRange = 1000000
 
+	// minCPUsPerPartition ensures each Lustre CPT partition has enough CPUs
+	// so ko2iblnd scheduler threads do not starve user workloads.
+	minCPUsPerPartition = 8
+
+	// maxPartitionsPerRDMANIC caps partitions per RDMA NIC to avoid ring/QP lock contention.
+	maxPartitionsPerRDMANIC = 4
+
 	cmdTimeout         = 15 * time.Minute
 	OSNodeLabel        = "cloud.google.com/gke-os-distribution"
 	PreviewClientLabel = "lustre.csi.storage.gke.io/preview-client-version"
@@ -51,6 +60,18 @@ var (
 	lustreModuleDir          = "/sys/module/lustre"
 
 	previewVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+	tcp0NetworkRegex    = regexp.MustCompile(`tcp0\(([^)]*)\)`)
+
+	// defaultRDMAModuleArgs are the default ko2iblnd tuning parameters for iRDMA-enabled nodes.
+	defaultRDMAModuleArgs = []string{
+		"ko2iblnd.credits=8192",
+		"ko2iblnd.ntx=8192",
+		"ko2iblnd.peer_credits=15",
+		"ko2iblnd.peer_credits_hiw=7",
+		"ko2iblnd.nscheds=16",
+		"ko2iblnd.conns_per_peer=8",
+		"ko2iblnd.fmr_pool_size=2048",
+	}
 )
 
 func lnetPort(enableLegacyLustrePort bool) int {
@@ -147,9 +168,9 @@ func readLnetConfig(path, defaultNic string) (string, error) {
 }
 
 // InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
-// It proceeds with the installation using the provided NICs.
-func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
-	return installLustreKmodOnCos(ctx, enableLegacyPort, customModuleArgs, nics, disableMultiNIC, primaryNic, previewClientVersion, runCosDKMS)
+// It proceeds with the installation using the provided standard and optional RDMA NICs.
+func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, rdmaNICs []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
+	return installLustreKmodOnCos(ctx, enableLegacyPort, customModuleArgs, nics, rdmaNICs, disableMultiNIC, primaryNic, previewClientVersion, runCosDKMS)
 }
 
 func runCosDKMS(ctx context.Context, args []string) ([]byte, error) {
@@ -163,13 +184,22 @@ func installLustreKmodOnCos(
 	enableLegacyPort bool,
 	customModuleArgs []string,
 	nics []string,
+	rdmaNICs []string,
 	disableMultiNIC bool,
 	primaryNic string,
 	previewClientVersion string,
 	execCosDKMS func(ctx context.Context, args []string) ([]byte, error),
 ) error {
 	lnetPort := lnetPort(enableLegacyPort)
-	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
+	isRDMA := len(rdmaNICs) > 0
+	var expectedNetwork string
+	var cpuPartitions int
+	if isRDMA {
+		cpuPartitions = CalculateCPUPartitions(runtime.NumCPU(), len(rdmaNICs))
+		expectedNetwork = BuildRDMALnetNetworkString(rdmaNICs, primaryNic, cpuPartitions)
+	} else {
+		expectedNetwork = BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
+	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
@@ -177,7 +207,7 @@ func installLustreKmodOnCos(
 	// TODO(samhalim): Add latency/success rate metrics for kmod cos-dkms install.
 	candidates := cosDKMSPackages(previewClientVersion)
 	for i, pkg := range candidates {
-		args := buildCosDKMSArgs(pkg, previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC)
+		args := buildCosDKMSArgs(pkg, previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC, isRDMA, cpuPartitions)
 		output, err := execCosDKMS(cmdCtx, args)
 		if err == nil {
 			klog.Infof("COS-DKMS output:\n%s\n", string(output))
@@ -357,14 +387,16 @@ func ubuntuClientModules(verOut string) ([]string, error) {
 }
 
 func parseLnetNetwork(networkStr string) []string {
-	// networkStr format: tcp0(eth0,eth1)
-	networkStr = strings.TrimPrefix(networkStr, "tcp0(")
-	networkStr = strings.TrimSuffix(networkStr, ")")
-	if networkStr == "" {
-		return []string{}
+	// Extracts standard TCP NICs from formats such as:
+	// - "tcp0(eth0,eth1)"
+	// - "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)"
+	if matches := tcp0NetworkRegex.FindStringSubmatch(networkStr); len(matches) == 2 {
+		if matches[1] == "" {
+			return []string{}
+		}
+		return strings.Split(matches[1], ",")
 	}
-
-	return strings.Split(networkStr, ",")
+	return []string{}
 }
 
 // GetNodeLabelValue returns the value of the specified label from the node.
@@ -393,6 +425,67 @@ func BuildLnetNetworkString(nics []string, primaryNic string, disableMultiNIC bo
 	return fmt.Sprintf("tcp0(%s)", strings.Join(orderedNics, ","))
 }
 
+// CalculateCPUPartitions computes libcfs.cpu_npartitions so partitions are evenly
+// divisible across rdmaNICs without exceeding the host's CPU budget.
+func CalculateCPUPartitions(numCPUs, numRDMANICs int) int {
+	if numRDMANICs <= 0 || numCPUs <= 0 {
+		return 1
+	}
+
+	maxPartitionsByCPU := numCPUs / minCPUsPerPartition
+	// Try 4, 2, then 1 partitions per NIC.
+	for _, partsPerNIC := range []int{maxPartitionsPerRDMANIC, 2, 1} {
+		total := numRDMANICs * partsPerNIC
+		if total <= maxPartitionsByCPU {
+			return total
+		}
+	}
+
+	// Fallback: 1 partition per NIC, never exceeding actual host CPUs.
+	if numRDMANICs > numCPUs {
+		return numCPUs
+	}
+	return numRDMANICs
+}
+
+// BuildRDMALnetNetworkString constructs the LNet network string for RDMA nodes,
+// spreading cpuPartitions evenly across sorted rdmaNICs, e.g.:
+// "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)".
+func BuildRDMALnetNetworkString(rdmaNICs []string, primaryNic string, cpuPartitions int) string {
+	if len(rdmaNICs) == 0 {
+		return fmt.Sprintf("tcp0(%s)", primaryNic)
+	}
+
+	sortedRDMA := slices.Clone(rdmaNICs)
+	slices.Sort(sortedRDMA)
+
+	// If fewer partitions than NICs (low-CPU edge case), omit explicit CPT lists
+	// so LNet binds NICs across available CPTs automatically.
+	if cpuPartitions < len(sortedRDMA) {
+		return fmt.Sprintf("o2ib(%s),tcp0(%s)", strings.Join(sortedRDMA, ","), primaryNic)
+	}
+
+	baseParts := cpuPartitions / len(sortedRDMA)
+	remainder := cpuPartitions % len(sortedRDMA)
+
+	nicEntries := make([]string, 0, len(sortedRDMA))
+	cptIdx := 0
+	for i, nic := range sortedRDMA {
+		count := baseParts
+		if i < remainder {
+			count++
+		}
+		parts := make([]string, 0, count)
+		for j := 0; j < count; j++ {
+			parts = append(parts, strconv.Itoa(cptIdx))
+			cptIdx++
+		}
+		nicEntries = append(nicEntries, fmt.Sprintf("%s[%s]", nic, strings.Join(parts, ",")))
+	}
+
+	return fmt.Sprintf("o2ib(%s),tcp0(%s)", strings.Join(nicEntries, ","), primaryNic)
+}
+
 // isPreviewVersion returns true if the version string represents a preview minor release stream (e.g. "2.16"),
 // for which the latest or max compatible build should be installed.
 func isPreviewVersion(version string) bool {
@@ -412,7 +505,7 @@ func cosDKMSPackages(previewClientVersion string) []string {
 }
 
 // buildCosDKMSArgs constructs the cos-dkms install command arguments.
-func buildCosDKMSArgs(lustreClientDriverPackage, previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC bool) []string {
+func buildCosDKMSArgs(lustreClientDriverPackage, previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC, isRDMA bool, cpuPartitions int) []string {
 	versionArgs := []string{
 		"--latest",
 	}
@@ -457,10 +550,33 @@ func buildCosDKMSArgs(lustreClientDriverPackage, previewClientVersion string, ln
 		"--logtostderr",
 		"--module-arg=lnet.accept_port="+strconv.Itoa(lnetPort),
 	)
-	if !disableMultiNIC {
+	if !disableMultiNIC || isRDMA {
 		args = append(args, fmt.Sprintf("--module-arg=lnet.lnet_numa_range=%d", lnetNumaRange))
 	}
 	args = append(args, fmt.Sprintf(`--module-arg=lnet.networks="%s"`, expectedNetwork))
+
+	if isRDMA {
+		// Track keys specified by customModuleArgs so user overrides win cleanly.
+		customKeys := make(map[string]bool, len(customModuleArgs))
+		for _, arg := range customModuleArgs {
+			if k, _, ok := strings.Cut(arg, "="); ok {
+				customKeys[k] = true
+			}
+		}
+
+		rdmaArgs := make([]string, 0, len(defaultRDMAModuleArgs)+1)
+		if cpuPartitions > 0 {
+			rdmaArgs = append(rdmaArgs, fmt.Sprintf("libcfs.cpu_npartitions=%d", cpuPartitions))
+		}
+		rdmaArgs = append(rdmaArgs, defaultRDMAModuleArgs...)
+
+		for _, arg := range rdmaArgs {
+			if k, _, ok := strings.Cut(arg, "="); ok && customKeys[k] {
+				continue
+			}
+			args = append(args, "--module-arg="+arg)
+		}
+	}
 
 	for _, arg := range customModuleArgs {
 		args = append(args, "--module-arg="+arg)

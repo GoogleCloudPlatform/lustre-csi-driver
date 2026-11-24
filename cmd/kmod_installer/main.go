@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"flag"
+	"runtime"
 	"strings"
 
 	gcemetadata "cloud.google.com/go/compute/metadata"
@@ -104,13 +105,13 @@ func main() {
 		klog.Fatalf("Failed to read preview client version: %v", err)
 	}
 
-	isRDMASupportedNode, err := networkIntf.IsRDMASupportedNode(ctx, *nodeID)
+	rdmaNICs, err := networkIntf.GetRDMANICsIfEnabled(ctx, *nodeID)
 	if err != nil {
-		klog.Fatalf("Failed to check if node %s is RDMA supported: %v", *nodeID, err)
+		klog.Fatalf("Failed to check RDMA support on node %s: %v", *nodeID, err)
 	}
-	if isRDMASupportedNode {
-		klog.Infof("Node %s is an RDMA supported node, configuring symmetric routing...", *nodeID)
-		if err := networkIntf.ConfigureRDMASymmetricRouting(); err != nil {
+	if len(rdmaNICs) > 0 {
+		klog.Infof("Node %s is an RDMA supported node (iRDMA NICs: %v), configuring symmetric routing...", *nodeID, rdmaNICs)
+		if err := networkIntf.ConfigureRDMASymmetricRouting(nics, rdmaNICs); err != nil {
 			klog.Fatalf("Failed to configure RDMA symmetric routing: %v", err)
 		}
 		klog.Infof("Successfully configured RDMA symmetric routing.")
@@ -118,7 +119,13 @@ func main() {
 
 	if isInstalled {
 		// Check if the current configuration matches the expectation.
-		expectedNetwork := kmod.BuildLnetNetworkString(nics, primaryNic, effectiveDisableMultiNIC)
+		var expectedNetwork string
+		if len(rdmaNICs) > 0 {
+			cpuPartitions := kmod.CalculateCPUPartitions(runtime.NumCPU(), len(rdmaNICs))
+			expectedNetwork = kmod.BuildRDMALnetNetworkString(rdmaNICs, primaryNic, cpuPartitions)
+		} else {
+			expectedNetwork = kmod.BuildLnetNetworkString(nics, primaryNic, effectiveDisableMultiNIC)
+		}
 		if _, err = kmod.GetLnetNetwork(expectedNetwork, primaryNic); err != nil {
 			klog.Fatalf("Failed to get LNET network parameters: %v", err)
 		}
@@ -131,7 +138,7 @@ func main() {
 
 	switch hostOS {
 	case "cos":
-		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, previewClientVersion)
+		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, rdmaNICs, effectiveDisableMultiNIC, primaryNic, previewClientVersion)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
 		}
