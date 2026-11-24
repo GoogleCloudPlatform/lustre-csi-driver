@@ -64,13 +64,13 @@ var (
 
 	// defaultRDMAModuleArgs are the default ko2iblnd tuning parameters for iRDMA-enabled nodes.
 	defaultRDMAModuleArgs = []string{
-		"ko2iblnd.credits=8192",
-		"ko2iblnd.ntx=8192",
+		"ko2iblnd.credits=2048",
+		"ko2iblnd.ntx=2048",
 		"ko2iblnd.peer_credits=15",
 		"ko2iblnd.peer_credits_hiw=7",
-		"ko2iblnd.nscheds=16",
-		"ko2iblnd.conns_per_peer=8",
+		"ko2iblnd.concurrent_sends=30",
 		"ko2iblnd.fmr_pool_size=2048",
+		"ko2iblnd.use_privileged_port=0",
 	}
 )
 

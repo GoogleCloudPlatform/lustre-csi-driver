@@ -105,16 +105,20 @@ func main() {
 		klog.Fatalf("Failed to read preview client version: %v", err)
 	}
 
-	rdmaNICs, err := networkIntf.GetRDMANICsIfEnabled(ctx, *nodeID)
-	if err != nil {
-		klog.Fatalf("Failed to check RDMA support on node %s: %v", *nodeID, err)
-	}
-	if len(rdmaNICs) > 0 {
-		klog.Infof("Node %s is an RDMA supported node (iRDMA NICs: %v), configuring symmetric routing...", *nodeID, rdmaNICs)
-		if err := networkIntf.ConfigureRDMASymmetricRouting(nics, rdmaNICs); err != nil {
-			klog.Fatalf("Failed to configure RDMA symmetric routing: %v", err)
+	var rdmaNICs []string
+	if hostOS == "cos" {
+		var err error
+		rdmaNICs, err = networkIntf.GetRDMANICsIfEnabled(ctx, *nodeID)
+		if err != nil {
+			klog.Fatalf("Failed to check RDMA support on node %s: %v", *nodeID, err)
 		}
-		klog.Infof("Successfully configured RDMA symmetric routing.")
+		if len(rdmaNICs) > 0 {
+			klog.Infof("Node %s is an RDMA supported node (iRDMA NICs: %v), configuring symmetric routing...", *nodeID, rdmaNICs)
+			if err := networkIntf.ConfigureRDMASymmetricRouting(nics, rdmaNICs); err != nil {
+				klog.Fatalf("Failed to configure RDMA symmetric routing: %v", err)
+			}
+			klog.Infof("Successfully configured RDMA symmetric routing.")
+		}
 	}
 
 	if isInstalled {
