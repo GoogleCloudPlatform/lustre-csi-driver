@@ -512,12 +512,14 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 	tests := []struct {
 		name                 string
 		previewClientVersion string
+		gkeVersion           string
 		disableMultiNIC      bool
 		want                 []string
 	}{
 		{
 			name:                 "Default production version (empty) with multi-NIC enabled",
 			previewClientVersion: "",
+			gkeVersion:           "v1.36.4-gke.2046003",
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
@@ -538,6 +540,7 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 		{
 			name:                 "Default production version with multi-NIC disabled",
 			previewClientVersion: "",
+			gkeVersion:           "v1.36.4-gke.2046003",
 			disableMultiNIC:      true,
 			want: []string{
 				"install",
@@ -555,8 +558,32 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			},
 		},
 		{
-			name:                 "Preview stream version 2.16 with multi-NIC enabled",
+			name:                 "Preview stream version 2.16 with GKE below 1.38 uses lustre-client-drivers-2_16",
 			previewClientVersion: "2.16",
+			gkeVersion:           "v1.36.4-gke.2046003",
+			disableMultiNIC:      false,
+			want: []string{
+				"install",
+				"lustre-client-drivers-2_16",
+				"--latest",
+				"--min-version=2.16.0",
+				"--max-version=2.16.9999",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				"--module-arg=lnet.lnet_numa_range=1000000",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+				"--module-arg=ptlrpc.max_ptlrpcds=8",
+			},
+		},
+		{
+			name:                 "Preview stream version 2.16 with GKE 1.38 uses lustre-client-drivers-pre",
+			previewClientVersion: "2.16",
+			gkeVersion:           "v1.38.0-gke.100",
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
@@ -577,8 +604,32 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			},
 		},
 		{
+			name:                 "Preview stream version 2.17 with GKE 1.38.5 uses lustre-client-drivers-pre",
+			previewClientVersion: "2.17",
+			gkeVersion:           "v1.38.5-gke.100",
+			disableMultiNIC:      false,
+			want: []string{
+				"install",
+				"lustre-client-drivers-pre",
+				"--latest",
+				"--min-version=2.17.0",
+				"--max-version=2.17.9999",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				"--module-arg=lnet.lnet_numa_range=1000000",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+				"--module-arg=ptlrpc.max_ptlrpcds=8",
+			},
+		},
+		{
 			name:                 "Exact driver build version with multi-NIC enabled",
 			previewClientVersion: "2.16.0_ddn52c",
+			gkeVersion:           "v1.36.4-gke.2046003",
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
@@ -602,11 +653,31 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := buildCosDKMSArgs(tc.previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, tc.disableMultiNIC)
+			got := buildCosDKMSArgs(tc.previewClientVersion, tc.gkeVersion, lnetPort, expectedNetwork, customModuleArgs, tc.disableMultiNIC)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("buildCosDKMSArgs() mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestGetNodeKubeletVersion(t *testing.T) {
+	t.Parallel()
+
+	node := &v1.Node{
+		Status: v1.NodeStatus{
+			NodeInfo: v1.NodeSystemInfo{
+				KubeletVersion: "v1.36.4-gke.2046003",
+			},
+		},
+	}
+
+	got, err := GetNodeKubeletVersion(context.Background(), "test-node", &mockNodeClient{node: node})
+	if err != nil {
+		t.Fatalf("GetNodeKubeletVersion() unexpected error: %v", err)
+	}
+	if got != "v1.36.4-gke.2046003" {
+		t.Errorf("GetNodeKubeletVersion() = %q, want %q", got, "v1.36.4-gke.2046003")
 	}
 }
 

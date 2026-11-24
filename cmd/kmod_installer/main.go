@@ -131,7 +131,14 @@ func main() {
 
 	switch hostOS {
 	case "cos":
-		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, previewClientVersion)
+		var gkeVersion string
+		if previewClientVersion != "" {
+			gkeVersion, err = kmod.GetNodeKubeletVersion(ctx, *nodeID, nodeClient)
+			if err != nil {
+				klog.Fatalf("Failed to read node GKE version: %v", err)
+			}
+		}
+		err = kmod.InstallLustreKmodOnCos(ctx, *enableLegacyLustrePort, customModuleArgs, nics, effectiveDisableMultiNIC, primaryNic, previewClientVersion, gkeVersion)
 		if err != nil {
 			klog.Fatalf("Failed to install lustre kernel modules on COS: %v", err)
 		}

@@ -29,6 +29,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
 
@@ -51,6 +52,7 @@ var (
 	lustreModuleDir          = "/sys/module/lustre"
 
 	previewVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+	gke138Version       = utilversion.MustParseGeneric("1.38.0")
 )
 
 func lnetPort(enableLegacyLustrePort bool) int {
@@ -148,14 +150,14 @@ func readLnetConfig(path, defaultNic string) (string, error) {
 
 // InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
 // It proceeds with the installation using the provided NICs.
-func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
+func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion, gkeVersion string) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
 
-	args := buildCosDKMSArgs(previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC)
+	args := buildCosDKMSArgs(previewClientVersion, gkeVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC)
 	cmd := exec.CommandContext(cmdCtx, "/usr/bin/cos-dkms", args...)
 	// TODO(samhalim): Add latency/success rate metrics for kmod cos-dkms install.
 
@@ -354,6 +356,18 @@ func GetNodeLabelValue(ctx context.Context, nodeID string, labelKey string, nc n
 	return strings.TrimSpace(node.GetLabels()[labelKey]), nil
 }
 
+// GetNodeKubeletVersion returns the KubeletVersion from the node status.
+func GetNodeKubeletVersion(ctx context.Context, nodeID string, nc network.NodeClient) (string, error) {
+	node, err := nc.GetNodeWithRetry(ctx, nodeID)
+	if err != nil {
+		return "", err
+	}
+	if node == nil {
+		return "", fmt.Errorf("node object %s is empty", nodeID)
+	}
+	return strings.TrimSpace(node.Status.NodeInfo.KubeletVersion), nil
+}
+
 // BuildLnetNetworkString constructs the LNet network configuration string.
 func BuildLnetNetworkString(nics []string, primaryNic string, disableMultiNIC bool) string {
 	if disableMultiNIC {
@@ -375,13 +389,17 @@ func isPreviewVersion(version string) bool {
 }
 
 // buildCosDKMSArgs constructs the cos-dkms install command arguments.
-func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC bool) []string {
+func buildCosDKMSArgs(previewClientVersion, gkeVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC bool) []string {
 	lustreClientDriverPackage := "lustre-client-drivers"
 	versionArgs := []string{
 		"--latest",
 	}
 	if previewClientVersion != "" {
-		lustreClientDriverPackage += "-pre"
+		if v, err := utilversion.ParseGeneric(strings.TrimSpace(gkeVersion)); err == nil && strings.TrimSpace(previewClientVersion) == "2.16" && v.LessThan(gke138Version) {
+			lustreClientDriverPackage = "lustre-client-drivers-2_16"
+		} else {
+			lustreClientDriverPackage += "-pre"
+		}
 		if isPreviewVersion(previewClientVersion) {
 			versionArgs = append(versionArgs, []string{
 				"--min-version=" + previewClientVersion + ".0",
@@ -394,8 +412,8 @@ func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork
 				"--package-version=" + previewClientVersion,
 			}
 		}
-		klog.Infof("Preview client version requested: %q. Using driver package %q with args: %v",
-			previewClientVersion, lustreClientDriverPackage, versionArgs)
+		klog.Infof("Preview client version requested: %q (GKE version: %q). Using driver package %q with args: %v",
+			previewClientVersion, gkeVersion, lustreClientDriverPackage, versionArgs)
 	}
 
 	// --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
