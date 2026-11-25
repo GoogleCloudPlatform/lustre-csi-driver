@@ -18,9 +18,11 @@ package kmodinstaller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -511,12 +513,14 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 
 	tests := []struct {
 		name                 string
+		packageName          string
 		previewClientVersion string
 		disableMultiNIC      bool
 		want                 []string
 	}{
 		{
 			name:                 "Default production version (empty) with multi-NIC enabled",
+			packageName:          "lustre-client-drivers",
 			previewClientVersion: "",
 			disableMultiNIC:      false,
 			want: []string{
@@ -537,6 +541,7 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 		},
 		{
 			name:                 "Default production version with multi-NIC disabled",
+			packageName:          "lustre-client-drivers",
 			previewClientVersion: "",
 			disableMultiNIC:      true,
 			want: []string{
@@ -555,12 +560,13 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			},
 		},
 		{
-			name:                 "Preview stream version 2.16 with multi-NIC enabled",
+			name:                 "Preview stream version 2.16 with lustre-client-drivers-2_16",
+			packageName:          "lustre-client-drivers-2_16",
 			previewClientVersion: "2.16",
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
-				"lustre-client-drivers-pre",
+				"lustre-client-drivers-2_16",
 				"--latest",
 				"--min-version=2.16.0",
 				"--max-version=2.16.9999",
@@ -577,13 +583,37 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			},
 		},
 		{
-			name:                 "Exact driver build version with multi-NIC enabled",
-			previewClientVersion: "2.16.0_ddn52c",
+			name:                 "Preview stream version 2.17 with lustre-client-drivers-pre",
+			packageName:          "lustre-client-drivers-pre",
+			previewClientVersion: "2.17",
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
 				"lustre-client-drivers-pre",
-				"--package-version=2.16.0_ddn52c",
+				"--latest",
+				"--min-version=2.17.0",
+				"--max-version=2.17.9999",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				"--module-arg=lnet.lnet_numa_range=1000000",
+				`--module-arg=lnet.networks="tcp0(eth0)"`,
+				"--module-arg=ptlrpc.max_ptlrpcds=8",
+			},
+		},
+		{
+			name:                 "Exact driver build version with multi-NIC enabled",
+			packageName:          "lustre-client-drivers-2_16",
+			previewClientVersion: "2.16.0_p60",
+			disableMultiNIC:      false,
+			want: []string{
+				"install",
+				"lustre-client-drivers-2_16",
+				"--package-version=2.16.0_p60",
 				"--gcs-bucket=cos-default",
 				"-w", "0",
 				"--kernelmodulestree=/host_modules",
@@ -602,9 +632,181 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := buildCosDKMSArgs(tc.previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, tc.disableMultiNIC)
+			got := buildCosDKMSArgs(tc.packageName, tc.previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, tc.disableMultiNIC)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("buildCosDKMSArgs() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestCosDKMSPackages(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		previewClientVersion string
+		want                 []string
+	}{
+		{
+			previewClientVersion: "",
+			want:                 []string{"lustre-client-drivers"},
+		},
+		{
+			previewClientVersion: "2.16",
+			want:                 []string{"lustre-client-drivers-2_16", "lustre-client-drivers", "lustre-client-drivers-pre"},
+		},
+		{
+			previewClientVersion: "2.16.0_p60",
+			want:                 []string{"lustre-client-drivers-2_16", "lustre-client-drivers", "lustre-client-drivers-pre"},
+		},
+		{
+			previewClientVersion: "2.16.0_pre1",
+			want:                 []string{"lustre-client-drivers-2_16", "lustre-client-drivers", "lustre-client-drivers-pre"},
+		},
+		{
+			previewClientVersion: "2.17",
+			want:                 []string{"lustre-client-drivers", "lustre-client-drivers-pre"},
+		},
+		{
+			previewClientVersion: "2.160",
+			want:                 []string{"lustre-client-drivers", "lustre-client-drivers-pre"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.previewClientVersion, func(t *testing.T) {
+			t.Parallel()
+
+			got := cosDKMSPackages(tc.previewClientVersion)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("cosDKMSPackages(%q) mismatch (-want +got):\n%s", tc.previewClientVersion, diff)
+			}
+		})
+	}
+}
+
+func TestInstallLustreKmodOnCos_PackageFallback(t *testing.T) {
+	t.Parallel()
+
+	notFoundOut := []byte("Error: could not find any usable versions of the specified package in the local or cache DKMS tree")
+
+	tests := []struct {
+		name                 string
+		previewClientVersion string
+		mockOutputs          map[string]struct {
+			out []byte
+			err error
+		}
+		wantCalls   []string
+		wantErr     bool
+		wantErrText string
+	}{
+		{
+			name:                 "2.16 succeeds on lustre-client-drivers-2_16 without fallback",
+			previewClientVersion: "2.16",
+			mockOutputs: map[string]struct {
+				out []byte
+				err error
+			}{
+				"lustre-client-drivers-2_16": {out: []byte("installed"), err: nil},
+			},
+			wantCalls: []string{"lustre-client-drivers-2_16"},
+		},
+		{
+			name:                 "2.16 falls through to lustre-client-drivers when -2_16 not found (GKE 1.38+)",
+			previewClientVersion: "2.16",
+			mockOutputs: map[string]struct {
+				out []byte
+				err error
+			}{
+				"lustre-client-drivers-2_16": {out: notFoundOut, err: errors.New("exit status 1")},
+				"lustre-client-drivers":      {out: []byte("installed"), err: nil},
+			},
+			wantCalls: []string{"lustre-client-drivers-2_16", "lustre-client-drivers"},
+		},
+		{
+			name:                 "2.16.0_pre1 falls through to lustre-client-drivers-pre",
+			previewClientVersion: "2.16.0_pre1",
+			mockOutputs: map[string]struct {
+				out []byte
+				err error
+			}{
+				"lustre-client-drivers-2_16": {out: notFoundOut, err: errors.New("exit status 1")},
+				"lustre-client-drivers":      {out: notFoundOut, err: errors.New("exit status 1")},
+				"lustre-client-drivers-pre":  {out: []byte("installed"), err: nil},
+			},
+			wantCalls: []string{"lustre-client-drivers-2_16", "lustre-client-drivers", "lustre-client-drivers-pre"},
+		},
+		{
+			name:                 "2.17 falls through lustre-client-drivers to lustre-client-drivers-pre",
+			previewClientVersion: "2.17",
+			mockOutputs: map[string]struct {
+				out []byte
+				err error
+			}{
+				"lustre-client-drivers":     {out: notFoundOut, err: errors.New("exit status 1")},
+				"lustre-client-drivers-pre": {out: []byte("installed"), err: nil},
+			},
+			wantCalls: []string{"lustre-client-drivers", "lustre-client-drivers-pre"},
+		},
+		{
+			name:                 "non-not-found error (LoadPin) stops immediately without fallback",
+			previewClientVersion: "2.16",
+			mockOutputs: map[string]struct {
+				out []byte
+				err error
+			}{
+				"lustre-client-drivers-2_16": {out: []byte("insmod: ERROR: Operation not permitted"), err: errors.New("exit status 1")},
+			},
+			wantCalls:   []string{"lustre-client-drivers-2_16"},
+			wantErr:     true,
+			wantErrText: "permission issue",
+		},
+		{
+			name:                 "all candidates not found returns error",
+			previewClientVersion: "2.16",
+			mockOutputs: map[string]struct {
+				out []byte
+				err error
+			}{
+				"lustre-client-drivers-2_16": {out: notFoundOut, err: errors.New("exit status 1")},
+				"lustre-client-drivers":      {out: notFoundOut, err: errors.New("exit status 1")},
+				"lustre-client-drivers-pre":  {out: notFoundOut, err: errors.New("exit status 1")},
+			},
+			wantCalls:   []string{"lustre-client-drivers-2_16", "lustre-client-drivers", "lustre-client-drivers-pre"},
+			wantErr:     true,
+			wantErrText: "could not find any usable versions",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls []string
+			err := installLustreKmodOnCos(
+				context.Background(),
+				false,
+				nil,
+				[]string{"eth0"},
+				false,
+				"eth0",
+				tc.previewClientVersion,
+				func(_ context.Context, args []string) ([]byte, error) {
+					pkg := args[1]
+					calls = append(calls, pkg)
+					res := tc.mockOutputs[pkg]
+					return res.out, res.err
+				},
+			)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("installLustreKmodOnCos() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if tc.wantErrText != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrText)) {
+				t.Errorf("installLustreKmodOnCos() error = %v, want substring %q", err, tc.wantErrText)
+			}
+			if diff := cmp.Diff(tc.wantCalls, calls); diff != "" {
+				t.Errorf("candidate package call order mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

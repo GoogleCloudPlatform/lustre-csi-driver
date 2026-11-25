@@ -149,19 +149,41 @@ func readLnetConfig(path, defaultNic string) (string, error) {
 // InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
 // It proceeds with the installation using the provided NICs.
 func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
+	return installLustreKmodOnCos(ctx, enableLegacyPort, customModuleArgs, nics, disableMultiNIC, primaryNic, previewClientVersion, runCosDKMS)
+}
+
+func runCosDKMS(ctx context.Context, args []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "/usr/bin/cos-dkms", args...)
+	klog.Infof("Installing Lustre kernel modules by executing command: %s", cmd.String())
+	return cmd.CombinedOutput()
+}
+
+func installLustreKmodOnCos(
+	ctx context.Context,
+	enableLegacyPort bool,
+	customModuleArgs []string,
+	nics []string,
+	disableMultiNIC bool,
+	primaryNic string,
+	previewClientVersion string,
+	execCosDKMS func(ctx context.Context, args []string) ([]byte, error),
+) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
 
-	args := buildCosDKMSArgs(previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC)
-	cmd := exec.CommandContext(cmdCtx, "/usr/bin/cos-dkms", args...)
 	// TODO(samhalim): Add latency/success rate metrics for kmod cos-dkms install.
+	candidates := cosDKMSPackages(previewClientVersion)
+	for i, pkg := range candidates {
+		args := buildCosDKMSArgs(pkg, previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC)
+		output, err := execCosDKMS(cmdCtx, args)
+		if err == nil {
+			klog.Infof("COS-DKMS output:\n%s\n", string(output))
+			return nil
+		}
 
-	klog.Infof("Installing Lustre kernel modules by executing command: %s", cmd.String())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
 		outputStr := string(output)
 		lowerOutput := strings.ToLower(outputStr)
 		if strings.Contains(lowerOutput, "operation not permitted") && strings.Contains(lowerOutput, "insmod") {
@@ -174,10 +196,13 @@ func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customMo
 			return fmt.Errorf("command timed out after %s: %w\noutput:\n%s", cmdTimeout, err, outputStr)
 		}
 
+		if i < len(candidates)-1 {
+			klog.Infof("COS-DKMS install failed for package %q (preview version %q): %v; trying next candidate", pkg, previewClientVersion, err)
+			continue
+		}
+
 		return fmt.Errorf("command execution failed: %w\noutput:\n%s", err, outputStr)
 	}
-
-	klog.Infof("COS-DKMS output:\n%s\n", string(output))
 
 	return nil
 }
@@ -374,14 +399,24 @@ func isPreviewVersion(version string) bool {
 	return previewVersionRegex.MatchString(strings.TrimSpace(version))
 }
 
+// cosDKMSPackages returns the ordered candidate COS-DKMS package names to try for previewClientVersion.
+func cosDKMSPackages(previewClientVersion string) []string {
+	trimmed := strings.TrimSpace(previewClientVersion)
+	if trimmed == "" {
+		return []string{"lustre-client-drivers"}
+	}
+	if trimmed == "2.16" || strings.HasPrefix(trimmed, "2.16.") || strings.HasPrefix(trimmed, "2.16_") || strings.HasPrefix(trimmed, "2.16-") {
+		return []string{"lustre-client-drivers-2_16", "lustre-client-drivers", "lustre-client-drivers-pre"}
+	}
+	return []string{"lustre-client-drivers", "lustre-client-drivers-pre"}
+}
+
 // buildCosDKMSArgs constructs the cos-dkms install command arguments.
-func buildCosDKMSArgs(previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC bool) []string {
-	lustreClientDriverPackage := "lustre-client-drivers"
+func buildCosDKMSArgs(lustreClientDriverPackage, previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC bool) []string {
 	versionArgs := []string{
 		"--latest",
 	}
 	if previewClientVersion != "" {
-		lustreClientDriverPackage += "-pre"
 		if isPreviewVersion(previewClientVersion) {
 			versionArgs = append(versionArgs, []string{
 				"--min-version=" + previewClientVersion + ".0",
