@@ -29,7 +29,6 @@ import (
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/util"
-	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
 )
 
@@ -52,7 +51,6 @@ var (
 	lustreModuleDir          = "/sys/module/lustre"
 
 	previewVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
-	gke138Version       = utilversion.MustParseGeneric("1.38.0")
 )
 
 func lnetPort(enableLegacyLustrePort bool) int {
@@ -150,20 +148,42 @@ func readLnetConfig(path, defaultNic string) (string, error) {
 
 // InstallLustreKmodOnCos installs the Lustre kernel modules on the node using cos-dkms on COS nodes.
 // It proceeds with the installation using the provided NICs.
-func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion, gkeVersion string) error {
+func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customModuleArgs []string, nics []string, disableMultiNIC bool, primaryNic, previewClientVersion string) error {
+	return installLustreKmodOnCos(ctx, enableLegacyPort, customModuleArgs, nics, disableMultiNIC, primaryNic, previewClientVersion, runCosDKMS)
+}
+
+func runCosDKMS(ctx context.Context, args []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "/usr/bin/cos-dkms", args...)
+	klog.Infof("Installing Lustre kernel modules by executing command: %s", cmd.String())
+	return cmd.CombinedOutput()
+}
+
+func installLustreKmodOnCos(
+	ctx context.Context,
+	enableLegacyPort bool,
+	customModuleArgs []string,
+	nics []string,
+	disableMultiNIC bool,
+	primaryNic string,
+	previewClientVersion string,
+	execCosDKMS func(ctx context.Context, args []string) ([]byte, error),
+) error {
 	lnetPort := lnetPort(enableLegacyPort)
 	expectedNetwork := BuildLnetNetworkString(nics, primaryNic, disableMultiNIC)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
 
-	args := buildCosDKMSArgs(previewClientVersion, gkeVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC)
-	cmd := exec.CommandContext(cmdCtx, "/usr/bin/cos-dkms", args...)
 	// TODO(samhalim): Add latency/success rate metrics for kmod cos-dkms install.
+	candidates := cosDKMSPackages(previewClientVersion)
+	for i, pkg := range candidates {
+		args := buildCosDKMSArgs(pkg, previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, disableMultiNIC)
+		output, err := execCosDKMS(cmdCtx, args)
+		if err == nil {
+			klog.Infof("COS-DKMS output:\n%s\n", string(output))
+			return nil
+		}
 
-	klog.Infof("Installing Lustre kernel modules by executing command: %s", cmd.String())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
 		outputStr := string(output)
 		lowerOutput := strings.ToLower(outputStr)
 		if strings.Contains(lowerOutput, "operation not permitted") && strings.Contains(lowerOutput, "insmod") {
@@ -176,10 +196,13 @@ func InstallLustreKmodOnCos(ctx context.Context, enableLegacyPort bool, customMo
 			return fmt.Errorf("command timed out after %s: %w\noutput:\n%s", cmdTimeout, err, outputStr)
 		}
 
+		if i < len(candidates)-1 {
+			klog.Infof("COS-DKMS install failed for package %q (preview version %q): %v; trying next candidate", pkg, previewClientVersion, err)
+			continue
+		}
+
 		return fmt.Errorf("command execution failed: %w\noutput:\n%s", err, outputStr)
 	}
-
-	klog.Infof("COS-DKMS output:\n%s\n", string(output))
 
 	return nil
 }
@@ -356,18 +379,6 @@ func GetNodeLabelValue(ctx context.Context, nodeID string, labelKey string, nc n
 	return strings.TrimSpace(node.GetLabels()[labelKey]), nil
 }
 
-// GetNodeKubeletVersion returns the KubeletVersion from the node status.
-func GetNodeKubeletVersion(ctx context.Context, nodeID string, nc network.NodeClient) (string, error) {
-	node, err := nc.GetNodeWithRetry(ctx, nodeID)
-	if err != nil {
-		return "", err
-	}
-	if node == nil {
-		return "", fmt.Errorf("node object %s is empty", nodeID)
-	}
-	return strings.TrimSpace(node.Status.NodeInfo.KubeletVersion), nil
-}
-
 // BuildLnetNetworkString constructs the LNet network configuration string.
 func BuildLnetNetworkString(nics []string, primaryNic string, disableMultiNIC bool) string {
 	if disableMultiNIC {
@@ -388,18 +399,24 @@ func isPreviewVersion(version string) bool {
 	return previewVersionRegex.MatchString(strings.TrimSpace(version))
 }
 
+// cosDKMSPackages returns the ordered candidate COS-DKMS package names to try for previewClientVersion.
+func cosDKMSPackages(previewClientVersion string) []string {
+	trimmed := strings.TrimSpace(previewClientVersion)
+	if trimmed == "" {
+		return []string{"lustre-client-drivers"}
+	}
+	if trimmed == "2.16" || strings.HasPrefix(trimmed, "2.16.") || strings.HasPrefix(trimmed, "2.16_") || strings.HasPrefix(trimmed, "2.16-") {
+		return []string{"lustre-client-drivers-2_16", "lustre-client-drivers", "lustre-client-drivers-pre"}
+	}
+	return []string{"lustre-client-drivers", "lustre-client-drivers-pre"}
+}
+
 // buildCosDKMSArgs constructs the cos-dkms install command arguments.
-func buildCosDKMSArgs(previewClientVersion, gkeVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC bool) []string {
-	lustreClientDriverPackage := "lustre-client-drivers"
+func buildCosDKMSArgs(lustreClientDriverPackage, previewClientVersion string, lnetPort int, expectedNetwork string, customModuleArgs []string, disableMultiNIC bool) []string {
 	versionArgs := []string{
 		"--latest",
 	}
 	if previewClientVersion != "" {
-		if v, err := utilversion.ParseGeneric(strings.TrimSpace(gkeVersion)); err == nil && strings.TrimSpace(previewClientVersion) == "2.16" && v.LessThan(gke138Version) {
-			lustreClientDriverPackage = "lustre-client-drivers-2_16"
-		} else {
-			lustreClientDriverPackage += "-pre"
-		}
 		if isPreviewVersion(previewClientVersion) {
 			versionArgs = append(versionArgs, []string{
 				"--min-version=" + previewClientVersion + ".0",
@@ -412,8 +429,8 @@ func buildCosDKMSArgs(previewClientVersion, gkeVersion string, lnetPort int, exp
 				"--package-version=" + previewClientVersion,
 			}
 		}
-		klog.Infof("Preview client version requested: %q (GKE version: %q). Using driver package %q with args: %v",
-			previewClientVersion, gkeVersion, lustreClientDriverPackage, versionArgs)
+		klog.Infof("Preview client version requested: %q. Using driver package %q with args: %v",
+			previewClientVersion, lustreClientDriverPackage, versionArgs)
 	}
 
 	// --gcs-bucket: Specifies the GCS bucket containing the driver packages ('cos-default').
