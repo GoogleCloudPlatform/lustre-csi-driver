@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -576,76 +577,48 @@ func (rm *RouteManager) writeSysctl(path, val string) error {
 	return os.WriteFile(path, []byte(val), 0o644)
 }
 
-// IsRDMASupportedNode checks if the node has the RDMA node label enabled and verifies that
-// irdma/idpf RDMA network interfaces exist on the node.
-func (rm *RouteManager) IsRDMASupportedNode(ctx context.Context, nodeID string) (bool, error) {
+// GetRDMANICsIfEnabled checks if the node has the RDMA node label enabled and, if so,
+// discovers and returns the sorted list of iRDMA/idpf RDMA network interfaces.
+// Returns nil, nil when the RDMA label is not enabled. Returns an error if the label
+// is enabled but no iRDMA interfaces are detected.
+func (rm *RouteManager) GetRDMANICsIfEnabled(ctx context.Context, nodeID string) ([]string, error) {
 	node, err := rm.nc.GetNodeWithRetry(ctx, nodeID)
 	if err != nil {
-		return false, fmt.Errorf("failed to get node %s: %w", nodeID, err)
+		return nil, fmt.Errorf("failed to get node %s: %w", nodeID, err)
 	}
 	if node == nil {
-		return false, fmt.Errorf("node %s is nil", nodeID)
+		return nil, fmt.Errorf("node %s is nil", nodeID)
 	}
 	labels := node.GetLabels()
 	rdmaVal := strings.ToLower(strings.TrimSpace(labels[RDMANodeLabel]))
 	if rdmaVal != "true" {
 		klog.V(4).Infof("Node %s does not have RDMA label %s enabled (value: %q)", nodeID, RDMANodeLabel, rdmaVal)
-		return false, nil
+		return nil, nil
 	}
 
 	irdmaNICs, err := rm.nl.GetIRDMANICs()
 	if err != nil {
-		return false, fmt.Errorf("failed to discover irdma interfaces for node %s: %w", nodeID, err)
+		return nil, fmt.Errorf("failed to discover irdma interfaces for node %s: %w", nodeID, err)
 	}
 	if len(irdmaNICs) == 0 {
-		return false, fmt.Errorf("node %s has label %s=true, but no iRDMA interfaces were detected", nodeID, RDMANodeLabel)
+		return nil, fmt.Errorf("node %s has label %s=true, but no iRDMA interfaces were detected", nodeID, RDMANodeLabel)
 	}
 
+	sort.Strings(irdmaNICs)
 	klog.Infof("Node %s matched RDMA conditions (RDMA label: %s=%s, discovered %d irdma interfaces: %v)",
 		nodeID, RDMANodeLabel, rdmaVal, len(irdmaNICs), irdmaNICs)
-	return true, nil
-}
-
-// GetStandardAndIRDMANICs discovers standard NICs (e.g. eth0, eth1) and irdma/idpf RDMA NICs (e.g. rdma0..rdma7).
-func (rm *RouteManager) GetStandardAndIRDMANICs() ([]string, []string, error) {
-	// Discover irdma/idpf RDMA NICs (e.g. rdma0..rdma7)
-	irdmaNICs, err := rm.nl.GetIRDMANICs()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get irdma NICs: %w", err)
-	}
-	sort.Strings(irdmaNICs)
-
-	var stdNICs []string
-	if rm.mc != nil {
-		// When metadata client is available, rm.GetStandardNICs() validates against the primary VPC
-		// so all standard NICs in the primary VPC (e.g. eth0, eth1) are returned.
-		stdNICs, err = rm.GetStandardNICs()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get validated standard NICs: %w", err)
-		}
-	} else {
-		// Fallback when metadata client is nil: query raw standard NICs directly
-		stdNICs, err = rm.nl.GetStandardNICs()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get standard NICs: %w", err)
-		}
-		sort.Strings(stdNICs)
-	}
-
-	klog.Infof("Discovered network devices for symmetric routing (standard: %v, irdma/idpf: %v)",
-		stdNICs, irdmaNICs)
-
-	return stdNICs, irdmaNICs, nil
+	return irdmaNICs, nil
 }
 
 // ConfigureRDMASymmetricRouting configures symmetric policy routing and loose reverse-path filtering
-// on RDMA supported nodes (A5X) for secondary RDMA interfaces.
-func (rm *RouteManager) ConfigureRDMASymmetricRouting() error {
-	gvnics, irdmaNICs, err := rm.GetStandardAndIRDMANICs()
-	if err != nil {
-		return fmt.Errorf("failed to discover network devices: %w", err)
-	}
-	allDevices := append(gvnics, irdmaNICs...)
+// on RDMA supported nodes for secondary RDMA interfaces.
+func (rm *RouteManager) ConfigureRDMASymmetricRouting(gvnics, irdmaNICs []string) error {
+	sortedIRDMA := slices.Clone(irdmaNICs)
+	slices.Sort(sortedIRDMA)
+
+	allDevices := make([]string, 0, len(gvnics)+len(sortedIRDMA))
+	allDevices = append(allDevices, gvnics...)
+	allDevices = append(allDevices, sortedIRDMA...)
 	if len(allDevices) == 0 {
 		klog.Warning("No network devices found for RDMA symmetric routing")
 		return nil
@@ -668,14 +641,14 @@ func (rm *RouteManager) ConfigureRDMASymmetricRouting() error {
 		}
 	}
 
-	if len(irdmaNICs) == 0 {
+	if len(sortedIRDMA) == 0 {
 		klog.Infof("No secondary RDMA interfaces found for dedicated routing tables")
 		return nil
 	}
 
 	// 2. Configure dedicated routing tables and policy rules for secondary RDMA NICs
 	var errs []error
-	for i, dev := range irdmaNICs {
+	for i, dev := range sortedIRDMA {
 		link, err := rm.nl.LinkByName(dev)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to get link for %s: %w", dev, err))

@@ -881,18 +881,18 @@ func TestGetPrimaryNIC(t *testing.T) {
 	}
 }
 
-func TestIsRDMASupportedNode(t *testing.T) {
+func TestGetRDMANICsIfEnabled(t *testing.T) {
 	tests := []struct {
 		name         string
 		node         *v1.Node
 		nodeErr      error
 		irdmaNICs    []string
 		irdmaNICsErr error
-		wantMatch    bool
+		wantNICs     []string
 		wantErr      bool
 	}{
 		{
-			name: "matched rdma=true with irdma NICs present",
+			name: "matched rdma=true with irdma NICs present and sorted",
 			node: &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
@@ -900,8 +900,8 @@ func TestIsRDMASupportedNode(t *testing.T) {
 					},
 				},
 			},
-			irdmaNICs: []string{"rdma0", "rdma1"},
-			wantMatch: true,
+			irdmaNICs: []string{"rdma1", "rdma0"},
+			wantNICs:  []string{"rdma0", "rdma1"},
 			wantErr:   false,
 		},
 		{
@@ -914,7 +914,7 @@ func TestIsRDMASupportedNode(t *testing.T) {
 				},
 			},
 			irdmaNICs: []string{},
-			wantMatch: false,
+			wantNICs:  nil,
 			wantErr:   true,
 		},
 		{
@@ -927,7 +927,7 @@ func TestIsRDMASupportedNode(t *testing.T) {
 				},
 			},
 			irdmaNICsErr: errors.New("discovery failure"),
-			wantMatch:    false,
+			wantNICs:     nil,
 			wantErr:      true,
 		},
 		{
@@ -940,7 +940,7 @@ func TestIsRDMASupportedNode(t *testing.T) {
 				},
 			},
 			irdmaNICs: []string{"rdma0", "rdma1"},
-			wantMatch: false,
+			wantNICs:  nil,
 			wantErr:   false,
 		},
 		{
@@ -951,15 +951,15 @@ func TestIsRDMASupportedNode(t *testing.T) {
 				},
 			},
 			irdmaNICs: []string{"rdma0"},
-			wantMatch: false,
+			wantNICs:  nil,
 			wantErr:   false,
 		},
 		{
-			name:      "node get error",
-			node:      nil,
-			nodeErr:   errors.New("api error"),
-			wantMatch: false,
-			wantErr:   true,
+			name:     "node get error",
+			node:     nil,
+			nodeErr:  errors.New("api error"),
+			wantNICs: nil,
+			wantErr:  true,
 		},
 	}
 
@@ -974,12 +974,12 @@ func TestIsRDMASupportedNode(t *testing.T) {
 				getIRDMANICsErr:      tt.irdmaNICsErr,
 			}
 			rm := Manager(fakeNL, fakeNC, nil)
-			gotMatch, err := rm.IsRDMASupportedNode(context.Background(), "test-node")
+			gotNICs, err := rm.GetRDMANICsIfEnabled(context.Background(), "test-node")
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("IsRDMASupportedNode() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("GetRDMANICsIfEnabled() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if gotMatch != tt.wantMatch {
-				t.Errorf("IsRDMASupportedNode() = %v, want %v", gotMatch, tt.wantMatch)
+			if diff := cmp.Diff(tt.wantNICs, gotNICs); diff != "" {
+				t.Errorf("GetRDMANICsIfEnabled() diff (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -1005,8 +1005,6 @@ func TestConfigureRDMASymmetricRouting(t *testing.T) {
 			"rdma0": {{Gw: net.ParseIP("10.0.1.1")}},
 			"rdma1": {{Gw: net.ParseIP("10.0.2.1")}},
 		},
-		getStandardNICsResponse: []string{"eth0"},
-		getIRDMANICsResponse:    []string{"rdma1", "rdma0"},
 	}
 
 	writtenSysctls := make(map[string]string)
@@ -1016,7 +1014,7 @@ func TestConfigureRDMASymmetricRouting(t *testing.T) {
 		return nil
 	}
 
-	err := rm.ConfigureRDMASymmetricRouting()
+	err := rm.ConfigureRDMASymmetricRouting([]string{"eth0"}, []string{"rdma1", "rdma0"})
 	if err != nil {
 		t.Fatalf("ConfigureRDMASymmetricRouting() unexpected error: %v", err)
 	}
@@ -1102,14 +1100,12 @@ func TestConfigureRDMASymmetricRouting_Idempotent(t *testing.T) {
 		routeListMap: map[string][]netlink.Route{
 			"rdma0": {{Gw: net.ParseIP("10.0.1.1")}},
 		},
-		getStandardNICsResponse: []string{"eth0"},
-		getIRDMANICsResponse:    []string{"rdma0"},
 	}
 
 	rm := Manager(fakeNL, nil, nil)
 	rm.sysctlWriter = func(_, _ string) error { return nil }
 
-	err := rm.ConfigureRDMASymmetricRouting()
+	err := rm.ConfigureRDMASymmetricRouting([]string{"eth0"}, []string{"rdma0"})
 	if err != nil {
 		t.Fatalf("ConfigureRDMASymmetricRouting() unexpected error: %v", err)
 	}
@@ -1121,15 +1117,13 @@ func TestConfigureRDMASymmetricRouting_Idempotent(t *testing.T) {
 }
 
 func TestConfigureRDMASymmetricRouting_RPFilterError(t *testing.T) {
-	fakeNL := &fakeNetlink{
-		getStandardNICsResponse: []string{"eth0"},
-	}
+	fakeNL := &fakeNetlink{}
 	rm := Manager(fakeNL, nil, nil)
 	rm.sysctlWriter = func(path, _ string) error {
 		return fmt.Errorf("permission denied writing to %s", path)
 	}
 
-	err := rm.ConfigureRDMASymmetricRouting()
+	err := rm.ConfigureRDMASymmetricRouting([]string{"eth0"}, nil)
 	if err == nil {
 		t.Fatalf("Expected ConfigureRDMASymmetricRouting() to fail when writing rp_filter fails, got nil")
 	}
@@ -1156,14 +1150,12 @@ func TestConfigureRDMASymmetricRouting_MissingGateway(t *testing.T) {
 			"rdma0": {},
 			"rdma1": {{Gw: net.ParseIP("10.0.2.1")}},
 		},
-		getStandardNICsResponse: []string{},
-		getIRDMANICsResponse:    []string{"rdma0", "rdma1"},
 	}
 
 	rm := Manager(fakeNL, nil, nil)
 	rm.sysctlWriter = func(_, _ string) error { return nil }
 
-	err := rm.ConfigureRDMASymmetricRouting()
+	err := rm.ConfigureRDMASymmetricRouting([]string{}, []string{"rdma0", "rdma1"})
 	if err == nil {
 		t.Fatalf("Expected ConfigureRDMASymmetricRouting() to fail on missing gateway, got nil")
 	}
@@ -1207,14 +1199,12 @@ func TestConfigureRDMASymmetricRouting_PartialFailure(t *testing.T) {
 			}
 			return nil
 		},
-		getStandardNICsResponse: []string{},
-		getIRDMANICsResponse:    []string{"rdma0", "rdma1"},
 	}
 
 	rm := Manager(fakeNL, nil, nil)
 	rm.sysctlWriter = func(_, _ string) error { return nil }
 
-	err := rm.ConfigureRDMASymmetricRouting()
+	err := rm.ConfigureRDMASymmetricRouting([]string{}, []string{"rdma0", "rdma1"})
 	if err == nil {
 		t.Fatalf("Expected ConfigureRDMASymmetricRouting() to return accumulated errors, got nil")
 	}
@@ -1289,152 +1279,17 @@ func TestConfigureRDMASymmetricRouting_DHCPWaiting(t *testing.T) {
 				routeListMap: map[string][]netlink.Route{
 					"rdma1": {{Gw: net.ParseIP("10.0.2.1")}},
 				},
-				getStandardNICsResponse: []string{},
-				getIRDMANICsResponse:    []string{"rdma0", "rdma1"},
 			}
 
 			rm := Manager(fakeNL, nil, nil)
 			rm.sysctlWriter = func(_, _ string) error { return nil }
 
-			err := rm.ConfigureRDMASymmetricRouting()
+			err := rm.ConfigureRDMASymmetricRouting([]string{}, []string{"rdma0", "rdma1"})
 			if err == nil {
 				t.Fatalf("Expected ConfigureRDMASymmetricRouting() to return error, got nil")
 			}
 			if !strings.Contains(err.Error(), tt.expectedErrSubstr) {
 				t.Errorf("Expected error to contain %q, got: %v", tt.expectedErrSubstr, err)
-			}
-		})
-	}
-}
-
-func TestGetStandardAndIRDMANICs(t *testing.T) {
-	tests := []struct {
-		name          string
-		mc            MetadataClient
-		linkMap       map[string]netlink.Link
-		stdNICs       []string
-		stdErr        error
-		irdmaNICs     []string
-		irdmaErr      error
-		wantGVNICs    []string
-		wantIRDMANICs []string
-		wantErr       bool
-	}{
-		{
-			name:          "sorted gvnics and sorted irdma nics",
-			stdNICs:       []string{"eth1", "eth0"},
-			irdmaNICs:     []string{"rdma3", "rdma1", "rdma0"},
-			wantGVNICs:    []string{"eth0", "eth1"},
-			wantIRDMANICs: []string{"rdma0", "rdma1", "rdma3"},
-			wantErr:       false,
-		},
-		{
-			name:          "standard and irdma nics with nil metadata client",
-			stdNICs:       []string{"eth0"},
-			irdmaNICs:     []string{"rdma0", "rdma1"},
-			wantGVNICs:    []string{"eth0"},
-			wantIRDMANICs: []string{"rdma0", "rdma1"},
-			wantErr:       false,
-		},
-		{
-			name: "separates bare-metal idpf primary nic from falcon vpc idpf rdma nic via metadata",
-			mc: &fakeMetadataClient{
-				getNicsResponse: []metadata.NetworkInterface{
-					{Mac: "00:00:00:00:00:01", Network: "projects/123/networks/regular-vpc"},
-					{Mac: "00:00:00:00:00:02", Network: "projects/123/networks/falcon-vpc"},
-				},
-			},
-			linkMap: map[string]netlink.Link{
-				"eth0":  fakeLink{attrs: &netlink.LinkAttrs{Name: "eth0", HardwareAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}}},
-				"rdma0": fakeLink{attrs: &netlink.LinkAttrs{Name: "rdma0", HardwareAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x02}}},
-			},
-			stdNICs:       []string{"eth0", "rdma0"},
-			irdmaNICs:     []string{"rdma0"},
-			wantGVNICs:    []string{"eth0"},
-			wantIRDMANICs: []string{"rdma0"},
-			wantErr:       false,
-		},
-		{
-			name: "keeps both eth0 and eth1 in stdNICs when on the same primary vpc and rdma0 in irdmaNICs",
-			mc: &fakeMetadataClient{
-				getNicsResponse: []metadata.NetworkInterface{
-					{Mac: "00:00:00:00:00:01", Network: "projects/123/networks/regular-vpc"},
-					{Mac: "00:00:00:00:00:02", Network: "projects/123/networks/regular-vpc"},
-					{Mac: "00:00:00:00:00:03", Network: "projects/123/networks/falcon-vpc"},
-				},
-			},
-			linkMap: map[string]netlink.Link{
-				"eth0":  fakeLink{attrs: &netlink.LinkAttrs{Name: "eth0", HardwareAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}}},
-				"eth1":  fakeLink{attrs: &netlink.LinkAttrs{Name: "eth1", HardwareAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x02}}},
-				"rdma0": fakeLink{attrs: &netlink.LinkAttrs{Name: "rdma0", HardwareAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x03}}},
-			},
-			stdNICs:       []string{"eth0", "eth1", "rdma0"},
-			irdmaNICs:     []string{"rdma0"},
-			wantGVNICs:    []string{"eth0", "eth1"},
-			wantIRDMANICs: []string{"rdma0"},
-			wantErr:       false,
-		},
-		{
-			name: "multi-network cluster: secondary non-primary vpc eth1 is not classified as rdma",
-			mc: &fakeMetadataClient{
-				getNicsResponse: []metadata.NetworkInterface{
-					{Mac: "00:00:00:00:00:01", Network: "projects/123/networks/primary-vpc"},
-					{Mac: "00:00:00:00:00:02", Network: "projects/123/networks/workload-vpc"},
-					{Mac: "00:00:00:00:00:03", Network: "projects/123/networks/falcon-vpc"},
-				},
-			},
-			linkMap: map[string]netlink.Link{
-				"eth0":  fakeLink{attrs: &netlink.LinkAttrs{Name: "eth0", HardwareAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}}},
-				"eth1":  fakeLink{attrs: &netlink.LinkAttrs{Name: "eth1", HardwareAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x02}}},
-				"rdma0": fakeLink{attrs: &netlink.LinkAttrs{Name: "rdma0", HardwareAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x03}}},
-			},
-			stdNICs:       []string{"eth0", "eth1", "rdma0"},
-			irdmaNICs:     []string{"rdma0"},
-			wantGVNICs:    []string{"eth0"},
-			wantIRDMANICs: []string{"rdma0"},
-			wantErr:       false,
-		},
-		{
-			name:          "only gvnics",
-			stdNICs:       []string{"eth0"},
-			irdmaNICs:     []string{},
-			wantGVNICs:    []string{"eth0"},
-			wantIRDMANICs: []string{},
-			wantErr:       false,
-		},
-		{
-			name:     "irdma error fails",
-			stdNICs:  []string{"eth0"},
-			irdmaErr: errors.New("failed to query ethtool"),
-			wantErr:  true,
-		},
-		{
-			name:    "std error with metadata client fails",
-			mc:      &fakeMetadataClient{},
-			stdErr:  errors.New("failed to query metadata"),
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fakeNL := &fakeNetlink{
-				linkByNameMap:           tt.linkMap,
-				getStandardNICsResponse: tt.stdNICs,
-				getStandardNICsErr:      tt.stdErr,
-				getIRDMANICsResponse:    tt.irdmaNICs,
-				getIRDMANICsErr:         tt.irdmaErr,
-			}
-			rm := Manager(fakeNL, nil, tt.mc)
-			gotGVNICs, gotIRDMANICs, err := rm.GetStandardAndIRDMANICs()
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("GetStandardAndIRDMANICs() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if diff := cmp.Diff(tt.wantGVNICs, gotGVNICs); diff != "" {
-				t.Errorf("GetStandardAndIRDMANICs() gvnics diff (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(tt.wantIRDMANICs, gotIRDMANICs); diff != "" {
-				t.Errorf("GetStandardAndIRDMANICs() irdmaNICs diff (-want +got):\n%s", diff)
 			}
 		})
 	}

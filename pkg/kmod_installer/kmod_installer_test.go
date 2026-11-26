@@ -199,6 +199,25 @@ func TestGetLnetNetwork(t *testing.T) {
 			defaultNic:   "eth0",
 			want:         []string{"eth0"},
 		},
+		{
+			name:         "RDMA o2ib and tcp0 single NIC",
+			fileContent:  "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)",
+			expectedNics: "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)",
+			defaultNic:   "eth0",
+			want:         []string{"eth0"},
+		},
+		{
+			name:        "RDMA o2ib and tcp0 multi NIC",
+			fileContent: "o2ib(rdma0[0,1],rdma1[2,3]),tcp0(eth0,eth1)",
+			defaultNic:  "eth0",
+			want:        []string{"eth0", "eth1"},
+		},
+		{
+			name:        "RDMA o2ib only without tcp0",
+			fileContent: "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7])",
+			defaultNic:  "eth0",
+			want:        []string{},
+		},
 	}
 
 	for _, tc := range tests {
@@ -508,20 +527,26 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 	t.Parallel()
 
 	lnetPort := 988
-	expectedNetwork := "tcp0(eth0)"
-	customModuleArgs := []string{"ptlrpc.max_ptlrpcds=8"}
+	defaultNetwork := "tcp0(eth0)"
+	defaultCustomArgs := []string{"ptlrpc.max_ptlrpcds=8"}
 
 	tests := []struct {
 		name                 string
 		packageName          string
 		previewClientVersion string
+		expectedNetwork      string
+		customModuleArgs     []string
 		disableMultiNIC      bool
+		isRDMA               bool
+		cpuPartitions        int
 		want                 []string
 	}{
 		{
 			name:                 "Default production version (empty) with multi-NIC enabled",
 			packageName:          "lustre-client-drivers",
 			previewClientVersion: "",
+			expectedNetwork:      defaultNetwork,
+			customModuleArgs:     defaultCustomArgs,
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
@@ -543,6 +568,8 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			name:                 "Default production version with multi-NIC disabled",
 			packageName:          "lustre-client-drivers",
 			previewClientVersion: "",
+			expectedNetwork:      defaultNetwork,
+			customModuleArgs:     defaultCustomArgs,
 			disableMultiNIC:      true,
 			want: []string{
 				"install",
@@ -563,6 +590,8 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			name:                 "Preview stream version 2.16 with lustre-client-drivers-2_16",
 			packageName:          "lustre-client-drivers-2_16",
 			previewClientVersion: "2.16",
+			expectedNetwork:      defaultNetwork,
+			customModuleArgs:     defaultCustomArgs,
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
@@ -586,6 +615,8 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			name:                 "Preview stream version 2.17 with lustre-client-drivers-pre",
 			packageName:          "lustre-client-drivers-pre",
 			previewClientVersion: "2.17",
+			expectedNetwork:      defaultNetwork,
+			customModuleArgs:     defaultCustomArgs,
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
@@ -609,6 +640,8 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 			name:                 "Exact driver build version with multi-NIC enabled",
 			packageName:          "lustre-client-drivers-2_16",
 			previewClientVersion: "2.16.0_p60",
+			expectedNetwork:      defaultNetwork,
+			customModuleArgs:     defaultCustomArgs,
 			disableMultiNIC:      false,
 			want: []string{
 				"install",
@@ -626,13 +659,73 @@ func TestBuildCosDKMSArgs(t *testing.T) {
 				"--module-arg=ptlrpc.max_ptlrpcds=8",
 			},
 		},
+		{
+			name:            "RDMA node with A5X partitions and default ko2iblnd args",
+			packageName:     "lustre-client-drivers",
+			expectedNetwork: "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)",
+			disableMultiNIC: true,
+			isRDMA:          true,
+			cpuPartitions:   8,
+			want: []string{
+				"install",
+				"lustre-client-drivers",
+				"--latest",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				"--module-arg=lnet.lnet_numa_range=1000000",
+				`--module-arg=lnet.networks="o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)"`,
+				"--module-arg=libcfs.cpu_npartitions=8",
+				"--module-arg=ko2iblnd.credits=2048",
+				"--module-arg=ko2iblnd.ntx=2048",
+				"--module-arg=ko2iblnd.peer_credits=15",
+				"--module-arg=ko2iblnd.peer_credits_hiw=7",
+				"--module-arg=ko2iblnd.concurrent_sends=30",
+				"--module-arg=ko2iblnd.fmr_pool_size=2048",
+				"--module-arg=ko2iblnd.use_privileged_port=0",
+			},
+		},
+		{
+			name:             "RDMA node with custom module arg overrides",
+			packageName:      "lustre-client-drivers",
+			expectedNetwork:  "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)",
+			customModuleArgs: []string{"ko2iblnd.credits=4096", "libcfs.cpu_npartitions=16"},
+			isRDMA:           true,
+			cpuPartitions:    8,
+			want: []string{
+				"install",
+				"lustre-client-drivers",
+				"--latest",
+				"--gcs-bucket=cos-default",
+				"-w", "0",
+				"--kernelmodulestree=/host_modules",
+				"--lsb-release-path=/host_etc/lsb-release",
+				"--insert-on-install",
+				"--logtostderr",
+				"--module-arg=lnet.accept_port=988",
+				"--module-arg=lnet.lnet_numa_range=1000000",
+				`--module-arg=lnet.networks="o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)"`,
+				"--module-arg=ko2iblnd.ntx=2048",
+				"--module-arg=ko2iblnd.peer_credits=15",
+				"--module-arg=ko2iblnd.peer_credits_hiw=7",
+				"--module-arg=ko2iblnd.concurrent_sends=30",
+				"--module-arg=ko2iblnd.fmr_pool_size=2048",
+				"--module-arg=ko2iblnd.use_privileged_port=0",
+				"--module-arg=ko2iblnd.credits=4096",
+				"--module-arg=libcfs.cpu_npartitions=16",
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := buildCosDKMSArgs(tc.packageName, tc.previewClientVersion, lnetPort, expectedNetwork, customModuleArgs, tc.disableMultiNIC)
+			got := buildCosDKMSArgs(tc.packageName, tc.previewClientVersion, lnetPort, tc.expectedNetwork, tc.customModuleArgs, tc.disableMultiNIC, tc.isRDMA, tc.cpuPartitions)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("buildCosDKMSArgs() mismatch (-want +got):\n%s", diff)
 			}
@@ -789,6 +882,7 @@ func TestInstallLustreKmodOnCos_PackageFallback(t *testing.T) {
 				false,
 				nil,
 				[]string{"eth0"},
+				nil,
 				false,
 				"eth0",
 				tc.previewClientVersion,
@@ -807,6 +901,147 @@ func TestInstallLustreKmodOnCos_PackageFallback(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantCalls, calls); diff != "" {
 				t.Errorf("candidate package call order mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestCalculateCPUPartitions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		numCPUs     int
+		numRDMANICs int
+		want        int
+	}{
+		{
+			name:        "A5X metal (144 CPUs, 2 RDMA NICs)",
+			numCPUs:     144,
+			numRDMANICs: 2,
+			want:        8,
+		},
+		{
+			name:        "A5X (96 CPUs, 2 RDMA NICs)",
+			numCPUs:     96,
+			numRDMANICs: 2,
+			want:        8,
+		},
+		{
+			name:        "C4X highcpu-192 (192 CPUs, 8 RDMA NICs)",
+			numCPUs:     192,
+			numRDMANICs: 8,
+			want:        16,
+		},
+		{
+			name:        "C4X (128 CPUs, 8 RDMA NICs)",
+			numCPUs:     128,
+			numRDMANICs: 8,
+			want:        16,
+		},
+		{
+			name:        "C4X (64 CPUs, 8 RDMA NICs)",
+			numCPUs:     64,
+			numRDMANICs: 8,
+			want:        8,
+		},
+		{
+			name:        "Large node (256 CPUs, 8 RDMA NICs)",
+			numCPUs:     256,
+			numRDMANICs: 8,
+			want:        32,
+		},
+		{
+			name:        "Single RDMA NIC (64 CPUs, 1 NIC)",
+			numCPUs:     64,
+			numRDMANICs: 1,
+			want:        4,
+		},
+		{
+			name:        "Low CPU fallback capped at numCPUs (4 CPUs, 8 NICs)",
+			numCPUs:     4,
+			numRDMANICs: 8,
+			want:        4,
+		},
+		{
+			name:        "Zero RDMA NICs returns 1",
+			numCPUs:     64,
+			numRDMANICs: 0,
+			want:        1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := CalculateCPUPartitions(tc.numCPUs, tc.numRDMANICs); got != tc.want {
+				t.Errorf("CalculateCPUPartitions(%d, %d) = %d, want %d", tc.numCPUs, tc.numRDMANICs, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildRDMALnetNetworkString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		rdmaNICs      []string
+		primaryNic    string
+		cpuPartitions int
+		want          string
+	}{
+		{
+			name:          "A5X 2 RDMA NICs with 8 partitions",
+			rdmaNICs:      []string{"rdma0", "rdma1"},
+			primaryNic:    "eth0",
+			cpuPartitions: 8,
+			want:          "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)",
+		},
+		{
+			name:          "Unsorted RDMA NICs are sorted deterministically",
+			rdmaNICs:      []string{"rdma1", "rdma0"},
+			primaryNic:    "eth0",
+			cpuPartitions: 8,
+			want:          "o2ib(rdma0[0,1,2,3],rdma1[4,5,6,7]),tcp0(eth0)",
+		},
+		{
+			name:          "C4X 8 RDMA NICs with 16 partitions",
+			rdmaNICs:      []string{"rdma0", "rdma1", "rdma2", "rdma3", "rdma4", "rdma5", "rdma6", "rdma7"},
+			primaryNic:    "eth0",
+			cpuPartitions: 16,
+			want:          "o2ib(rdma0[0,1],rdma1[2,3],rdma2[4,5],rdma3[6,7],rdma4[8,9],rdma5[10,11],rdma6[12,13],rdma7[14,15]),tcp0(eth0)",
+		},
+		{
+			name:          "Single RDMA NIC with 4 partitions",
+			rdmaNICs:      []string{"rdma0"},
+			primaryNic:    "eth0",
+			cpuPartitions: 4,
+			want:          "o2ib(rdma0[0,1,2,3]),tcp0(eth0)",
+		},
+		{
+			name:          "Fewer partitions than NICs omits CPT lists",
+			rdmaNICs:      []string{"rdma0", "rdma1", "rdma2", "rdma3"},
+			primaryNic:    "eth0",
+			cpuPartitions: 2,
+			want:          "o2ib(rdma0,rdma1,rdma2,rdma3),tcp0(eth0)",
+		},
+		{
+			name:          "Empty RDMA NICs falls back to tcp0",
+			rdmaNICs:      []string{},
+			primaryNic:    "eth0",
+			cpuPartitions: 8,
+			want:          "tcp0(eth0)",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := BuildRDMALnetNetworkString(tc.rdmaNICs, tc.primaryNic, tc.cpuPartitions); got != tc.want {
+				t.Errorf("BuildRDMALnetNetworkString() = %q, want %q", got, tc.want)
 			}
 		})
 	}
