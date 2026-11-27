@@ -137,3 +137,80 @@ If the PV is no longer needed, delete it.
 ```bash
 kubectl delete pv preprov-pv
 ```
+
+## Sub-directory (Fileset) Mounts and Project Quotas
+
+For multi-tenant clusters sharing a single Managed Lustre instance, administrators can mount pre-existing Lustre sub-directories directly via `PersistentVolume.spec.csi.volumeAttributes.subPath` (or the `subDir` alias). This executes a native Lustre client fileset mount (`<IP>@tcp:/<fsname>/<subPath>`) on the node instead of mounting the entire filesystem root.
+
+### Prerequisites and Directory Setup
+
+The target sub-directory **must already exist** on the Lustre filesystem before a Pod mounts the PV. The CSI driver does not dynamically create or delete sub-directories.
+
+From an administrative node with the Lustre root mounted at `/mnt/lustre`:
+
+1. **Create the sub-directory** (nested paths such as `team-alpha/logs` are supported and map to `<IP>@tcp:/<fsname>/team-alpha/logs`):
+
+   ```bash
+   sudo mkdir -p /mnt/lustre/team-alpha
+   ```
+
+2. **Pre-assign a Lustre Project ID (Recommended for Multi-Tenant Quotas):**
+
+   Assign a unique numeric Lustre Project ID (`1`–`4294967295`, distinct from your Google Cloud Project ID) with recursive (`-r`) and directory inheritance (`-s`) flags so all files and nested folders created under that sub-directory are accounted against the same quota:
+
+   ```bash
+   sudo lfs project -p 101 -r -s /mnt/lustre/team-alpha
+   ```
+
+3. **Configure Block and Inode Quotas:**
+
+   Set soft (`-b`/`-i`) and hard (`-B`/`-I`) limits for the assigned Lustre Project ID:
+
+   ```bash
+   # Example: 8 TiB soft block limit, 9 TiB hard block limit,
+   #          5M soft inode limit, 6M hard inode limit
+   sudo lfs setquota -p 101 -b 8T -B 9T -i 5000000 -I 6000000 /mnt/lustre
+   ```
+
+   You can inspect project quota usage and limits with:
+
+   ```bash
+   sudo lfs quota -p 101 /mnt/lustre
+   ```
+
+### How `statfs_project` Reflects Tenant Storage Limits
+
+When `subPath` (or `subDir`) is specified in `volumeAttributes`, the CSI driver automatically appends the `statfs_project` mount option to the Lustre fileset mount (preserving any user-configured `spec.mountOptions` without duplicating `statfs_project` if already supplied).
+
+- **With a Project Quota Assigned:** `df -h`, `df -i`, and Kubelet `NodeGetVolumeStats` metrics (`statfs` calls against the mounted volume path) report the sub-directory's project quota block and inode capacity rather than the global Lustre filesystem capacity. Once usage reaches the hard limit (or exceeds the soft limit beyond the grace period), writes fail with `EDQUOT` (`Disk quota exceeded`) while other tenants remain unaffected.
+- **Without a Project Quota Assigned:** If no project ID or quota is configured for the sub-directory, the Lustre kernel client gracefully falls back to reporting the global filesystem capacity without error.
+
+### `subPath` Validation Rules
+
+The CSI driver validates and normalizes `subPath` (and `subDir`) in `ValidateVolumeCapabilities`, `NodeStageVolume`, and `NodePublishVolume`:
+
+- **Slash normalization:** A single leading or trailing slash (e.g., `/team-alpha/app1/`) is normalized to a relative path (`team-alpha/app1`).
+- **Rejected inputs:** Empty strings, root `/`, extra leading or trailing slashes (`//team-alpha`, `team-alpha//`), empty segments (`team-alpha//app1`), relative traversal segments (`.` or `..`, e.g., `../team-beta` or `team-alpha/../team-beta`), null bytes, and conflicting `subPath` / `subDir` values are rejected with `InvalidArgument`.
+- **Missing directory guardrail:** If the sub-directory does not exist on the Lustre server, mounting fails fast with `FailedPrecondition` (`subPath "<path>" does not exist on filesystem "<filesystem>"`).
+
+### Static PV Configuration and `DeleteVolume` Behavior
+
+See `./examples/pre-prov/preprov-subpath-pvc-pv.yaml` and `./examples/pre-prov/preprov-subpath-pod.yaml` for a complete multi-tenant example:
+
+- **`volumeHandle`:** Append a unique `:<suffix>` per PV (e.g., `<project-id>/<location>/<instance-name>:team-alpha`) so Kubernetes does not coalesce separate PVs targeting the same Lustre instance.
+- **`claimRef` (Recommended):** Pre-bind each static PV to its tenant namespace and PVC name.
+- **Reclaim Policy & `DeleteVolume` Handling:** Always set `persistentVolumeReclaimPolicy: Retain`. Static PVs with `Retain` do not invoke `DeleteVolume` when the PVC is deleted. Because `ParseVolumeID` strips the `:<suffix>` when resolving the underlying Lustre instance, setting `persistentVolumeReclaimPolicy: Delete` (or invoking `DeleteVolume` on a sub-directory PV) would delete the **entire Managed Lustre instance** rather than the sub-directory.
+
+### Migrating from Pod `volumeMounts.subPath` to PV `subPath`
+
+Because `PersistentVolume.spec.csi` is immutable, migrate existing workloads without moving data by provisioning new sub-directory PVs/PVCs alongside the legacy root PV/PVC:
+
+1. Ensure the target directories already exist on Lustre (and optionally assign project IDs and quotas via `lfs project` / `lfs setquota`).
+2. Create a new static PV (with a unique `volumeHandle` suffix and `volumeAttributes.subPath`) and a new PVC in the workload namespace.
+3. Update your Pod/Deployment spec to reference the new PVC and remove Pod-level `volumeMounts[].subPath`, then roll out via a rolling update.
+
+> **Important (Concurrent Root and Sub-directory Mounts on the Same Node):**
+> During migration, avoid scheduling legacy root-PV Pods and new `subPath`-PV Pods for the same Lustre filesystem on the same node at the same time. Mount behavior on a single node is order-dependent:
+> - If a `subPath` volume is mounted on a node first, a subsequent legacy root-PV `NodeStageVolume` call on that node sees the same `fsname` in `/proc/mounts` and fails with `AlreadyExists`.
+> - If a legacy root-PV volume is staged first, `subPath` volumes bypass `NodeStageVolume` and mount directly, meaning both share the same node lifecycle.
+> Isolate migration workloads onto separate nodes/node pools or drain legacy Pods from a node before scheduling `subPath` Pods onto it.

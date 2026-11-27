@@ -475,3 +475,61 @@ func TestGetRequestCapacity(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateVolumeCapabilities(t *testing.T) {
+	t.Parallel()
+	volCaps := []*csi.VolumeCapability{testVolumeCapability}
+	cases := []struct {
+		name     string
+		volumeID string
+		vc       map[string]string
+		wantCode codes.Code
+	}{
+		{
+			name:     "valid subPath",
+			volumeID: existingInstanceVolumeID + ":team-alpha",
+			vc: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFSName,
+				"subPath":     "team-alpha/logs",
+			},
+			wantCode: codes.OK,
+		},
+		{
+			name:     "invalid subPath traversal rejected",
+			volumeID: existingInstanceVolumeID + ":bad",
+			vc: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFSName,
+				"subPath":     "team-alpha/../secret",
+			},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:     "invalid subPath extra slashes rejected",
+			volumeID: existingInstanceVolumeID + ":bad",
+			vc: map[string]string{
+				keyInstanceIP: testIP,
+				keyFilesystem: testFSName,
+				"subPath":     "//team-alpha",
+			},
+			wantCode: codes.InvalidArgument,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cs := initTestController(t)
+			_, err := cs.ValidateVolumeCapabilities(t.Context(), &csi.ValidateVolumeCapabilitiesRequest{
+				VolumeId:           tc.volumeID,
+				VolumeCapabilities: volCaps,
+				VolumeContext:      tc.vc,
+			})
+			if status.Code(err) != tc.wantCode {
+				t.Errorf("ValidateVolumeCapabilities(%q) code = %v, want %v (err: %v)", tc.name, status.Code(err), tc.wantCode, err)
+			}
+		})
+	}
+}

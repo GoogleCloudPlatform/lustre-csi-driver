@@ -64,6 +64,43 @@ If your workload Pods cannot start up, run `kubectl describe pod <your-pod-name>
 
   Please try recreating the Lustre instance with a different filesystem name or use another Lustre instance with a unique filesystem name. Mounting multiple volumes from different Lustre instances with the same filesystem name on a single node is **not supported** because identical filesystem names result in the same major and minor device numbers, which conflicts with the shared mount architecture on a per-node basis.
 
+  If you are migrating workloads from a legacy root PV to `volumeAttributes.subPath` PVs on the same Lustre instance, see the [concurrent root and sub-directory mount guidelines](./preprov-guide.md#migrating-from-pod-volumemountssubpath-to-pv-subpath). A `subPath` mount active on a node will cause a subsequent root PV `NodeStageVolume` for the same filesystem name to return `AlreadyExists`.
+
+#### FailedPrecondition (Missing `subPath`)
+
+- Pod event warning example:
+
+  ```bash
+  MountVolume.SetUp failed for volume "preprov-pv-team-alpha" : rpc error: code = FailedPrecondition desc = failed to mount Lustre fileset "10.44.112.3@tcp:/lfs85889/team-alpha": subPath "team-alpha" does not exist on filesystem "lfs85889": ...
+  ```
+
+- Solutions:
+
+  The CSI driver does not automatically create directories specified by `volumeAttributes.subPath` (or `subDir`). Ensure the directory exists on the Lustre filesystem before pods mount the PV, and verify there are no typos in `subPath`.
+
+#### InvalidArgument (`subPath` Validation)
+
+- Pod event warning example:
+
+  ```bash
+  MountVolume.SetUp failed for volume "xxx" : rpc error: code = InvalidArgument desc = invalid subPath "...": ...
+  ```
+
+- Solutions:
+
+  Verify that `volumeAttributes.subPath` is a valid relative sub-directory path (no empty/`/` values, no extra leading/trailing slashes `//`, no empty segments `a//b`, no `.` or `..` traversal elements, and no conflicting `subPath` and `subDir` values). See the [Sub-directory Mounts guide](./preprov-guide.md#subpath-validation-rules).
+
+#### Quota Exceeded (`EDQUOT`) or Unexpected `df` Capacity on `subPath` Mounts
+
+- Observation:
+
+  Writes inside a Pod fail with `Disk quota exceeded` (`EDQUOT`), or `df -h` / `df -i` reports the global filesystem capacity instead of the tenant quota.
+
+- Solutions:
+
+  - Check project quota usage and limits from an admin client using `sudo lfs quota -p <project-id> /mnt/lustre`.
+  - If `df -h` reports the global filesystem capacity, confirm that a Lustre Project ID was assigned to the directory with `sudo lfs project -p <id> -r -s /mnt/lustre/<subPath>`, block/inode limits were set with `sudo lfs setquota -p <id> ...`, and `statfs_project` appears in the node mount options (`/proc/mounts`).
+
 #### Internal
 
 - Pod Event Warning Examples:

@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/GoogleCloudPlatform/lustre-csi-driver/pkg/network"
@@ -43,6 +44,8 @@ const (
 	roMask              = os.FileMode(0o440)
 	execMask            = os.FileMode(0o110)
 	initialRouteTableID = 100
+
+	optStatfsProject = "statfs_project"
 )
 
 const (
@@ -68,6 +71,8 @@ type nodeServer struct {
 	mounter     mount.Interface
 	volumeLocks *util.VolumeLocks
 	unmountExec unmountExecFunc
+	multiNICMu  sync.Mutex
+	statfsFn    func(path string, buf *unix.Statfs_t) error
 }
 
 func newNodeServer(driver *LustreDriver, mounter mount.Interface) csi.NodeServer {
@@ -75,6 +80,7 @@ func newNodeServer(driver *LustreDriver, mounter mount.Interface) csi.NodeServer
 		driver:      driver,
 		mounter:     mounter,
 		volumeLocks: util.NewVolumeLocks(),
+		statfsFn:    unix.Statfs,
 	}
 }
 
@@ -104,29 +110,25 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	ip := vc[keyInstanceIP]
-	fsname := vc[keyFilesystem]
-	mountPoint := vc[normalize(keyMountPoint)]
 	iamAccessControlEnabled := vc[normalize(keyIAMAccessControlEnabled)]
 
-	if len(mountPoint) != 0 {
-		var err error
-		ip, fsname, err = parseMountPoint(mountPoint)
-		if err != nil {
-			return nil, status.Error(codes.InvalidArgument, err.Error())
-		}
+	subPath, err := extractSubPath(vc)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	if len(ip) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Lustre instance IP is not provided")
-	}
-
-	if len(fsname) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Lustre filesystem name is not provided")
+	ip, fsname, err := resolveLustreEndpoint(vc)
+	if err != nil {
+		return nil, err
 	}
 
 	if strings.ToLower(iamAccessControlEnabled) == "true" {
 		klog.V(4).Infof("NodeStageVolume skipping for IAM-enabled volume %s", volumeID)
+		return &csi.NodeStageVolumeResponse{}, nil
+	}
+
+	if subPath != "" {
+		klog.V(4).Infof("NodeStageVolume skipping for subPath-enabled volume %s (subPath=%q)", volumeID, subPath)
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
@@ -151,15 +153,7 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	}
 	defer s.volumeLocks.Release(target)
 
-	mountOptions := []string{}
-
-	if m := volCap.GetMount(); m != nil {
-		for _, f := range m.GetMountFlags() {
-			if !hasOption(mountOptions, f) {
-				mountOptions = append(mountOptions, f)
-			}
-		}
-	}
+	mountOptions := buildLustreMountOptions(nil, volCap, false)
 
 	nodeName := s.driver.config.NodeID
 	// Checking if the target directory is already mounted with a volume.
@@ -263,6 +257,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	subPath, err := extractSubPath(vc)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	isIAM := strings.EqualFold(vc[normalize(keyIAMAccessControlEnabled)], "true")
 
 	if acquired := s.volumeLocks.TryAcquire(targetPath); !acquired {
@@ -270,20 +269,15 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	defer s.volumeLocks.Release(targetPath)
 
-	mountOptions := []string{"bind"}
+	baseMountOptions := []string{"bind"}
 	ro := req.GetReadonly()
 	if ro {
-		mountOptions = append(mountOptions, "ro")
+		baseMountOptions = append(baseMountOptions, "ro")
 	}
+	mountOptions := buildLustreMountOptions(baseMountOptions, volCap, false)
 
 	var fsGroup string
 	if m := volCap.GetMount(); m != nil {
-		for _, f := range m.GetMountFlags() {
-			if !hasOption(mountOptions, f) {
-				mountOptions = append(mountOptions, f)
-			}
-		}
-
 		if m.GetVolumeMountGroup() != "" {
 			fsGroup = m.GetVolumeMountGroup()
 		}
@@ -307,8 +301,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		if err := s.publishIAMVolume(ctx, volumeID, targetPath, targetMounted, vc, mountOptions, volCap); err != nil {
 			return nil, err
 		}
+	} else if subPath != "" {
+		if err := s.publishSubPathVolume(ctx, volumeID, targetPath, targetMounted, subPath, vc, mountOptions, volCap); err != nil {
+			return nil, err
+		}
 	} else if !targetMounted {
-		// For non-IAM volumes, perform a bind mount from staging path to target path.
+		// For non-IAM root volumes, perform a bind mount from staging path to target path.
 		klog.V(5).Infof("NodePublishVolume: bind mounting staging path %s to target path %s", stagingTargetPath, targetPath)
 		if err := s.mounter.MountSensitiveWithoutSystemd(stagingTargetPath, targetPath, "lustre", mountOptions, nil); err != nil {
 			return nil, status.Errorf(codes.Internal, "Legacy bind mount failed: %v", err)
@@ -327,9 +325,100 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
+// publishSubPathVolume manages the global fileset mount, reference counting,
+// and bind mounting for non-IAM subdirectory volumes.
+func (s *nodeServer) publishSubPathVolume(ctx context.Context, volumeID, targetPath string, targetMounted bool, subPath string, vc map[string]string, mountOptions []string, volCap *csi.VolumeCapability) (retErr error) {
+	podUID := vc[normalize(keyPodUID)]
+	if len(podUID) == 0 {
+		if extractedUID, err := getPodUIDFromTargetPath(targetPath); err == nil {
+			podUID = extractedUID
+		}
+	}
+	if len(podUID) == 0 {
+		return status.Errorf(codes.InvalidArgument, "Pod UID not provided for %s", volumeID)
+	}
+
+	key := computeGlobalKey(volumeID, "", subPath)
+	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
+
+	// Acquire lock on the global key to serialize mounting for the same fileset.
+	if acquired := s.volumeLocks.TryAcquire(key); !acquired {
+		return status.Errorf(codes.Aborted, "Operation exists for key %s", key)
+	}
+	defer s.volumeLocks.Release(key)
+
+	if !targetMounted {
+		defer func() {
+			if retErr == nil {
+				return
+			}
+			if err := s.cleanUpGlobalKeyIfUnused(key); err != nil {
+				klog.Errorf("publishSubPathVolume: failed to clean up unreferenced key %s after error %v: %v", key, retErr, err)
+			}
+		}()
+	}
+
+	klog.V(5).Infof("publishSubPathVolume: subPath %q (hash key %q)", subPath, key)
+
+	if err := makeGlobalDirs(key); err != nil {
+		return status.Errorf(codes.Internal, "Failed to make global directories for key %s: %v", key, err)
+	}
+
+	// Mount the global fileset path if not already mounted.
+	globalMounted, err := s.isMounted(globalMountPath)
+	if err != nil {
+		return err
+	}
+
+	if !globalMounted {
+		if err := s.mountGlobalSubPath(ctx, volumeID, globalMountPath, subPath, vc, volCap); err != nil {
+			return err
+		}
+	}
+
+	return s.bindAndTrackPodReference(key, podUID, volumeID, globalMountPath, targetPath, targetMounted, mountOptions)
+}
+
+// mountGlobalSubPath parses target storage endpoints, configures multi-NIC routing,
+// and mounts the Lustre fileset subdirectory to the shared global mount path.
+func (s *nodeServer) mountGlobalSubPath(_ context.Context, volumeID, globalMountPath, subPath string, vc map[string]string, volCap *csi.VolumeCapability) error {
+	ip, fsname, err := resolveLustreEndpoint(vc)
+	if err != nil {
+		return err
+	}
+
+	nodeName := s.driver.config.NodeID
+
+	// Configure multi-NIC routing for subPath volumes since NodeStageVolume is bypassed.
+	if err := s.setUpMultiNIC(volumeID, ip); err != nil {
+		return err
+	}
+
+	source := buildLustreSource(ip, fsname, subPath)
+	subPathMountOptions := buildLustreMountOptions(nil, volCap, subPath != "")
+
+	klog.V(5).Infof("mountGlobalSubPath mounting volume %s (%s) to path %s on node %s with mountOptions %v", volumeID, source, globalMountPath, nodeName, subPathMountOptions)
+	if err := s.mounter.MountSensitiveWithoutSystemd(source, globalMountPath, "lustre", subPathMountOptions, nil); err != nil {
+		klog.Errorf("Mount %q failed on node %s for subPath %s, cleaning up", globalMountPath, nodeName, subPath)
+		if unmntErr := s.unmountPath(globalMountPath); unmntErr != nil {
+			klog.Errorf("Unmount %q failed on node %s for subPath %s: %v", globalMountPath, nodeName, subPath, unmntErr)
+		}
+
+		if isNoSuchFileOrDirErr(err) {
+			return status.Errorf(codes.FailedPrecondition, "failed to mount Lustre fileset %q: subPath %q does not exist on filesystem %q: %v", source, subPath, fsname, err)
+		}
+
+		return status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, globalMountPath, nodeName, err)
+	}
+
+	klog.V(4).Infof("mountGlobalSubPath successfully mounted volume %v (%s) to path %s on node %s", volumeID, source, globalMountPath, nodeName)
+
+	return nil
+}
+
 // publishIAMVolume manages the global mount, token lifecycle, reference counting,
 // and bind mounting for IAM-enabled volumes.
-func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath string, targetMounted bool, vc map[string]string, mountOptions []string, volCap *csi.VolumeCapability) error {
+func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath string, targetMounted bool, vc map[string]string, mountOptions []string, volCap *csi.VolumeCapability) (retErr error) {
 	podUID := vc[normalize(keyPodUID)]
 	namespace := vc[normalize(keyPodNamespace)]
 	saName := vc[normalize(keyServiceAccount)]
@@ -345,8 +434,13 @@ func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath 
 		return status.Errorf(codes.InvalidArgument, "Service account name not provided for %s", volumeID)
 	}
 
+	subPath, err := extractSubPath(vc)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	principal := fmt.Sprintf("%s/%s", namespace, saName)
-	key := computeHash(volumeID + principal)
+	key := computeGlobalKey(volumeID, principal, subPath)
 	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
 
 	// Acquire lock on the global key to serialize mounting for the same IAM role.
@@ -354,6 +448,20 @@ func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath 
 		return status.Errorf(codes.Aborted, "Operation exists for key %s", key)
 	}
 	defer s.volumeLocks.Release(key)
+
+	// On a failed initial publish, remove GlobalMountRoot/<key> (including the token
+	// and global mount) if no pod references it. Otherwise it leaks, because
+	// NodeUnpublishVolume only discovers keys via refs/<podUID>.
+	if !targetMounted {
+		defer func() {
+			if retErr == nil {
+				return
+			}
+			if err := s.cleanUpGlobalKeyIfUnused(key); err != nil {
+				klog.Errorf("publishIAMVolume: failed to clean up unreferenced key %s after error %v: %v", key, retErr, err)
+			}
+		}()
+	}
 
 	klog.V(5).Infof("publishIAMVolume: Workload Identity principal %q (hash key %q)", principal, key)
 
@@ -394,6 +502,10 @@ func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath 
 		}
 	}
 
+	return s.bindAndTrackPodReference(key, podUID, volumeID, globalMountPath, targetPath, targetMounted, mountOptions)
+}
+
+func (s *nodeServer) bindAndTrackPodReference(key, podUID, volumeID, globalMountPath, targetPath string, targetMounted bool, mountOptions []string) error {
 	// Record pod reference per volume to safely manage unmounting during teardown.
 	if err := addPodReference(key, podUID, volumeID); err != nil {
 		return status.Errorf(codes.Internal, "Failed to add pod reference: %v", err)
@@ -402,9 +514,10 @@ func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath 
 	if !targetMounted {
 		klog.Infof("Bind mounting %s to %s", globalMountPath, targetPath)
 		if err := s.mounter.MountSensitiveWithoutSystemd(globalMountPath, targetPath, "lustre", mountOptions, nil); err != nil {
-			// Clean up the pod reference if the bind mount fails to prevent stale references.
-			if err := removePodReference(key, podUID); err != nil {
-				klog.Errorf("Failed to clean up pod reference for pod %s, volume %s: %v", podUID, volumeID, err)
+			// Remove only this volume's reference; the caller's deferred cleanup will
+			// unmount and remove the global key directory if no other references remain.
+			if _, rmErr := removePodReference(key, podUID, volumeID); rmErr != nil {
+				klog.Errorf("Failed to clean up pod reference for pod %s, volume %s: %v", podUID, volumeID, rmErr)
 			}
 			if unmntErr := s.unmountPath(targetPath); unmntErr != nil {
 				klog.Errorf("Failed to clean up target mount point %q: %v", targetPath, unmntErr)
@@ -419,24 +532,14 @@ func (s *nodeServer) publishIAMVolume(ctx context.Context, volumeID, targetPath 
 // mountGlobalIAM parses target storage endpoints, configures multi-NIC routing,
 // and mounts the Lustre instance to the per-principal global mount path.
 func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPath, principal, key string, vc map[string]string, volCap *csi.VolumeCapability) error {
-	ip := vc[normalize(keyInstanceIP)]
-	fsname := vc[normalize(keyFilesystem)]
-	mountPoint := vc[normalize(keyMountPoint)]
-
-	if len(mountPoint) != 0 {
-		var err error
-		ip, fsname, err = parseMountPoint(mountPoint)
-		if err != nil {
-			return status.Error(codes.InvalidArgument, err.Error())
-		}
+	subPath, err := extractSubPath(vc)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	if len(ip) == 0 {
-		return status.Error(codes.InvalidArgument, "Lustre instance IP is not provided")
-	}
-
-	if len(fsname) == 0 {
-		return status.Error(codes.InvalidArgument, "Lustre filesystem name is not provided")
+	ip, fsname, err := resolveLustreEndpoint(vc)
+	if err != nil {
+		return err
 	}
 
 	nodeName := s.driver.config.NodeID
@@ -447,23 +550,19 @@ func (s *nodeServer) mountGlobalIAM(ctx context.Context, volumeID, globalMountPa
 	}
 
 	// Perform secure mount with Workload Identity user credentials.
-	source := fmt.Sprintf("%s@tcp:/%s", ip, fsname)
+	source := buildLustreSource(ip, fsname, subPath)
 	userOpt := fmt.Sprintf("user_principal=gke-wi://%s+%s", principal, key)
-	iamMountOptions := []string{userOpt}
-
-	if m := volCap.GetMount(); m != nil {
-		for _, f := range m.GetMountFlags() {
-			if !hasOption(iamMountOptions, f) {
-				iamMountOptions = append(iamMountOptions, f)
-			}
-		}
-	}
+	iamMountOptions := buildLustreMountOptions([]string{userOpt}, volCap, subPath != "")
 
 	klog.V(5).Infof("mountGlobalIAM mounting volume %s to path %s on node %s with mountOptions %v", volumeID, globalMountPath, nodeName, iamMountOptions)
 	if err := s.mounter.MountSensitiveWithoutSystemd(source, globalMountPath, "lustre", iamMountOptions, nil); err != nil {
 		klog.Errorf("Mount %q failed on node %s for principal %s, cleaning up", globalMountPath, nodeName, principal)
 		if unmntErr := s.unmountPath(globalMountPath); unmntErr != nil {
 			klog.Errorf("Unmount %q failed on node %s for principal %s: %v", globalMountPath, nodeName, principal, unmntErr)
+		}
+
+		if subPath != "" && isNoSuchFileOrDirErr(err) {
+			return status.Errorf(codes.FailedPrecondition, "failed to mount Lustre fileset %q: subPath %q does not exist on filesystem %q: %v", source, subPath, fsname, err)
 		}
 
 		return status.Errorf(codes.Internal, "Could not mount %q at %q on node %s: %v", source, globalMountPath, nodeName, err)
@@ -492,8 +591,8 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 		return nil, err
 	}
 
-	if err := s.cleanUpIAMReference(targetPath); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to clean up IAM reference directories: %v", err)
+	if err := s.cleanUpGlobalReference(targetPath, req.GetVolumeId()); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to clean up global reference directories: %v", err)
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
@@ -503,6 +602,9 @@ func (s *nodeServer) setUpMultiNIC(volumeID, ip string) error {
 	if len(s.driver.config.AdditionalNics) == 0 {
 		return nil
 	}
+
+	s.multiNICMu.Lock()
+	defer s.multiNICMu.Unlock()
 
 	netlinker := network.NewNetlink()
 	nodeClient := network.NewK8sClient()
@@ -543,7 +645,7 @@ func (s *nodeServer) NodeGetVolumeStats(_ context.Context, req *csi.NodeGetVolum
 		return nil, status.Errorf(codes.Internal, "unknown error when stat on %s: %v", req.GetVolumePath(), err.Error())
 	}
 
-	available, capacity, used, inodesFree, inodes, inodesUsed, err := getFSStat(req.GetVolumePath())
+	available, capacity, used, inodesFree, inodes, inodesUsed, err := s.getFSStat(req.GetVolumePath())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get fs info on path %s: %v", req.GetVolumePath(), err.Error())
 	}
@@ -653,36 +755,104 @@ func parseMountPoint(mountPoint string) (string, string, error) {
 	return match[1], match[2], nil
 }
 
-func getFSStat(path string) (available, capacity, used, inodesFree, inodes, inodesUsed int64, err error) {
+func (s *nodeServer) getFSStat(path string) (available, capacity, used, inodesFree, inodes, inodesUsed int64, err error) {
+	statfsFn := s.statfsFn
+	if statfsFn == nil {
+		statfsFn = unix.Statfs
+	}
 	statfs := &unix.Statfs_t{}
-	err = unix.Statfs(path, statfs)
-	if err != nil {
+	if err = statfsFn(path, statfs); err != nil {
 		err = fmt.Errorf("failed to get fs info on path %s: %w", path, err)
 
 		return
 	}
 
+	available, capacity, used, inodesFree, inodes, inodesUsed = computeFSStat(statfs)
+	return
+}
+
+func computeFSStat(statfs *unix.Statfs_t) (available, capacity, used, inodesFree, inodes, inodesUsed int64) {
 	// Available is blocks available * fragment size to root user
 	available = int64(statfs.Bfree) * statfs.Bsize
 	// Capacity is total block count * fragment size
 	capacity = int64(statfs.Blocks) * statfs.Bsize
-	// Usage is block being used * fragment size (aka block size).
-	used = (int64(statfs.Blocks) - int64(statfs.Bfree)) * statfs.Bsize
+	// Usage is blocks being used * fragment size (clamped to 0 if Bfree > Blocks).
+	if statfs.Blocks >= statfs.Bfree {
+		used = int64(statfs.Blocks-statfs.Bfree) * statfs.Bsize
+	}
 	inodes = int64(statfs.Files)
 	inodesFree = int64(statfs.Ffree)
-	inodesUsed = inodes - inodesFree
+	if statfs.Files >= statfs.Ffree {
+		inodesUsed = int64(statfs.Files - statfs.Ffree)
+	}
 
 	return
 }
 
 func hasOption(options []string, opt string) bool {
 	for _, o := range options {
-		if o == opt {
-			return true
+		for _, part := range strings.Split(o, ",") {
+			if strings.TrimSpace(part) == opt {
+				return true
+			}
 		}
 	}
 
 	return false
+}
+
+// buildLustreMountOptions combines base mount options and VolumeCapability mount flags
+// without duplication, appending statfs_project for subPath mounts if not already present.
+func buildLustreMountOptions(baseOpts []string, volCap *csi.VolumeCapability, addStatfsProject bool) []string {
+	opts := make([]string, 0, len(baseOpts)+1)
+	for _, opt := range baseOpts {
+		if opt != "" && !hasOption(opts, opt) {
+			opts = append(opts, opt)
+		}
+	}
+
+	if m := volCap.GetMount(); m != nil {
+		for _, f := range m.GetMountFlags() {
+			for _, part := range strings.Split(f, ",") {
+				opt := strings.TrimSpace(part)
+				if opt != "" && !hasOption(opts, opt) {
+					opts = append(opts, opt)
+				}
+			}
+		}
+	}
+
+	if addStatfsProject && !hasOption(opts, optStatfsProject) {
+		opts = append(opts, optStatfsProject)
+	}
+
+	return opts
+}
+
+// resolveLustreEndpoint extracts and validates the Lustre IP and filesystem name
+// from normalized volumeContext, allowing mountpoint to override ip and filesystem.
+func resolveLustreEndpoint(vc map[string]string) (string, string, error) {
+	ip := vc[normalize(keyInstanceIP)]
+	fsname := vc[normalize(keyFilesystem)]
+	mountPoint := vc[normalize(keyMountPoint)]
+
+	if len(mountPoint) != 0 {
+		var err error
+		ip, fsname, err = parseMountPoint(mountPoint)
+		if err != nil {
+			return "", "", status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
+
+	if len(ip) == 0 {
+		return "", "", status.Error(codes.InvalidArgument, "Lustre instance IP is not provided")
+	}
+
+	if len(fsname) == 0 {
+		return "", "", status.Error(codes.InvalidArgument, "Lustre filesystem name is not provided")
+	}
+
+	return ip, fsname, nil
 }
 
 func makeDir(pathname string) error {
@@ -809,22 +979,83 @@ func parseToken(tokenJSON, audience string) (string, error) {
 	return "", fmt.Errorf("token for audience %q not found", audience)
 }
 
-func addPodReference(key, podUID, volumeID string) error {
-	refPath := filepath.Join(GlobalMountRoot, key, "refs", podUID)
-	if exists, err := pathExists(refPath); err == nil && exists {
-		return nil
+func readPodRefVolumeIDs(refPath string) ([]string, error) {
+	data, err := os.ReadFile(refPath)
+	if err != nil {
+		return nil, err
 	}
-	// Write volumeID to the ref file to verify ownership during unpublish
-	klog.V(4).Infof("Adding pod reference for pod UID %s, volume %s at %s", podUID, volumeID, refPath)
-	return os.WriteFile(refPath, []byte(volumeID), 0644)
+	var volIDs []string
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			volIDs = append(volIDs, trimmed)
+		}
+	}
+	return volIDs, nil
 }
 
-func removePodReference(key, podUID string) error {
+func addPodReference(key, podUID, volumeID string) error {
 	refPath := filepath.Join(GlobalMountRoot, key, "refs", podUID)
-	if err := os.Remove(refPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove reference file %q: %w", refPath, err)
+	volIDs, err := readPodRefVolumeIDs(refPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	return nil
+	for _, id := range volIDs {
+		if id == volumeID {
+			return nil
+		}
+	}
+	volIDs = append(volIDs, volumeID)
+	// Write volumeID(s) to the ref file to verify ownership during unpublish.
+	klog.V(4).Infof("Adding pod reference for pod UID %s, volume %s at %s", podUID, volumeID, refPath)
+	return os.WriteFile(refPath, []byte(strings.Join(volIDs, "\n")), 0644)
+}
+
+func removePodReference(key, podUID, volumeID string) (bool, error) {
+	refPath := filepath.Join(GlobalMountRoot, key, "refs", podUID)
+	return removeVolumeFromRefFile(refPath, volumeID)
+}
+
+func removeVolumeFromRefFile(refPath, volumeID string) (bool, error) {
+	volIDs, err := readPodRefVolumeIDs(refPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to read reference file %q: %w", refPath, err)
+	}
+
+	if volumeID == "" || len(volIDs) == 0 {
+		if err := os.Remove(refPath); err != nil && !os.IsNotExist(err) {
+			return false, fmt.Errorf("failed to remove reference file %q: %w", refPath, err)
+		}
+		return true, nil
+	}
+
+	remaining := make([]string, 0, len(volIDs))
+	matched := false
+	for _, id := range volIDs {
+		if id == volumeID {
+			matched = true
+			continue
+		}
+		remaining = append(remaining, id)
+	}
+	if !matched {
+		return false, nil
+	}
+
+	if len(remaining) == 0 {
+		if err := os.Remove(refPath); err != nil && !os.IsNotExist(err) {
+			return false, fmt.Errorf("failed to remove reference file %q: %w", refPath, err)
+		}
+		return true, nil
+	}
+
+	if err := os.WriteFile(refPath, []byte(strings.Join(remaining, "\n")), 0644); err != nil {
+		return false, fmt.Errorf("failed to update reference file %q: %w", refPath, err)
+	}
+	return true, nil
 }
 
 func getPodUIDFromTargetPath(path string) (string, error) {
@@ -836,10 +1067,10 @@ func getPodUIDFromTargetPath(path string) (string, error) {
 	return matches[1], nil
 }
 
-func (s *nodeServer) cleanUpIAMReference(targetPath string) error {
+func (s *nodeServer) cleanUpGlobalReference(targetPath, volumeID string) error {
 	podUID, err := getPodUIDFromTargetPath(targetPath)
 	if err != nil {
-		klog.V(5).Infof("Failed to extract pod UID from target path %q (likely non-IAM volume): %v", targetPath, err)
+		klog.V(5).Infof("Failed to extract pod UID from target path %q (likely root volume): %v", targetPath, err)
 		return nil
 	}
 
@@ -853,8 +1084,6 @@ func (s *nodeServer) cleanUpIAMReference(targetPath string) error {
 
 	var errs []error
 	for _, refPath := range matches {
-		klog.Infof("Found IAM pod reference at %s, cleaning up", refPath)
-
 		// Extract the volume key from the matched path using regex
 		match := iamKeyExtractRegex.FindStringSubmatch(refPath)
 		if len(match) < 2 {
@@ -864,7 +1093,7 @@ func (s *nodeServer) cleanUpIAMReference(targetPath string) error {
 		key := match[1]
 
 		// Locks must be released per iteration. Since defer is function-scoped, delegate to a helper method.
-		if err := s.cleanUpIAMReferenceForKey(key, refPath); err != nil {
+		if err := s.cleanUpGlobalReferenceForKey(key, refPath, volumeID); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -876,24 +1105,35 @@ func (s *nodeServer) cleanUpIAMReference(targetPath string) error {
 	return nil
 }
 
-func (s *nodeServer) cleanUpIAMReferenceForKey(key, refPath string) error {
+func (s *nodeServer) cleanUpGlobalReferenceForKey(key, refPath, volumeID string) error {
 	// Acquire a lock to prevent races with concurrent mounts.
 	if acquired := s.volumeLocks.TryAcquire(key); !acquired {
 		return fmt.Errorf("could not acquire lock for key %s; operation in progress", key)
 	}
 	defer s.volumeLocks.Release(key)
 
-	// Delete the pod-specific marker file.
-	if err := os.Remove(refPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove pod reference %q: %w", refPath, err)
+	removed, err := removeVolumeFromRefFile(refPath, volumeID)
+	if err != nil {
+		return err
 	}
+	if !removed {
+		// This reference file belongs to a different volume mounted in the same pod.
+		return nil
+	}
+	klog.Infof("Cleaned up pod reference at %s for volume %s", refPath, volumeID)
 
+	return s.cleanUpGlobalKeyIfUnused(key)
+}
+
+// cleanUpGlobalKeyIfUnused unmounts the shared global path and deletes the key
+// directory when no pod references remain under GlobalMountRoot/<key>/refs.
+func (s *nodeServer) cleanUpGlobalKeyIfUnused(key string) error {
 	// Attempt to remove the 'refs' directory.
-	// If os.Remove succeeds, this was the last pod using this shared mount key.
+	// If os.Remove succeeds, no pods are using this shared mount key.
 	refsDir := filepath.Join(GlobalMountRoot, key, "refs")
 	var pathErr *os.PathError
 	if err := os.Remove(refsDir); err != nil {
-		// Outcome 1: The directory doesn't exist because another thread already deleted it.
+		// Outcome 1: The directory doesn't exist because it was never created or another thread deleted it.
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -908,7 +1148,7 @@ func (s *nodeServer) cleanUpIAMReferenceForKey(key, refPath string) error {
 		return fmt.Errorf("unexpected error checking refs directory %q: %w", refsDir, err)
 	}
 
-	// Outcome 3: If we successfully removed refsDir, this is the last pod. Cleanup the global mount.
+	// Outcome 3: If we successfully removed refsDir, no pods remain. Cleanup the global mount.
 	klog.Infof("No more pod references for key %s. Unmounting global path.", key)
 	globalMountPath := filepath.Join(GlobalMountRoot, key, "mount")
 
@@ -923,4 +1163,90 @@ func (s *nodeServer) cleanUpIAMReferenceForKey(key, refPath string) error {
 	}
 
 	return nil
+}
+
+// extractSubPath extracts and validates the optional subdirectory path from normalized volumeContext.
+func extractSubPath(vc map[string]string) (string, error) {
+	subPathVal, hasSubPath := vc[normalize(keySubPath)]
+	subDirVal, hasSubDir := vc[normalize(keySubDir)]
+
+	if hasSubPath && hasSubDir && subPathVal != subDirVal {
+		return "", fmt.Errorf("conflicting subPath (%q) and subDir (%q) attributes provided", subPathVal, subDirVal)
+	}
+
+	if !hasSubPath && !hasSubDir {
+		return "", nil
+	}
+
+	raw := subPathVal
+	if !hasSubPath {
+		raw = subDirVal
+	}
+
+	if strings.ContainsRune(raw, 0) {
+		return "", fmt.Errorf("invalid subPath %q: must not contain null bytes", raw)
+	}
+
+	// Normalize at most one leading and one trailing slash while rejecting extra
+	// leading/trailing slashes (e.g. "//dir", "dir//") and empty segments ("a//b").
+	cleaned := strings.TrimSpace(raw)
+	cleaned = strings.TrimPrefix(cleaned, "/")
+	cleaned = strings.TrimSuffix(cleaned, "/")
+	if cleaned == "" {
+		return "", fmt.Errorf("invalid subPath %q: subPath cannot be empty or root '/'", raw)
+	}
+
+	for _, seg := range strings.Split(cleaned, "/") {
+		if seg == "" {
+			return "", fmt.Errorf("invalid subPath %q: must not contain empty path segments", raw)
+		}
+		if seg == "." || seg == ".." {
+			return "", fmt.Errorf("invalid subPath %q: relative path segments '.' and '..' are not allowed", raw)
+		}
+	}
+
+	return cleaned, nil
+}
+
+// buildLustreSource constructs the Lustre mount source string (<ip>@tcp:/<fsname>[/<subPath>]).
+func buildLustreSource(ip, fsname, subPath string) string {
+	if subPath == "" {
+		return fmt.Sprintf("%s@tcp:/%s", ip, fsname)
+	}
+	return fmt.Sprintf("%s@tcp:/%s/%s", ip, fsname, subPath)
+}
+
+// stripVolumeIDSuffix removes any optional ":<suffix>" from a volumeHandle so PVs
+// targeting the same Lustre instance and subPath share the same global mount key.
+func stripVolumeIDSuffix(volumeID string) string {
+	if colonIdx := strings.Index(volumeID, ":"); colonIdx != -1 {
+		return volumeID[:colonIdx]
+	}
+	return volumeID
+}
+
+// computeGlobalKey derives the deterministic hash key for /var/lib/lustre/mounts/<key>.
+//   - IAM root mount:        hash(baseVolumeID + principal)
+//   - Non-IAM subPath mount: hash(baseVolumeID + ":" + subPath)
+//   - IAM subPath mount:     hash(baseVolumeID + ":" + principal + ":" + subPath)
+func computeGlobalKey(volumeID, principal, subPath string) string {
+	baseVolumeID := stripVolumeIDSuffix(volumeID)
+	if subPath == "" {
+		return computeHash(baseVolumeID + principal)
+	}
+	if principal == "" {
+		return computeHash(baseVolumeID + ":" + subPath)
+	}
+	return computeHash(baseVolumeID + ":" + principal + ":" + subPath)
+}
+
+// isNoSuchFileOrDirErr returns true if a mount error indicates the subdirectory does not exist (ENOENT).
+func isNoSuchFileOrDirErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no such file or directory")
 }
